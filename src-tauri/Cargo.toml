@@ -1,0 +1,26 @@
+[package]
+name = "llm-wiki-desktop"
+version = "0.1.0"
+description = "Local-first desktop shell for open-llm-wiki"
+authors = ["Aidenwu0209"]
+edition = "2021"
+
+[lib]
+name = "llm_wiki_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "llm-wiki-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+chrono = { version = "0.4", features = ["clock"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
