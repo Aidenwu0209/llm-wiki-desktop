@@ -64,6 +64,7 @@ export type IngestPlanSummary = {
   stageable: number;
   blocked: number;
   cached: number;
+  published: number;
 };
 
 export type IngestPlanEntry = {
@@ -71,7 +72,7 @@ export type IngestPlanEntry = {
   fileName: string;
   sha256: string;
   artifactPath?: string | null;
-  status: "ready" | "stageable" | "blocked" | "cached";
+  status: "ready" | "stageable" | "blocked" | "cached" | "published";
   action: string;
   reason: string;
   parserHint?: string | null;
@@ -88,6 +89,7 @@ export type IngestPlan = {
 export type IngestPipelineResult = {
   id: string;
   stagedArtifacts: string[];
+  publishedSources: string[];
   logs: TaskLog[];
   exitCode: number;
   logPath: string;

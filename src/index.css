@@ -465,6 +465,11 @@ select {
   color: #755a24;
 }
 
+.status-chip.published {
+  background: #e7f4ec;
+  color: #315f46;
+}
+
 .log-list {
   max-height: 250px;
   overflow: auto;

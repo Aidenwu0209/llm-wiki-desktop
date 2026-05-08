@@ -78,13 +78,16 @@ function pipelineState(index: number, status: VaultStatus | null, plan: IngestPl
   const stageable = plan?.summary.stageable ?? 0;
   const blocked = plan?.summary.blocked ?? 0;
   const cached = plan?.summary.cached ?? 0;
+  const published = plan?.summary.published ?? 0;
+  const runnable = ready + stageable + cached;
   if (index === 0) return inbox > 0 ? "ready" : "waiting";
   if (index === 1) {
-    if (blocked > 0 && ready + stageable + cached === 0) return "parse blocked";
-    if (ready + stageable + cached > 0) return "ready";
+    if (blocked > 0 && runnable === 0) return "parse blocked";
+    if (runnable > 0) return "ready";
+    if (published > 0) return "published";
     return "waiting";
   }
-  if (index >= 2 && index <= 4) return ready + stageable + cached > 0 ? "queued" : "runtime gated";
+  if (index >= 2 && index <= 4) return runnable > 0 ? "queued" : "runtime gated";
   if (index >= 5 && index <= 10) return (status?.counts.sources ?? 0) > 0 ? "available" : "after publish";
   return status?.schemaValid ? "available" : "blocked";
 }
@@ -225,6 +228,7 @@ function App() {
 
   const tone = statusTone(status);
   const planned = ingestPlan?.summary;
+  const runnableIngest = (planned?.ready ?? 0) + (planned?.stageable ?? 0) + (planned?.cached ?? 0);
 
   return (
     <main className="app-shell">
@@ -306,6 +310,7 @@ function App() {
           <Metric label="Review claims" value={status?.counts.claimsNeedingReview ?? 0} emphasis />
           <Metric label="Ingest ready" value={planned?.ready ?? 0} />
           <Metric label="Stageable" value={planned?.stageable ?? 0} />
+          <Metric label="Published" value={planned?.published ?? 0} />
           <Metric label="Blocked" value={planned?.blocked ?? 0} emphasis={(planned?.blocked ?? 0) > 0} />
           <Metric label="Runtime" value={status?.runtimeInstalled ? "installed" : "missing"} />
           <Metric label="Obsidian" value={status?.obsidianEnabled ? "enabled" : "disabled"} />
@@ -315,7 +320,7 @@ function App() {
         <section className="action-strip">
           <button onClick={handleImport} disabled={!vaultPath || busy === "import"}><FileInput size={16} />导入到 inbox</button>
           <button onClick={handlePlanIngest} disabled={!vaultPath || busy === "plan_ingest"}><ListChecks size={16} />规划 ingest</button>
-          <button onClick={handleIngestPipeline} disabled={!vaultPath || busy === "ingest_pipeline"}><Play size={16} />运行 ingest pipeline</button>
+          <button onClick={handleIngestPipeline} disabled={!vaultPath || busy === "ingest_pipeline" || runnableIngest === 0}><Play size={16} />运行 ingest pipeline</button>
           <button onClick={() => vaultPath && openPath(vaultPath)} disabled={!vaultPath}><FolderOpen size={16} />打开文件夹</button>
           {runtimeActions.map((action) => {
             const Icon = action.icon;
@@ -366,7 +371,7 @@ function App() {
             </div>
             <div className="ingest-list">
               {!ingestPlan?.entries.length && <p className="empty">暂无可规划输入。</p>}
-              {ingestPlan?.entries.slice(0, 8).map((entry) => (
+              {ingestPlan?.entries.map((entry) => (
                 <button
                   key={`${entry.sourcePath}-${entry.sha256}`}
                   onClick={() => openPath(entry.status === "blocked" ? entry.sourcePath : entry.artifactPath || entry.sourcePath)}
