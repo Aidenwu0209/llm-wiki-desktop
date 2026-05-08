@@ -1,5 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ImportResult, RuntimeSettings, TaskLog, VaultStatus } from "./types";
+import type {
+  ImportResult,
+  IngestPipelineResult,
+  IngestPlan,
+  RuntimeSettings,
+  TaskLog,
+  VaultStatus,
+} from "./types";
 
 export function inspectVault(vaultPath: string): Promise<VaultStatus> {
   return invoke("inspect_vault", { vaultPath });
@@ -22,6 +29,23 @@ export function createVault(
 
 export function importToInbox(vaultPath: string, paths: string[]): Promise<ImportResult> {
   return invoke("import_to_inbox", { vaultPath, paths });
+}
+
+export function planIngest(vaultPath: string): Promise<IngestPlan> {
+  return invoke("plan_ingest", { vaultPath });
+}
+
+export function runIngestPipeline(
+  vaultPath: string,
+  settings: RuntimeSettings,
+): Promise<IngestPipelineResult> {
+  return invoke("run_ingest_pipeline", {
+    vaultPath,
+    runtimePath: settings.runtimePath || null,
+    pythonPath: settings.pythonPath,
+    obsidianProfile: settings.obsidianProfile,
+    skipDownloads: settings.skipDownloads,
+  });
 }
 
 export function runRuntimeCommand(

@@ -57,3 +57,38 @@ export type ImportResult = {
   skippedDuplicates: string[];
   errors: string[];
 };
+
+export type IngestPlanSummary = {
+  total: number;
+  ready: number;
+  stageable: number;
+  blocked: number;
+  cached: number;
+};
+
+export type IngestPlanEntry = {
+  sourcePath: string;
+  fileName: string;
+  sha256: string;
+  artifactPath?: string | null;
+  status: "ready" | "stageable" | "blocked" | "cached";
+  action: string;
+  reason: string;
+  parserHint?: string | null;
+};
+
+export type IngestPlan = {
+  generatedAt: string;
+  vaultPath: string;
+  planPath: string;
+  summary: IngestPlanSummary;
+  entries: IngestPlanEntry[];
+};
+
+export type IngestPipelineResult = {
+  id: string;
+  stagedArtifacts: string[];
+  logs: TaskLog[];
+  exitCode: number;
+  logPath: string;
+};

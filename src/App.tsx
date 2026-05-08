@@ -17,8 +17,16 @@ import {
   SquareStack,
   TerminalSquare,
 } from "lucide-react";
-import { createVault, importToInbox, inspectVault, openPath, runRuntimeCommand } from "./tauri";
-import type { RuntimeSettings, TaskLog, VaultFile, VaultStatus } from "./types";
+import {
+  createVault,
+  importToInbox,
+  inspectVault,
+  openPath,
+  planIngest,
+  runIngestPipeline,
+  runRuntimeCommand,
+} from "./tauri";
+import type { IngestPlan, RuntimeSettings, TaskLog, VaultFile, VaultStatus } from "./types";
 
 const runtimeActions = [
   { id: "lint", label: "运行 lint", icon: ListChecks },
@@ -64,6 +72,23 @@ function statusTone(status: VaultStatus | null) {
   return "ok";
 }
 
+function pipelineState(index: number, status: VaultStatus | null, plan: IngestPlan | null) {
+  const inbox = status?.counts.inbox ?? 0;
+  const ready = plan?.summary.ready ?? 0;
+  const stageable = plan?.summary.stageable ?? 0;
+  const blocked = plan?.summary.blocked ?? 0;
+  const cached = plan?.summary.cached ?? 0;
+  if (index === 0) return inbox > 0 ? "ready" : "waiting";
+  if (index === 1) {
+    if (blocked > 0 && ready + stageable + cached === 0) return "parse blocked";
+    if (ready + stageable + cached > 0) return "ready";
+    return "waiting";
+  }
+  if (index >= 2 && index <= 4) return ready + stageable + cached > 0 ? "queued" : "runtime gated";
+  if (index >= 5 && index <= 10) return (status?.counts.sources ?? 0) > 0 ? "available" : "after publish";
+  return status?.schemaValid ? "available" : "blocked";
+}
+
 function App() {
   const [vaultPath, setVaultPath] = useState("");
   const [newVaultPath, setNewVaultPath] = useState("");
@@ -71,6 +96,7 @@ function App() {
   const [settings, setSettings] = useState<RuntimeSettings>(initialSettings);
   const [status, setStatus] = useState<VaultStatus | null>(null);
   const [logs, setLogs] = useState<TaskLog[]>([]);
+  const [ingestPlan, setIngestPlan] = useState<IngestPlan | null>(null);
   const [selectedFile, setSelectedFile] = useState<VaultFile | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -99,7 +125,9 @@ function App() {
     setBusy("inspect");
     setError(null);
     try {
-      setStatus(await inspectVault(path));
+      const nextStatus = await inspectVault(path);
+      setStatus(nextStatus);
+      setIngestPlan(await planIngest(path));
     } catch (err) {
       setError(String(err));
     } finally {
@@ -165,7 +193,38 @@ function App() {
     }
   }
 
+  async function handlePlanIngest() {
+    if (!vaultPath) return;
+    setBusy("plan_ingest");
+    setError(null);
+    try {
+      setIngestPlan(await planIngest(vaultPath));
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleIngestPipeline() {
+    if (!vaultPath) return;
+    setBusy("ingest_pipeline");
+    setError(null);
+    try {
+      const result = await runIngestPipeline(vaultPath, settings);
+      setLogs((current) => [...result.logs, ...current].slice(0, 12));
+      await refresh();
+      if (result.exitCode !== 0) setError(`ingest pipeline 失败，exit code ${result.exitCode}`);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const tone = statusTone(status);
+  const planned = ingestPlan?.summary;
 
   return (
     <main className="app-shell">
@@ -245,6 +304,9 @@ function App() {
           <Metric label="Concepts" value={status?.counts.concepts ?? 0} />
           <Metric label="Reports" value={status?.counts.reports ?? 0} />
           <Metric label="Review claims" value={status?.counts.claimsNeedingReview ?? 0} emphasis />
+          <Metric label="Ingest ready" value={planned?.ready ?? 0} />
+          <Metric label="Stageable" value={planned?.stageable ?? 0} />
+          <Metric label="Blocked" value={planned?.blocked ?? 0} emphasis={(planned?.blocked ?? 0) > 0} />
           <Metric label="Runtime" value={status?.runtimeInstalled ? "installed" : "missing"} />
           <Metric label="Obsidian" value={status?.obsidianEnabled ? "enabled" : "disabled"} />
           <Metric label="Dashboard" value={status?.dashboardAvailable ? "ready" : "missing"} />
@@ -252,6 +314,8 @@ function App() {
 
         <section className="action-strip">
           <button onClick={handleImport} disabled={!vaultPath || busy === "import"}><FileInput size={16} />导入到 inbox</button>
+          <button onClick={handlePlanIngest} disabled={!vaultPath || busy === "plan_ingest"}><ListChecks size={16} />规划 ingest</button>
+          <button onClick={handleIngestPipeline} disabled={!vaultPath || busy === "ingest_pipeline"}><Play size={16} />运行 ingest pipeline</button>
           <button onClick={() => vaultPath && openPath(vaultPath)} disabled={!vaultPath}><FolderOpen size={16} />打开文件夹</button>
           {runtimeActions.map((action) => {
             const Icon = action.icon;
@@ -274,7 +338,7 @@ function App() {
                 <li key={stage}>
                   <span>{String(index + 1).padStart(2, "0")}</span>
                   <strong>{stage}</strong>
-                  <em>{index === 0 && (status?.counts.inbox ?? 0) > 0 ? "ready" : "runtime gated"}</em>
+                  <em>{pipelineState(index, status, ingestPlan)}</em>
                 </li>
               ))}
             </ol>
@@ -297,16 +361,24 @@ function App() {
         <div className="main-grid">
           <section className="panel">
             <div className="section-head">
-              <h2>Evidence / Review 摘要</h2>
+              <h2>Ingest plan</h2>
               <ShieldCheck size={18} />
             </div>
-            <ul className="review-list">
-              <li>Claims total: <strong>{status?.counts.claims ?? 0}</strong></li>
-              <li>Claims needing review: <strong>{status?.counts.claimsNeedingReview ?? 0}</strong></li>
-              <li>Science review queue: <strong>{status?.counts.scienceReviewQueue ?? 0}</strong></li>
-              <li>Growth queue: <strong>{status?.counts.growthQueue ?? 0}</strong></li>
-            </ul>
-            <p className="note">审核决策必须进入 runtime 的 queue/report/log，不允许只存在 UI 状态里。</p>
+            <div className="ingest-list">
+              {!ingestPlan?.entries.length && <p className="empty">暂无可规划输入。</p>}
+              {ingestPlan?.entries.slice(0, 8).map((entry) => (
+                <button
+                  key={`${entry.sourcePath}-${entry.sha256}`}
+                  onClick={() => openPath(entry.status === "blocked" ? entry.sourcePath : entry.artifactPath || entry.sourcePath)}
+                >
+                  <span className={classNames("status-chip", entry.status)}>{entry.status}</span>
+                  <strong>{entry.fileName}</strong>
+                  <em>{entry.reason}</em>
+                  {entry.parserHint && <code>{entry.parserHint}</code>}
+                </button>
+              ))}
+            </div>
+            {ingestPlan && <p className="note">Plan file: {ingestPlan.planPath}</p>}
           </section>
 
           <section className="panel">
