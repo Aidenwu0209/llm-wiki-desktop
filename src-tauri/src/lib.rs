@@ -1,7 +1,7 @@
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs;
 use std::io::Read;
@@ -69,6 +69,55 @@ struct ImportResult {
     copied: Vec<VaultFile>,
     skipped_duplicates: Vec<String>,
     errors: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct IngestPlanSummary {
+    total: usize,
+    ready: usize,
+    stageable: usize,
+    blocked: usize,
+    cached: usize,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct IngestPlanEntry {
+    source_path: String,
+    file_name: String,
+    sha256: String,
+    artifact_path: Option<String>,
+    status: String,
+    action: String,
+    reason: String,
+    parser_hint: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct IngestPlan {
+    generated_at: String,
+    vault_path: String,
+    plan_path: String,
+    summary: IngestPlanSummary,
+    entries: Vec<IngestPlanEntry>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct IngestPipelineResult {
+    id: String,
+    staged_artifacts: Vec<String>,
+    logs: Vec<TaskLog>,
+    exit_code: i32,
+    log_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DesktopIngestCacheRow {
+    #[serde(default)]
+    sha256: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -557,6 +606,345 @@ fn unique_dest(inbox: &Path, file_name: &OsStr) -> PathBuf {
     inbox.join(format!("{stem}-import"))
 }
 
+fn safe_stem(path: &Path) -> String {
+    let raw = path.file_stem().and_then(OsStr::to_str).unwrap_or("source");
+    let mut out = String::new();
+    let mut previous_dash = false;
+    for ch in raw.chars() {
+        if ch.is_alphanumeric() {
+            out.push(ch);
+            previous_dash = false;
+        } else if !previous_dash {
+            out.push('-');
+            previous_dash = true;
+        }
+    }
+    let trimmed = out.trim_matches('-');
+    if trimmed.is_empty() {
+        "source".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn is_markdown_or_text(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(OsStr::to_str)
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "md" | "markdown" | "txt"
+    )
+}
+
+fn is_parseable_binary(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(OsStr::to_str)
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "pdf"
+    )
+}
+
+fn collect_inbox_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    if let Ok(read_dir) = fs::read_dir(dir) {
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if path
+                    .file_name()
+                    .and_then(OsStr::to_str)
+                    .is_some_and(|name| name.starts_with('.'))
+                {
+                    continue;
+                }
+                collect_inbox_files(&path, out);
+            } else if path.is_file() {
+                out.push(path);
+            }
+        }
+    }
+}
+
+fn collect_ingest_inputs(vault: &Path) -> Vec<PathBuf> {
+    let raw = vault.join("raw");
+    let mut files = Vec::new();
+    if let Ok(read_dir) = fs::read_dir(&raw) {
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            let name = path.file_name().and_then(OsStr::to_str).unwrap_or_default();
+            if name.starts_with('.') || name.ends_with("_markdown") {
+                continue;
+            }
+            if path.is_file() {
+                files.push(path);
+            } else if name == "inbox" && path.is_dir() {
+                collect_inbox_files(&path, &mut files);
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+fn artifact_for_source(vault: &Path, source: &Path, hash: &str) -> PathBuf {
+    let raw = vault.join("raw");
+    let mut stem = safe_stem(source);
+    if source.parent() != Some(raw.as_path()) {
+        let short = hash.get(..8).unwrap_or(hash);
+        stem = format!("{stem}-{short}");
+    }
+    raw.join(format!("{stem}_markdown")).join("combined.md")
+}
+
+fn load_cached_ingest_hashes(vault: &Path) -> HashSet<String> {
+    let cache = vault.join("_state").join("desktop-ingest-cache.jsonl");
+    read_text(&cache)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<DesktopIngestCacheRow>(line).ok())
+        .filter_map(|row| {
+            if row.sha256.is_empty() {
+                None
+            } else {
+                Some(row.sha256)
+            }
+        })
+        .collect()
+}
+
+fn plan_entry_for_source(
+    vault: &Path,
+    source: &Path,
+    cached_hashes: &HashSet<String>,
+) -> Result<IngestPlanEntry, String> {
+    let hash = sha256_file(source)?;
+    let artifact = artifact_for_source(vault, source, &hash);
+    let artifact_exists = artifact.is_file();
+    let cached = cached_hashes.contains(&hash);
+    let file_name = source
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let artifact_path = Some(to_display(&artifact));
+
+    let (status, action, reason, parser_hint) = if cached && artifact_exists {
+        (
+            "cached".to_string(),
+            "skip_staging".to_string(),
+            "source hash has already been staged; runtime ingest can reuse the artifact"
+                .to_string(),
+            None,
+        )
+    } else if artifact_exists {
+        (
+            "ready".to_string(),
+            "run_ingest_corpus".to_string(),
+            "parsed Markdown artifact already exists".to_string(),
+            None,
+        )
+    } else if is_markdown_or_text(source) {
+        (
+            "stageable".to_string(),
+            "stage_text_artifact".to_string(),
+            "plain text or Markdown can be staged locally as combined.md".to_string(),
+            None,
+        )
+    } else if is_parseable_binary(source) {
+        let hint = format!(
+            "pdf_to_markdown.py \"{}\" --output \"{}\"",
+            source.display(),
+            artifact
+                .parent()
+                .map(to_display)
+                .unwrap_or_else(|| to_display(&artifact))
+        );
+        (
+            "blocked".to_string(),
+            "parse_required".to_string(),
+            "PDF requires a parser before corpus ingest can run".to_string(),
+            Some(hint),
+        )
+    } else {
+        (
+            "blocked".to_string(),
+            "unsupported_extension".to_string(),
+            "desktop staging currently supports txt, md, markdown, and existing parsed artifacts"
+                .to_string(),
+            None,
+        )
+    };
+
+    Ok(IngestPlanEntry {
+        source_path: to_display(source),
+        file_name,
+        sha256: hash,
+        artifact_path,
+        status,
+        action,
+        reason,
+        parser_hint,
+    })
+}
+
+fn append_cache_row(
+    vault: &Path,
+    source: &Path,
+    sha256: &str,
+    artifact: &Path,
+) -> Result<(), String> {
+    let cache = vault.join("_state").join("desktop-ingest-cache.jsonl");
+    let existing = read_text(&cache);
+    let row = serde_json::json!({
+        "source_path": source.strip_prefix(vault).unwrap_or(source).to_string_lossy(),
+        "sha256": sha256,
+        "artifact_path": artifact.strip_prefix(vault).unwrap_or(artifact).to_string_lossy(),
+        "staged_at": Local::now().to_rfc3339(),
+        "status": "staged",
+    });
+    write_text(
+        &cache,
+        &format!(
+            "{}{}\n",
+            existing,
+            serde_json::to_string(&row)
+                .map_err(|e| format!("failed to serialize cache row: {e}"))?
+        ),
+    )
+}
+
+fn write_ingest_plan(vault: &Path, entries: Vec<IngestPlanEntry>) -> Result<IngestPlan, String> {
+    let summary = IngestPlanSummary {
+        total: entries.len(),
+        ready: entries
+            .iter()
+            .filter(|entry| entry.status == "ready")
+            .count(),
+        stageable: entries
+            .iter()
+            .filter(|entry| entry.status == "stageable")
+            .count(),
+        blocked: entries
+            .iter()
+            .filter(|entry| entry.status == "blocked")
+            .count(),
+        cached: entries
+            .iter()
+            .filter(|entry| entry.status == "cached")
+            .count(),
+    };
+    let plan_path = vault.join("_state").join("desktop-ingest-plan.json");
+    let plan = IngestPlan {
+        generated_at: Local::now().to_rfc3339(),
+        vault_path: to_display(vault),
+        plan_path: to_display(&plan_path),
+        summary,
+        entries,
+    };
+    let rendered = serde_json::to_string_pretty(&plan)
+        .map_err(|e| format!("failed to serialize ingest plan: {e}"))?;
+    write_text(&plan_path, &(rendered + "\n"))?;
+    Ok(plan)
+}
+
+#[tauri::command]
+fn plan_ingest(vault_path: String) -> Result<IngestPlan, String> {
+    let vault = PathBuf::from(vault_path);
+    require_existing_dir(&vault, "vault")?;
+    let cached_hashes = load_cached_ingest_hashes(&vault);
+    let mut entries = Vec::new();
+    let mut artifact_paths = HashSet::new();
+
+    for source in collect_ingest_inputs(&vault) {
+        let entry = plan_entry_for_source(&vault, &source, &cached_hashes)?;
+        if let Some(path) = &entry.artifact_path {
+            artifact_paths.insert(PathBuf::from(path));
+        }
+        entries.push(entry);
+    }
+
+    let raw = vault.join("raw");
+    if let Ok(read_dir) = fs::read_dir(&raw) {
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            if !path.is_dir()
+                || !path
+                    .file_name()
+                    .and_then(OsStr::to_str)
+                    .is_some_and(|name| name.ends_with("_markdown"))
+            {
+                continue;
+            }
+            let combined = path.join("combined.md");
+            if combined.is_file() && !artifact_paths.contains(&combined) {
+                let hash = sha256_file(&combined)?;
+                entries.push(IngestPlanEntry {
+                    source_path: to_display(&combined),
+                    file_name: path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string(),
+                    sha256: hash,
+                    artifact_path: Some(to_display(&combined)),
+                    status: "ready".to_string(),
+                    action: "run_ingest_corpus".to_string(),
+                    reason:
+                        "parsed artifact exists without a matching raw source in the desktop scan"
+                            .to_string(),
+                    parser_hint: None,
+                });
+            }
+        }
+    }
+
+    entries.sort_by(|a, b| a.source_path.cmp(&b.source_path));
+    write_ingest_plan(&vault, entries)
+}
+
+fn stage_text_artifacts(vault: &Path) -> Result<Vec<String>, String> {
+    let cached_hashes = load_cached_ingest_hashes(vault);
+    let mut staged = Vec::new();
+    for source in collect_ingest_inputs(vault) {
+        let entry = plan_entry_for_source(vault, &source, &cached_hashes)?;
+        if entry.status != "stageable" {
+            continue;
+        }
+        let artifact = entry
+            .artifact_path
+            .as_ref()
+            .map(PathBuf::from)
+            .ok_or_else(|| "missing artifact path for stageable source".to_string())?;
+        let content = fs::read_to_string(&source)
+            .map_err(|e| format!("failed to read {}: {e}", source.display()))?;
+        write_text(&artifact, &content)?;
+        let manifest = artifact
+            .parent()
+            .ok_or_else(|| "artifact has no parent directory".to_string())?
+            .join("manifest.json");
+        let row = serde_json::json!({
+            "source_path": source.strip_prefix(vault).unwrap_or(source.as_path()).to_string_lossy(),
+            "combined": artifact.strip_prefix(vault).unwrap_or(artifact.as_path()).to_string_lossy(),
+            "sha256": entry.sha256,
+            "parser": "llm-wiki-desktop-text-stager",
+            "staged_at": Local::now().to_rfc3339(),
+            "limitations": ["line anchors are preserved, but page/table anchors require a richer runtime parser"],
+        });
+        write_text(
+            &manifest,
+            &(serde_json::to_string_pretty(&row)
+                .map_err(|e| format!("failed to serialize manifest: {e}"))?
+                + "\n"),
+        )?;
+        append_cache_row(vault, &source, &entry.sha256, &artifact)?;
+        staged.push(to_display(&artifact));
+    }
+    Ok(staged)
+}
+
 #[tauri::command]
 fn run_runtime_command(
     vault_path: String,
@@ -568,8 +956,26 @@ fn run_runtime_command(
 ) -> Result<TaskLog, String> {
     let vault = PathBuf::from(vault_path);
     require_existing_dir(&vault, "vault")?;
-    let (script, mut args) = command_spec(&kind, &vault, &obsidian_profile, skip_downloads)?;
-    let scripts_dir = resolve_scripts_dir(&vault, runtime_path.as_deref())?;
+    run_runtime_task(
+        &vault,
+        runtime_path.as_deref(),
+        &python_path,
+        &kind,
+        &obsidian_profile,
+        skip_downloads,
+    )
+}
+
+fn run_runtime_task(
+    vault: &Path,
+    runtime_path: Option<&str>,
+    python_path: &str,
+    kind: &str,
+    obsidian_profile: &str,
+    skip_downloads: bool,
+) -> Result<TaskLog, String> {
+    let (script, mut args) = command_spec(kind, vault, obsidian_profile, skip_downloads)?;
+    let scripts_dir = resolve_scripts_dir(vault, runtime_path)?;
     let script_path = scripts_dir.join(script);
     if !script_path.is_file() {
         return Err(format!(
@@ -578,9 +984,9 @@ fn run_runtime_command(
         ));
     }
     let started_at = Local::now().to_rfc3339();
-    let mut command = vec![python_path.clone(), to_display(&script_path)];
+    let mut command = vec![python_path.to_string(), to_display(&script_path)];
     command.append(&mut args);
-    let output = Command::new(&python_path)
+    let output = Command::new(python_path)
         .arg(&script_path)
         .args(command.iter().skip(2))
         .output()
@@ -604,13 +1010,100 @@ fn run_runtime_command(
     let _ = ensure_inside(&log_path, &vault, "task log must stay inside the vault")?;
     Ok(TaskLog {
         id,
-        kind,
+        kind: kind.to_string(),
         command,
         started_at,
         ended_at,
         exit_code,
         stdout,
         stderr,
+        log_path: to_display(&log_path),
+    })
+}
+
+#[tauri::command]
+fn run_ingest_pipeline(
+    vault_path: String,
+    runtime_path: Option<String>,
+    python_path: String,
+    obsidian_profile: String,
+    skip_downloads: bool,
+) -> Result<IngestPipelineResult, String> {
+    let vault = PathBuf::from(vault_path);
+    require_existing_dir(&vault, "vault")?;
+    let initial_plan = plan_ingest(to_display(&vault))?;
+    if initial_plan.summary.ready + initial_plan.summary.stageable + initial_plan.summary.cached
+        == 0
+    {
+        return Err(
+            "no ready, cached, or stageable ingest inputs; parse blocked sources first or import Markdown/txt"
+                .to_string(),
+        );
+    }
+    let staged_artifacts = stage_text_artifacts(&vault)?;
+    let _ = plan_ingest(to_display(&vault))?;
+
+    let sequence = [
+        "discover",
+        "ingest_corpus",
+        "claims",
+        "normalize",
+        "semantic_qa",
+        "contradictions",
+        "science_review",
+        "lint",
+    ];
+    let mut logs = Vec::new();
+    let mut exit_code = 0;
+    for kind in sequence {
+        let log = run_runtime_task(
+            &vault,
+            runtime_path.as_deref(),
+            &python_path,
+            kind,
+            &obsidian_profile,
+            skip_downloads,
+        )?;
+        if log.exit_code != 0 {
+            exit_code = log.exit_code;
+            logs.push(log);
+            break;
+        }
+        logs.push(log);
+    }
+
+    let id = format!("{}-ingest-pipeline", Local::now().format("%Y%m%d-%H%M%S"));
+    let log_path = vault
+        .join("log-archive")
+        .join("desktop")
+        .join(format!("{id}.log"));
+    let mut rendered = format!(
+        "# Desktop Ingest Pipeline\n\nstarted_at: {}\nexit_code: {}\nstaged_artifacts: {}\n\n",
+        Local::now().to_rfc3339(),
+        exit_code,
+        staged_artifacts.len()
+    );
+    if !staged_artifacts.is_empty() {
+        rendered.push_str("## Staged Artifacts\n\n");
+        for artifact in &staged_artifacts {
+            rendered.push_str(&format!("- {artifact}\n"));
+        }
+        rendered.push('\n');
+    }
+    rendered.push_str("## Runtime Steps\n\n");
+    for log in &logs {
+        rendered.push_str(&format!(
+            "- {}: exit {} ({})\n",
+            log.kind, log.exit_code, log.log_path
+        ));
+    }
+    write_text(&log_path, &rendered)?;
+
+    Ok(IngestPipelineResult {
+        id,
+        staged_artifacts,
+        logs,
+        exit_code,
         log_path: to_display(&log_path),
     })
 }
@@ -734,6 +1227,8 @@ pub fn run() {
             inspect_vault,
             create_vault,
             import_to_inbox,
+            plan_ingest,
+            run_ingest_pipeline,
             run_runtime_command,
             open_path
         ])

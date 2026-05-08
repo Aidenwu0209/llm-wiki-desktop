@@ -226,7 +226,7 @@ select {
 
 .metrics {
   display: grid;
-  grid-template-columns: repeat(8, minmax(98px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
   gap: 10px;
 }
 
@@ -385,6 +385,84 @@ select {
   border-bottom: 1px solid #e4e8e4;
   padding-bottom: 8px;
   color: #3b4843;
+}
+
+.ingest-list {
+  display: grid;
+  gap: 8px;
+  max-height: 270px;
+  overflow: auto;
+}
+
+.ingest-list button {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 70px;
+  padding: 10px 10px 10px 92px;
+  text-align: left;
+  border-color: #d8ded9;
+  background: #fbfcfa;
+}
+
+.ingest-list strong,
+.ingest-list em,
+.ingest-list code {
+  display: block;
+}
+
+.ingest-list strong {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.ingest-list em {
+  margin-top: 4px;
+  color: #64706a;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.ingest-list code {
+  margin-top: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #40514a;
+  font-size: 11px;
+}
+
+.status-chip {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  min-width: 70px;
+  border-radius: 999px;
+  padding: 3px 8px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.status-chip.ready {
+  background: #e7f4ec;
+  color: #1f6f45;
+}
+
+.status-chip.stageable {
+  background: #e8eef8;
+  color: #245b93;
+}
+
+.status-chip.blocked {
+  background: #f8e8e8;
+  color: #a43131;
+}
+
+.status-chip.cached {
+  background: #f1eee8;
+  color: #755a24;
 }
 
 .log-list {

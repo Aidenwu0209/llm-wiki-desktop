@@ -6,14 +6,20 @@
 
 - 创建或打开 open-llm-wiki vault。
 - 将 PDF / Markdown / txt 导入到 `raw/inbox/`，并按 SHA-256 跳过重复文件。
+- 生成桌面端 ingest plan：扫描 `raw/inbox/` 与 `raw/*_markdown/combined.md`，按 SHA-256 标记 `ready`、`stageable`、`blocked`、`cached`，并写入 `_state/desktop-ingest-plan.json`。
+- 对 Markdown / txt 输入执行本地 staging，生成 `raw/<source>_markdown/combined.md` 和 `manifest.json`，再交给 open-llm-wiki runtime。
+- 一键运行串行 ingest pipeline：source discovery -> corpus ingest -> claims -> normalize -> semantic QA -> contradictions -> science review -> lint。
 - 检测 vault schema、runtime 是否安装、Obsidian profile 是否启用。
 - 调用白名单 runtime 命令：
   - `wiki_lint.py`
   - `wiki_obsidian_setup.py`
   - `wiki_status.py`
   - `wiki_discover_sources.py`
+  - `wiki_ingest_corpus.py`
   - `wiki_claims.py`
+  - `wiki_normalize_metrics.py`
   - `wiki_semantic_qa.py`
+  - `wiki_contradictions.py`
   - `wiki_science_review.py`
   - `wiki_concept_revision.py`
 - 浏览 `sources/`、`drafts/`、`concepts/`、`qa-reports/` 和 `raw/inbox/`。
@@ -27,7 +33,17 @@
 - 桌面端不重写历史 QA report。
 - 桌面端不默认上传 raw documents。
 - 桌面端不静默应用 query writeback。
-- 所有 runtime 写入都通过 open-llm-wiki 脚本完成，桌面端只保存任务日志和 `raw/inbox/` 导入结果。
+- 桌面端只对 Markdown / txt 做可审计 staging；PDF 仍需要 runtime parser 生成 parsed Markdown artifact。
+- 所有 source page、claim、QA、contradiction、concept 写入都通过 open-llm-wiki 脚本完成，桌面端只保存任务日志、ingest plan、staging manifest 和 `raw/inbox/` 导入结果。
+
+## Ingest 编排
+
+桌面端借鉴 `nashsu/llm_wiki` 的几个工程化点，但保持 open-llm-wiki 的 runtime-first 边界：
+
+- SHA-256 plan/cache：未变化的输入会显示为 `cached`。
+- 显式状态：`ready` 表示已有 `combined.md`，`stageable` 表示可本地 staging，`blocked` 表示需要 PDF/parser 先产出 artifact。
+- 串行执行：一键 pipeline 不并发调用 runtime，避免多个任务同时改 `index.md`、`claims/` 或 QA report。
+- 非越权写入：desktop 不发布 source，不改 QA verdict，不直接修改 concept synthesis。
 
 ## 开发
 
