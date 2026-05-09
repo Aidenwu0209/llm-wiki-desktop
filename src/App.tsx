@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import {
   AlertTriangle,
   Archive,
+  Check,
   CheckCircle2,
   ClipboardList,
   Database,
@@ -11,22 +12,30 @@ import {
   ListChecks,
   Play,
   RefreshCw,
+  RotateCcw,
   Search,
   Settings,
   ShieldCheck,
   SquareStack,
   TerminalSquare,
+  Wrench,
+  XCircle,
 } from "lucide-react";
 import {
   createVault,
   importToInbox,
   inspectVault,
+  listClaimLedger,
   openPath,
   planIngest,
+  repairObsidianTemplates,
   runIngestPipeline,
   runRuntimeCommand,
+  setClaimVerdict,
+  setDashboardActionStatus,
+  setIngestJobStatus,
 } from "./tauri";
-import type { IngestPlan, RuntimeSettings, TaskLog, VaultFile, VaultStatus } from "./types";
+import type { ClaimLedgerItem, IngestPlan, RuntimeSettings, TaskLog, VaultFile, VaultStatus } from "./types";
 
 const runtimeActions = [
   { id: "lint", label: "运行 lint", icon: ListChecks },
@@ -100,7 +109,10 @@ function App() {
   const [status, setStatus] = useState<VaultStatus | null>(null);
   const [logs, setLogs] = useState<TaskLog[]>([]);
   const [ingestPlan, setIngestPlan] = useState<IngestPlan | null>(null);
+  const [claims, setClaims] = useState<ClaimLedgerItem[]>([]);
   const [selectedFile, setSelectedFile] = useState<VaultFile | null>(null);
+  const [actionFilter, setActionFilter] = useState("open");
+  const [claimFilter, setClaimFilter] = useState("needs_review");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -128,9 +140,11 @@ function App() {
     setBusy("inspect");
     setError(null);
     try {
+      const [nextPlan, nextClaims] = await Promise.all([planIngest(path), listClaimLedger(path)]);
       const nextStatus = await inspectVault(path);
       setStatus(nextStatus);
-      setIngestPlan(await planIngest(path));
+      setIngestPlan(nextPlan);
+      setClaims(nextClaims);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -149,6 +163,8 @@ function App() {
       const next = await createVault(newVaultPath.trim(), settings, enableObsidian);
       setVaultPath(next.path);
       setStatus(next);
+      setClaims([]);
+      setIngestPlan(null);
       setNewVaultPath("");
     } catch (err) {
       setError(String(err));
@@ -201,8 +217,74 @@ function App() {
     setBusy("plan_ingest");
     setError(null);
     try {
-      setIngestPlan(await planIngest(vaultPath));
+      const nextPlan = await planIngest(vaultPath);
+      const nextClaims = await listClaimLedger(vaultPath);
+      setIngestPlan(nextPlan);
+      setClaims(nextClaims);
+      setStatus(await inspectVault(vaultPath));
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleRepairTemplates() {
+    if (!vaultPath) return;
+    setBusy("repair_templates");
+    setError(null);
+    try {
+      setStatus(await repairObsidianTemplates(vaultPath));
       await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleActionStatus(actionId: string, status: "open" | "resolved" | "ignored") {
+    if (!vaultPath) return;
+    setBusy(`action:${actionId}`);
+    setError(null);
+    try {
+      setIngestPlan(await setDashboardActionStatus(vaultPath, actionId, status));
+      setStatus(await inspectVault(vaultPath));
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleJobStatus(
+    jobId: string,
+    status: "queued" | "running" | "blocked" | "cancelled" | "succeeded" | "failed",
+  ) {
+    if (!vaultPath) return;
+    setBusy(`job:${jobId}`);
+    setError(null);
+    try {
+      setIngestPlan(await setIngestJobStatus(vaultPath, jobId, status));
+      setStatus(await inspectVault(vaultPath));
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleClaimVerdict(
+    claimId: string,
+    verdict: "supported" | "needs_review" | "stale" | "contradicted" | "ignored" | "unknown",
+  ) {
+    if (!vaultPath) return;
+    setBusy(`claim:${claimId}`);
+    setError(null);
+    try {
+      setClaims(await setClaimVerdict(vaultPath, claimId, verdict));
+      setIngestPlan(await planIngest(vaultPath));
+      setStatus(await inspectVault(vaultPath));
     } catch (err) {
       setError(String(err));
     } finally {
@@ -232,7 +314,14 @@ function App() {
   const actions = ingestPlan?.actions ?? [];
   const jobs = ingestPlan?.jobs ?? [];
   const artifacts = ingestPlan?.artifacts ?? [];
+  const registry = ingestPlan?.registry ?? [];
   const impactEdges = ingestPlan?.impactEdges ?? [];
+  const visibleActions = actions.filter((action) => actionFilter === "all" || action.status === actionFilter);
+  const visibleClaims = claims.filter((claim) => {
+    if (claimFilter === "all") return true;
+    if (claimFilter === "needs_review") return claim.needsReview || claim.status === "needs_review" || claim.verdict === "needs_review";
+    return claim.status === claimFilter || claim.verdict === claimFilter;
+  });
   const vaultFilePath = (path?: string | null) => {
     if (!path) return vaultPath;
     if (path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path)) return path;
@@ -334,6 +423,7 @@ function App() {
           <button onClick={handleImport} disabled={!vaultPath || busy === "import"}><FileInput size={16} />导入到 inbox</button>
           <button onClick={handlePlanIngest} disabled={!vaultPath || busy === "plan_ingest"}><ListChecks size={16} />规划 ingest</button>
           <button onClick={handleIngestPipeline} disabled={!vaultPath || busy === "ingest_pipeline" || runnableIngest === 0}><Play size={16} />运行 ingest pipeline</button>
+          <button onClick={handleRepairTemplates} disabled={!vaultPath || busy === "repair_templates"}><Wrench size={16} />修复模板</button>
           <button onClick={() => vaultPath && openPath(vaultPath)} disabled={!vaultPath}><FolderOpen size={16} />打开文件夹</button>
           {runtimeActions.map((action) => {
             const Icon = action.icon;
@@ -349,17 +439,36 @@ function App() {
           <section className="panel large">
             <div className="section-head">
               <h2>下一步行动</h2>
-              <span>{actions.length} actions</span>
+              <select className="compact-select" value={actionFilter} onChange={(event) => setActionFilter(event.target.value)}>
+                <option value="open">open</option>
+                <option value="resolved">resolved</option>
+                <option value="ignored">ignored</option>
+                <option value="all">all</option>
+              </select>
             </div>
             <div className="action-list">
-              {actions.length === 0 && <p className="empty">暂无待处理行动。</p>}
-              {actions.map((action) => (
-                <button key={action.actionId} onClick={() => action.links[0] && openPath(vaultFilePath(action.links[0].path))}>
+              {visibleActions.length === 0 && <p className="empty">暂无待处理行动。</p>}
+              {visibleActions.map((action) => (
+                <div className="work-item" key={action.actionId}>
                   <span className={classNames("status-chip", action.severity)}>{action.severity}</span>
                   <strong>{action.title}</strong>
                   <em>{action.body}</em>
-                  <code>{action.recommendedAction} · {action.reason}</code>
-                </button>
+                  <code>{action.status} · {action.recommendedAction} · affected {action.affectedObjects.length} · {action.reason}</code>
+                  <div className="inline-actions">
+                    <button title="打开关联文件" onClick={() => action.links[0] && openPath(vaultFilePath(action.links[0].path))}>
+                      <FolderOpen size={14} />打开
+                    </button>
+                    <button title="标记已解决" onClick={() => handleActionStatus(action.actionId, "resolved")} disabled={action.status === "resolved"}>
+                      <Check size={14} />解决
+                    </button>
+                    <button title="忽略该行动" onClick={() => handleActionStatus(action.actionId, "ignored")} disabled={action.status === "ignored"}>
+                      <XCircle size={14} />忽略
+                    </button>
+                    <button title="重新打开行动" onClick={() => handleActionStatus(action.actionId, "open")} disabled={action.status === "open"}>
+                      <RotateCcw size={14} />重开
+                    </button>
+                  </div>
+                </div>
               ))}
             </div>
           </section>
@@ -372,11 +481,87 @@ function App() {
             <div className="queue-list">
               {jobs.length === 0 && <p className="empty">暂无 source 任务。</p>}
               {jobs.map((job) => (
-                <button key={job.jobId} onClick={() => openPath(vaultFilePath(job.artifactPath || job.sourcePath))}>
+                <div className="work-item" key={job.jobId}>
                   <span className={classNames("status-chip", job.status)}>{job.status}</span>
                   <strong>{job.fileName}</strong>
                   <em>{job.currentStep} · {job.nextAction}</em>
                   <code>{job.reason}</code>
+                  <div className="inline-actions">
+                    <button title="打开当前 artifact 或原始 source" onClick={() => openPath(vaultFilePath(job.artifactPath || job.sourcePath))}>
+                      <FolderOpen size={14} />打开
+                    </button>
+                    <button title="重新排队" onClick={() => handleJobStatus(job.jobId, "queued")} disabled={job.status === "queued"}>
+                      <RotateCcw size={14} />重试
+                    </button>
+                    <button title="取消本 source 的 pipeline 处理" onClick={() => handleJobStatus(job.jobId, "cancelled")} disabled={job.status === "cancelled"}>
+                      <XCircle size={14} />取消
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+
+        <div className="main-grid">
+          <section className="panel large">
+            <div className="section-head">
+              <h2>Claim Ledger</h2>
+              <select className="compact-select" value={claimFilter} onChange={(event) => setClaimFilter(event.target.value)}>
+                <option value="needs_review">needs_review</option>
+                <option value="stale">stale</option>
+                <option value="contradicted">contradicted</option>
+                <option value="supported">supported</option>
+                <option value="ignored">ignored</option>
+                <option value="all">all</option>
+              </select>
+            </div>
+            <div className="claim-list">
+              {visibleClaims.length === 0 && <p className="empty">暂无匹配 claims。</p>}
+              {visibleClaims.map((claim) => (
+                <div className="work-item" key={claim.claimId}>
+                  <span className={classNames("status-chip", claim.verdict)}>{claim.verdict}</span>
+                  <strong>{claim.claimText}</strong>
+                  <em>{claim.sourceId || claim.sourceUuid || claim.sourcePath || `line ${claim.line}`}</em>
+                  <code>{claim.evidenceHash || "no evidence hash"} · {claim.evidenceQuote || "no quote"}</code>
+                  <div className="inline-actions">
+                    <button title="打开 Claim Ledger" onClick={() => openPath(vaultFilePath("claims/claims.jsonl"))}>
+                      <FolderOpen size={14} />打开
+                    </button>
+                    <button title="标记为支持" onClick={() => handleClaimVerdict(claim.claimId, "supported")} disabled={claim.verdict === "supported"}>
+                      <Check size={14} />支持
+                    </button>
+                    <button title="标记为待审" onClick={() => handleClaimVerdict(claim.claimId, "needs_review")} disabled={claim.verdict === "needs_review"}>
+                      <AlertTriangle size={14} />待审
+                    </button>
+                    <button title="标记为失效" onClick={() => handleClaimVerdict(claim.claimId, "stale")} disabled={claim.verdict === "stale"}>
+                      <RotateCcw size={14} />失效
+                    </button>
+                    <button title="标记为冲突" onClick={() => handleClaimVerdict(claim.claimId, "contradicted")} disabled={claim.verdict === "contradicted"}>
+                      <XCircle size={14} />冲突
+                    </button>
+                    <button title="忽略该 claim" onClick={() => handleClaimVerdict(claim.claimId, "ignored")} disabled={claim.verdict === "ignored"}>
+                      <XCircle size={14} />忽略
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="panel large">
+            <div className="section-head">
+              <h2>Source Registry</h2>
+              <span>{registry.length} rows</span>
+            </div>
+            <div className="registry-list">
+              {registry.length === 0 && <p className="empty">暂无 registry 投影。</p>}
+              {registry.map((entry) => (
+                <button key={`${entry.sourceUuid}-${entry.sourcePath}`} onClick={() => openPath(vaultFilePath(entry.sourcePath))}>
+                  <span className={classNames("status-chip", entry.status)}>{entry.status}</span>
+                  <strong>{entry.sourcePath}</strong>
+                  <em>{entry.sourceId || entry.sourceUuid}{entry.duplicateOf ? ` · duplicate of ${entry.duplicateOf}` : ""}</em>
+                  <code>{entry.artifactSha256 || "no artifact hash"} · {entry.parser || "parser pending"}</code>
                 </button>
               ))}
             </div>
@@ -467,8 +652,10 @@ function App() {
                 <button key={artifact.artifactPath} onClick={() => openPath(vaultFilePath(artifact.manifestPath || artifact.artifactPath))}>
                   <span className={classNames("status-chip", artifact.status)}>{artifact.status}</span>
                   <strong>{artifact.artifactPath}</strong>
-                  <em>{artifact.parser || "legacy parser"} · chunks {artifact.chunkCount} · lines {artifact.anchorsLines ? "yes" : "no"} · pages {artifact.anchorsPages ? "yes" : "no"}</em>
-                  {artifact.limitations[0] && <code>{artifact.limitations[0]}</code>}
+                  <em>
+                    {artifact.parser || "legacy parser"} · chunks {artifact.chunkCount} · lines {artifact.anchorsLines ? "yes" : "no"} · pages {artifact.anchorsPages ? "yes" : "no"} · tables {artifact.anchorsTables ? "yes" : "no"} · figures {artifact.anchorsFigures ? "yes" : "no"}
+                  </em>
+                  <code>{artifact.parseLogPath || artifact.tablesPath || artifact.figuresPath || artifact.limitations[0] || "contract complete"}</code>
                 </button>
               ))}
             </div>

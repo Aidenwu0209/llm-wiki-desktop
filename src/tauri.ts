@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  ClaimLedgerItem,
   ImportResult,
   IngestPipelineResult,
   IngestPlan,
@@ -27,12 +28,44 @@ export function createVault(
   });
 }
 
+export function repairObsidianTemplates(vaultPath: string): Promise<VaultStatus> {
+  return invoke("repair_obsidian_templates", { vaultPath });
+}
+
 export function importToInbox(vaultPath: string, paths: string[]): Promise<ImportResult> {
   return invoke("import_to_inbox", { vaultPath, paths });
 }
 
 export function planIngest(vaultPath: string): Promise<IngestPlan> {
   return invoke("plan_ingest", { vaultPath });
+}
+
+export function setDashboardActionStatus(
+  vaultPath: string,
+  actionId: string,
+  status: "open" | "resolved" | "ignored",
+): Promise<IngestPlan> {
+  return invoke("set_dashboard_action_status", { vaultPath, actionId, status });
+}
+
+export function setIngestJobStatus(
+  vaultPath: string,
+  jobId: string,
+  status: "queued" | "running" | "blocked" | "cancelled" | "succeeded" | "failed",
+): Promise<IngestPlan> {
+  return invoke("set_ingest_job_status", { vaultPath, jobId, status });
+}
+
+export function listClaimLedger(vaultPath: string): Promise<ClaimLedgerItem[]> {
+  return invoke("list_claim_ledger", { vaultPath });
+}
+
+export function setClaimVerdict(
+  vaultPath: string,
+  claimId: string,
+  verdict: "supported" | "needs_review" | "stale" | "contradicted" | "ignored" | "unknown",
+): Promise<ClaimLedgerItem[]> {
+  return invoke("set_claim_verdict", { vaultPath, claimId, verdict });
 }
 
 export function runIngestPipeline(

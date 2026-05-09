@@ -391,7 +391,9 @@ select {
 .action-list,
 .queue-list,
 .contract-list,
-.impact-list {
+.impact-list,
+.claim-list,
+.registry-list {
   display: grid;
   gap: 8px;
   max-height: 270px;
@@ -399,10 +401,10 @@ select {
 }
 
 .ingest-list button,
-.action-list button,
-.queue-list button,
 .contract-list button,
-.impact-list button {
+.impact-list button,
+.registry-list button,
+.work-item {
   position: relative;
   display: block;
   width: 100%;
@@ -417,35 +419,35 @@ select {
 .ingest-list strong,
 .ingest-list em,
 .ingest-list code,
-.action-list strong,
-.action-list em,
-.action-list code,
-.queue-list strong,
-.queue-list em,
-.queue-list code,
 .contract-list strong,
 .contract-list em,
 .contract-list code,
 .impact-list strong,
 .impact-list em,
-.impact-list code {
+.impact-list code,
+.registry-list strong,
+.registry-list em,
+.registry-list code,
+.work-item strong,
+.work-item em,
+.work-item code {
   display: block;
 }
 
 .ingest-list strong,
-.action-list strong,
-.queue-list strong,
 .contract-list strong,
-.impact-list strong {
+.impact-list strong,
+.registry-list strong,
+.work-item strong {
   overflow-wrap: anywhere;
   font-size: 13px;
 }
 
 .ingest-list em,
-.action-list em,
-.queue-list em,
 .contract-list em,
-.impact-list em {
+.impact-list em,
+.registry-list em,
+.work-item em {
   margin-top: 4px;
   color: #64706a;
   font-size: 12px;
@@ -453,16 +455,40 @@ select {
 }
 
 .ingest-list code,
-.action-list code,
-.queue-list code,
 .contract-list code,
-.impact-list code {
+.impact-list code,
+.registry-list code,
+.work-item code {
   margin-top: 6px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: #40514a;
   font-size: 11px;
+}
+
+.work-item {
+  border: 1px solid #d8ded9;
+  border-radius: 6px;
+  background: #fbfcfa;
+}
+
+.inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.inline-actions button {
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.compact-select {
+  width: auto;
+  min-width: 132px;
 }
 
 .status-chip {
@@ -510,22 +536,33 @@ select {
 }
 
 .status-chip.succeeded,
+.status-chip.resolved,
+.status-chip.supported,
 .status-chip.p3 {
   background: #e7f4ec;
   color: #1f6f45;
 }
 
 .status-chip.legacy,
+.status-chip.needs_review,
 .status-chip.p1 {
   background: #fff0d5;
   color: #8a5d10;
 }
 
 .status-chip.stale,
+.status-chip.contradicted,
 .status-chip.failed,
 .status-chip.p0 {
   background: #f8e8e8;
   color: #a43131;
+}
+
+.status-chip.cancelled,
+.status-chip.ignored,
+.status-chip.unknown {
+  background: #edf0ee;
+  color: #64706a;
 }
 
 .log-list {
