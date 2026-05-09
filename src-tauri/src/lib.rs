@@ -21,6 +21,10 @@ struct VaultCounts {
     claims_needing_review: usize,
     science_review_queue: usize,
     growth_queue: usize,
+    stale_claims: usize,
+    contradicted_claims: usize,
+    ingest_jobs: usize,
+    actions: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -104,6 +108,11 @@ struct IngestPlan {
     plan_path: String,
     summary: IngestPlanSummary,
     entries: Vec<IngestPlanEntry>,
+    registry: Vec<DesktopRegistryEntry>,
+    artifacts: Vec<ArtifactContractSummary>,
+    jobs: Vec<DesktopIngestJob>,
+    actions: Vec<DashboardAction>,
+    impact_edges: Vec<ImpactEdge>,
 }
 
 #[derive(Debug, Serialize)]
@@ -133,6 +142,105 @@ struct DesktopIngestPublishedRow {
     status: String,
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct DashboardLink {
+    label: String,
+    path: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct DashboardAction {
+    action_id: String,
+    kind: String,
+    severity: String,
+    title: String,
+    body: String,
+    reason: String,
+    status: String,
+    recommended_action: String,
+    primary_object_type: String,
+    primary_object_id: String,
+    links: Vec<DashboardLink>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct DesktopIngestJob {
+    job_id: String,
+    source_uuid: String,
+    source_path: String,
+    file_name: String,
+    artifact_path: Option<String>,
+    status: String,
+    current_step: String,
+    next_action: String,
+    reason: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct DesktopRegistryEntry {
+    source_uuid: String,
+    source_id: Option<String>,
+    source_path: String,
+    source_sha256: String,
+    artifact_path: Option<String>,
+    artifact_sha256: Option<String>,
+    parser: Option<String>,
+    parser_version: Option<String>,
+    status: String,
+    last_error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ArtifactContractSummary {
+    source_path: String,
+    artifact_path: String,
+    manifest_path: Option<String>,
+    chunks_path: Option<String>,
+    parser: Option<String>,
+    parser_version: Option<String>,
+    source_sha256: Option<String>,
+    artifact_sha256: Option<String>,
+    status: String,
+    chunk_count: usize,
+    anchors_lines: bool,
+    anchors_pages: bool,
+    limitations: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ImpactEdge {
+    edge_id: String,
+    from_type: String,
+    from_id: String,
+    to_type: String,
+    to_id: String,
+    relationship: String,
+    status: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ChunkRow {
+    chunk_id: String,
+    source_uuid: String,
+    source_id: Option<String>,
+    artifact_path: String,
+    heading_path: Vec<String>,
+    line_start: usize,
+    line_end: usize,
+    char_start: usize,
+    char_end: usize,
+    kind: String,
+    text_hash: String,
+    token_count: usize,
+}
+
 struct IngestPipelineLock {
     path: PathBuf,
 }
@@ -147,6 +255,10 @@ impl Drop for IngestPipelineLock {
 struct ClaimRow {
     #[serde(default)]
     needs_review: bool,
+    #[serde(default)]
+    verdict: String,
+    #[serde(default)]
+    status: String,
 }
 
 fn to_display(path: &Path) -> String {
@@ -188,6 +300,66 @@ fn write_text(path: &Path, text: &str) -> Result<(), String> {
     fs::write(path, text).map_err(|e| format!("failed to write {}: {e}", path.display()))
 }
 
+fn rel_path(vault: &Path, path: &Path) -> String {
+    path.strip_prefix(vault)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .to_string()
+}
+
+fn sha256_text(text: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(text.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn short_hash(hash: &str) -> String {
+    hash.get(..12).unwrap_or(hash).to_string()
+}
+
+fn source_uuid(hash: &str) -> String {
+    format!("sha256:{hash}")
+}
+
+fn write_jsonl<T: Serialize>(path: &Path, rows: &[T]) -> Result<(), String> {
+    let mut rendered = String::new();
+    for row in rows {
+        rendered.push_str(
+            &serde_json::to_string(row)
+                .map_err(|e| format!("failed to serialize jsonl row: {e}"))?,
+        );
+        rendered.push('\n');
+    }
+    write_text(path, &rendered)
+}
+
+fn read_json_value(path: &Path) -> Option<serde_json::Value> {
+    serde_json::from_str(&read_text(path)).ok()
+}
+
+fn json_string(value: &serde_json::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .filter(|item| !item.is_empty())
+        .map(ToString::to_string)
+}
+
+fn detect_mime(path: &Path) -> String {
+    let ext = path
+        .extension()
+        .and_then(OsStr::to_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "md" | "markdown" => "text/markdown",
+        "txt" => "text/plain",
+        "pdf" => "application/pdf",
+        _ => "application/octet-stream",
+    }
+    .to_string()
+}
+
 fn list_markdown(dir: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     if let Ok(read_dir) = fs::read_dir(dir) {
@@ -209,9 +381,11 @@ fn count_jsonl(path: &Path) -> usize {
         .count()
 }
 
-fn count_claims(path: &Path) -> (usize, usize) {
+fn count_claims(path: &Path) -> (usize, usize, usize, usize) {
     let mut total = 0;
     let mut review = 0;
+    let mut stale = 0;
+    let mut contradicted = 0;
     for line in read_text(path)
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -221,9 +395,17 @@ fn count_claims(path: &Path) -> (usize, usize) {
             if row.needs_review {
                 review += 1;
             }
+            let verdict = row.verdict.to_ascii_lowercase();
+            let status = row.status.to_ascii_lowercase();
+            if verdict == "stale" || status == "stale" {
+                stale += 1;
+            }
+            if verdict == "contradicted" || status == "contradicted" {
+                contradicted += 1;
+            }
         }
     }
-    (total, review)
+    (total, review, stale, contradicted)
 }
 
 fn parse_frontmatter(path: &Path) -> HashMap<String, String> {
@@ -351,7 +533,8 @@ fn inspect_vault(vault_path: String) -> Result<VaultStatus, String> {
         }
     }
 
-    let (claims, claims_needing_review) = count_claims(&vault.join("claims").join("claims.jsonl"));
+    let (claims, claims_needing_review, stale_claims, contradicted_claims) =
+        count_claims(&vault.join("claims").join("claims.jsonl"));
     let mut files = Vec::new();
     for path in list_markdown(&vault.join("sources")) {
         files.push(file_item(&vault, &path, "source"));
@@ -407,6 +590,10 @@ fn inspect_vault(vault_path: String) -> Result<VaultStatus, String> {
                 &vault.join("_state").join("science-review-queue.jsonl"),
             ),
             growth_queue: count_jsonl(&vault.join("_state").join("growth-queue.jsonl")),
+            stale_claims,
+            contradicted_claims,
+            ingest_jobs: count_jsonl(&vault.join("_state").join("desktop-ingest-jobs.jsonl")),
+            actions: count_jsonl(&vault.join("_state").join("desktop-actions.jsonl")),
         },
         files,
         errors,
@@ -494,6 +681,14 @@ fn create_minimal_vault(vault: &Path) -> Result<(), String> {
         "# LLM Wiki Vault\n\nSelect an open-llm-wiki runtime path to install scripts.\n",
     )?;
     write_text(vault.join("log.md").as_path(), "# Wiki Log\n")?;
+    write_text(
+        vault.join("templates/source.md").as_path(),
+        "---\ntype: source\nsource_id: \"\"\nsource_uuid: \"\"\nstatus: draft\nsource_sha256: \"\"\nartifact_sha256: \"\"\nparser: \"\"\nparser_version: \"\"\nqa_verdict: unreviewed\nclaims_total: 0\nclaims_supported: 0\nclaims_needing_review: 0\nconcepts: []\n---\n\n# Source Title\n\n## 一句话结论\n\n## 为什么重要\n\n## 关键贡献\n\n## 关键 Claims\n\n| Claim | Verdict | Evidence |\n|---|---|---|\n\n## 关键指标 / 实验结果\n\n## 方法与数据\n\n## 局限与争议\n\n## 相关 Concepts\n\n## 证据与原文锚点\n\n## QA / Review 状态\n",
+    )?;
+    write_text(
+        vault.join("templates/concept.md").as_path(),
+        "---\ntype: concept\nconcept_id: \"\"\nstatus: current\nsupporting_claims: 0\ncontradicted_claims: 0\nstale_claims: 0\nrelated_concepts: []\n---\n\n# Concept Name\n\n## 定义\n\n## 核心直觉\n\n## 为什么重要\n\n## 关键机制\n\n## 支持证据\n\n## 反例 / 争议 / 限制\n\n## 相关方法与概念\n\n## 代表 Sources\n\n## 待确认问题\n",
+    )?;
     write_text(vault.join("claims/claims.jsonl").as_path(), "")?;
     write_text(vault.join("_state/growth-queue.jsonl").as_path(), "")?;
     write_text(
@@ -501,6 +696,17 @@ fn create_minimal_vault(vault: &Path) -> Result<(), String> {
         "# ID Counter\nnext: 1\n",
     )?;
     write_text(vault.join("_state/source-registry.jsonl").as_path(), "")?;
+    write_text(
+        vault.join("_state/desktop-source-registry.jsonl").as_path(),
+        "",
+    )?;
+    write_text(vault.join("_state/desktop-artifacts.jsonl").as_path(), "")?;
+    write_text(vault.join("_state/desktop-ingest-jobs.jsonl").as_path(), "")?;
+    write_text(vault.join("_state/desktop-actions.jsonl").as_path(), "")?;
+    write_text(
+        vault.join("_state/desktop-impact-graph.jsonl").as_path(),
+        "",
+    )?;
     write_text(
         vault.join("_state/science-review-queue.jsonl").as_path(),
         "",
@@ -758,13 +964,195 @@ fn load_published_ingest_keys(vault: &Path) -> HashSet<(String, String)> {
 
 fn artifact_manifest_source_hash(artifact: &Path) -> Option<String> {
     let manifest = artifact.parent()?.join("manifest.json");
-    let value: serde_json::Value = serde_json::from_str(&read_text(&manifest)).ok()?;
+    let value = read_json_value(&manifest)?;
     value
         .get("source_sha256")
         .or_else(|| value.get("sha256"))
         .and_then(serde_json::Value::as_str)
         .filter(|hash| !hash.is_empty())
         .map(ToString::to_string)
+}
+
+fn artifact_manifest(artifact: &Path) -> Option<serde_json::Value> {
+    read_json_value(&artifact.parent()?.join("manifest.json"))
+}
+
+fn manifest_limitations(manifest: &serde_json::Value) -> Vec<String> {
+    manifest
+        .get("limitations")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn manifest_anchor(manifest: &serde_json::Value, key: &str) -> bool {
+    manifest
+        .get("anchors")
+        .and_then(|anchors| anchors.get(key))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn token_count(text: &str) -> usize {
+    text.split_whitespace().count()
+}
+
+fn chunk_rows(vault: &Path, source_sha256: &str, artifact: &Path, content: &str) -> Vec<ChunkRow> {
+    let source_uuid = source_uuid(source_sha256);
+    let artifact_path = rel_path(vault, artifact);
+    let mut chunks = Vec::new();
+    let mut heading_path: Vec<String> = Vec::new();
+    let mut buffer = String::new();
+    let mut line_start = 1usize;
+    let mut char_start = 0usize;
+    let mut current_char = 0usize;
+    let mut current_heading = heading_path.clone();
+
+    let flush = |chunks: &mut Vec<ChunkRow>,
+                 buffer: &mut String,
+                 line_start: usize,
+                 line_end: usize,
+                 char_start: usize,
+                 char_end: usize,
+                 heading_path: Vec<String>| {
+        let text = buffer.trim_end();
+        if text.is_empty() {
+            buffer.clear();
+            return;
+        }
+        let text_hash = sha256_text(text);
+        let idx = chunks.len() + 1;
+        chunks.push(ChunkRow {
+            chunk_id: format!("{source_uuid}:{idx:05}"),
+            source_uuid: source_uuid.clone(),
+            source_id: None,
+            artifact_path: artifact_path.clone(),
+            heading_path,
+            line_start,
+            line_end,
+            char_start,
+            char_end,
+            kind: if text.contains('|') {
+                "table_or_text".to_string()
+            } else {
+                "paragraph".to_string()
+            },
+            text_hash,
+            token_count: token_count(text),
+        });
+        buffer.clear();
+    };
+
+    for (index, line) in content.lines().enumerate() {
+        let line_no = index + 1;
+        let line_with_newline = format!("{line}\n");
+        let is_heading = line.starts_with('#');
+        if is_heading && !buffer.trim().is_empty() {
+            flush(
+                &mut chunks,
+                &mut buffer,
+                line_start,
+                line_no.saturating_sub(1),
+                char_start,
+                current_char,
+                current_heading.clone(),
+            );
+            line_start = line_no;
+            char_start = current_char;
+        }
+        if let Some((marks, title)) = line.split_once(' ') {
+            if marks.chars().all(|ch| ch == '#') {
+                let level = marks.len().clamp(1, 6);
+                heading_path.truncate(level.saturating_sub(1));
+                heading_path.push(title.trim().to_string());
+            }
+        }
+        if buffer.is_empty() {
+            line_start = line_no;
+            char_start = current_char;
+            current_heading = heading_path.clone();
+        }
+        buffer.push_str(&line_with_newline);
+        current_char += line_with_newline.len();
+        if buffer.lines().count() >= 80 || token_count(&buffer) >= 420 {
+            flush(
+                &mut chunks,
+                &mut buffer,
+                line_start,
+                line_no,
+                char_start,
+                current_char,
+                current_heading.clone(),
+            );
+        }
+    }
+
+    if !buffer.trim().is_empty() {
+        let last_line = content.lines().count().max(line_start);
+        flush(
+            &mut chunks,
+            &mut buffer,
+            line_start,
+            last_line,
+            char_start,
+            current_char,
+            current_heading,
+        );
+    }
+    chunks
+}
+
+fn write_text_artifact_contract(
+    vault: &Path,
+    source: &Path,
+    artifact: &Path,
+    source_sha256: &str,
+    content: &str,
+) -> Result<(), String> {
+    write_text(artifact, content)?;
+    let artifact_sha256 = sha256_file(artifact)?;
+    let parent = artifact
+        .parent()
+        .ok_or_else(|| "artifact has no parent directory".to_string())?;
+    let chunks = chunk_rows(vault, source_sha256, artifact, content);
+    write_jsonl(&parent.join("chunks.jsonl"), &chunks)?;
+    let manifest = serde_json::json!({
+        "source_uuid": source_uuid(source_sha256),
+        "source_path": rel_path(vault, source),
+        "source_sha256": source_sha256,
+        "artifact_sha256": artifact_sha256,
+        "combined": rel_path(vault, artifact),
+        "chunks": rel_path(vault, &parent.join("chunks.jsonl")),
+        "parser": "llm-wiki-desktop-text-stager",
+        "parser_version": env!("CARGO_PKG_VERSION"),
+        "created_at": Local::now().to_rfc3339(),
+        "staged_at": Local::now().to_rfc3339(),
+        "mime": detect_mime(source),
+        "chunk_count": chunks.len(),
+        "anchors": {
+            "pages": false,
+            "lines": true,
+            "tables": false,
+            "figures": false,
+            "equations": false
+        },
+        "limitations": [
+            "desktop text staging preserves line anchors only",
+            "page, table, figure, and equation anchors require a runtime parser"
+        ]
+    });
+    write_text(
+        &parent.join("manifest.json"),
+        &(serde_json::to_string_pretty(&manifest)
+            .map_err(|e| format!("failed to serialize manifest: {e}"))?
+            + "\n"),
+    )
 }
 
 fn parser_hint_for_source(source: &Path, artifact: &Path) -> String {
@@ -942,6 +1330,331 @@ fn append_cache_row(
     )
 }
 
+fn artifact_summary_for_entry(
+    vault: &Path,
+    entry: &IngestPlanEntry,
+) -> Option<ArtifactContractSummary> {
+    let artifact_path = entry.artifact_path.as_ref()?;
+    let artifact = PathBuf::from(artifact_path);
+    if !artifact.is_file() {
+        return None;
+    }
+    let parent = artifact.parent()?;
+    let manifest_path = parent.join("manifest.json");
+    let chunks_path = parent.join("chunks.jsonl");
+    let manifest = read_json_value(&manifest_path);
+    let artifact_sha256 = sha256_file(&artifact).ok();
+    let manifest_source_sha = manifest.as_ref().and_then(|value| {
+        json_string(value, "source_sha256").or_else(|| json_string(value, "sha256"))
+    });
+    let status = if manifest.is_none() {
+        "legacy"
+    } else if manifest_source_sha
+        .as_ref()
+        .is_some_and(|manifest_hash| manifest_hash != &entry.sha256)
+    {
+        "stale"
+    } else {
+        "fresh"
+    }
+    .to_string();
+
+    Some(ArtifactContractSummary {
+        source_path: rel_path(vault, &PathBuf::from(&entry.source_path)),
+        artifact_path: rel_path(vault, &artifact),
+        manifest_path: manifest_path
+            .is_file()
+            .then(|| rel_path(vault, &manifest_path)),
+        chunks_path: chunks_path.is_file().then(|| rel_path(vault, &chunks_path)),
+        parser: manifest
+            .as_ref()
+            .and_then(|value| json_string(value, "parser")),
+        parser_version: manifest
+            .as_ref()
+            .and_then(|value| json_string(value, "parser_version")),
+        source_sha256: manifest_source_sha,
+        artifact_sha256,
+        status,
+        chunk_count: count_jsonl(&chunks_path),
+        anchors_lines: manifest
+            .as_ref()
+            .is_some_and(|value| manifest_anchor(value, "lines")),
+        anchors_pages: manifest
+            .as_ref()
+            .is_some_and(|value| manifest_anchor(value, "pages")),
+        limitations: manifest
+            .as_ref()
+            .map(manifest_limitations)
+            .unwrap_or_else(|| {
+                vec!["manifest.json is missing; artifact is treated as legacy".to_string()]
+            }),
+    })
+}
+
+fn registry_entry_for_plan_entry(vault: &Path, entry: &IngestPlanEntry) -> DesktopRegistryEntry {
+    let artifact = entry.artifact_path.as_ref().map(PathBuf::from);
+    let manifest = artifact.as_ref().and_then(|path| artifact_manifest(path));
+    let artifact_sha256 = artifact
+        .as_ref()
+        .filter(|path| path.is_file())
+        .and_then(|path| sha256_file(path).ok());
+    DesktopRegistryEntry {
+        source_uuid: source_uuid(&entry.sha256),
+        source_id: None,
+        source_path: rel_path(vault, &PathBuf::from(&entry.source_path)),
+        source_sha256: entry.sha256.clone(),
+        artifact_path: artifact.as_ref().map(|path| rel_path(vault, path)),
+        artifact_sha256,
+        parser: manifest
+            .as_ref()
+            .and_then(|value| json_string(value, "parser")),
+        parser_version: manifest
+            .as_ref()
+            .and_then(|value| json_string(value, "parser_version")),
+        status: entry.status.clone(),
+        last_error: (entry.status == "blocked").then(|| entry.reason.clone()),
+    }
+}
+
+fn job_for_plan_entry(vault: &Path, entry: &IngestPlanEntry) -> DesktopIngestJob {
+    let status = match entry.status.as_str() {
+        "published" => "succeeded",
+        "blocked" => "blocked",
+        _ => "queued",
+    };
+    let current_step = match entry.action.as_str() {
+        "stage_text_artifact" | "restage_text_artifact" => "stage_artifact",
+        "parse_required" => "parse_artifact",
+        "run_ingest_corpus" | "skip_staging" => "runtime_ingest",
+        "skip_runtime" => "published",
+        _ => "inspect",
+    };
+    DesktopIngestJob {
+        job_id: format!("job-{}", short_hash(&entry.sha256)),
+        source_uuid: source_uuid(&entry.sha256),
+        source_path: rel_path(vault, &PathBuf::from(&entry.source_path)),
+        file_name: entry.file_name.clone(),
+        artifact_path: entry
+            .artifact_path
+            .as_ref()
+            .map(|path| rel_path(vault, &PathBuf::from(path))),
+        status: status.to_string(),
+        current_step: current_step.to_string(),
+        next_action: entry.action.clone(),
+        reason: entry.reason.clone(),
+    }
+}
+
+fn action_for_plan_entry(vault: &Path, entry: &IngestPlanEntry) -> Option<DashboardAction> {
+    let mut links = vec![DashboardLink {
+        label: "source".to_string(),
+        path: rel_path(vault, &PathBuf::from(&entry.source_path)),
+    }];
+    if let Some(path) = &entry.artifact_path {
+        links.push(DashboardLink {
+            label: "artifact".to_string(),
+            path: rel_path(vault, &PathBuf::from(path)),
+        });
+    }
+    let (kind, severity, title, body, recommended_action) = match entry.status.as_str() {
+        "blocked" if entry.action == "parse_required" => (
+            "parse_required",
+            "p1",
+            format!("{} 需要解析或重新解析", entry.file_name),
+            entry
+                .parser_hint
+                .clone()
+                .unwrap_or_else(|| entry.reason.clone()),
+            "parse_artifact",
+        ),
+        "blocked" => (
+            "ingest_blocked",
+            "p2",
+            format!("{} 暂不能进入 ingest", entry.file_name),
+            entry.reason.clone(),
+            "inspect_source",
+        ),
+        "stageable" => (
+            "stage_artifact",
+            "p2",
+            format!("{} 可生成标准 artifact", entry.file_name),
+            "将文本/Markdown staging 为 combined.md、manifest.json 和 chunks.jsonl。".to_string(),
+            "run_ingest_pipeline",
+        ),
+        "ready" | "cached" => (
+            "ingest_ready",
+            "p2",
+            format!("{} 可发布到 runtime", entry.file_name),
+            "artifact 已准备好，可以进入 source ingest、claims、QA 和 lint 链路。".to_string(),
+            "run_ingest_pipeline",
+        ),
+        _ => return None,
+    };
+    Some(DashboardAction {
+        action_id: format!("act-{}-{}", kind, short_hash(&entry.sha256)),
+        kind: kind.to_string(),
+        severity: severity.to_string(),
+        title,
+        body,
+        reason: entry.reason.clone(),
+        status: "open".to_string(),
+        recommended_action: recommended_action.to_string(),
+        primary_object_type: "source".to_string(),
+        primary_object_id: source_uuid(&entry.sha256),
+        links,
+    })
+}
+
+fn impact_edges_for_plan_entry(vault: &Path, entry: &IngestPlanEntry) -> Vec<ImpactEdge> {
+    let mut edges = Vec::new();
+    let from_id = source_uuid(&entry.sha256);
+    if let Some(artifact_path) = &entry.artifact_path {
+        let artifact_rel = rel_path(vault, &PathBuf::from(artifact_path));
+        edges.push(ImpactEdge {
+            edge_id: format!("edge-{}-artifact", short_hash(&entry.sha256)),
+            from_type: "source".to_string(),
+            from_id: from_id.clone(),
+            to_type: "artifact".to_string(),
+            to_id: artifact_rel.clone(),
+            relationship: "parsed_to".to_string(),
+            status: entry.status.clone(),
+        });
+        let chunks = PathBuf::from(artifact_path)
+            .parent()
+            .map(|parent| parent.join("chunks.jsonl"));
+        if let Some(chunks) = chunks.filter(|path| path.is_file()) {
+            edges.push(ImpactEdge {
+                edge_id: format!("edge-{}-chunks", short_hash(&entry.sha256)),
+                from_type: "artifact".to_string(),
+                from_id: artifact_rel,
+                to_type: "chunks".to_string(),
+                to_id: rel_path(vault, &chunks),
+                relationship: "chunked_into".to_string(),
+                status: entry.status.clone(),
+            });
+        }
+    }
+    edges
+}
+
+fn build_ingest_contracts(
+    vault: &Path,
+    entries: &[IngestPlanEntry],
+) -> (
+    Vec<DesktopRegistryEntry>,
+    Vec<ArtifactContractSummary>,
+    Vec<DesktopIngestJob>,
+    Vec<DashboardAction>,
+    Vec<ImpactEdge>,
+) {
+    let registry = entries
+        .iter()
+        .map(|entry| registry_entry_for_plan_entry(vault, entry))
+        .collect::<Vec<_>>();
+    let artifacts = entries
+        .iter()
+        .filter_map(|entry| artifact_summary_for_entry(vault, entry))
+        .collect::<Vec<_>>();
+    let jobs = entries
+        .iter()
+        .map(|entry| job_for_plan_entry(vault, entry))
+        .collect::<Vec<_>>();
+    let mut actions = entries
+        .iter()
+        .filter_map(|entry| action_for_plan_entry(vault, entry))
+        .collect::<Vec<_>>();
+    actions.extend(vault_level_actions(vault));
+    let impact_edges = entries
+        .iter()
+        .flat_map(|entry| impact_edges_for_plan_entry(vault, entry))
+        .collect::<Vec<_>>();
+    (registry, artifacts, jobs, actions, impact_edges)
+}
+
+fn vault_level_actions(vault: &Path) -> Vec<DashboardAction> {
+    let mut actions = Vec::new();
+    let (_claims, review, stale, contradicted) =
+        count_claims(&vault.join("claims").join("claims.jsonl"));
+    let claims_path = rel_path(vault, &vault.join("claims").join("claims.jsonl"));
+    if review > 0 {
+        actions.push(DashboardAction {
+            action_id: "act-claims-review".to_string(),
+            kind: "claims_need_review".to_string(),
+            severity: "p1".to_string(),
+            title: format!("{review} 条 claims 需要 review"),
+            body: "Claim Ledger 中仍有待审陈述，concept synthesis 不应默认吸收这些内容。"
+                .to_string(),
+            reason: "claims.jsonl contains needs_review rows".to_string(),
+            status: "open".to_string(),
+            recommended_action: "review_claims".to_string(),
+            primary_object_type: "claim_ledger".to_string(),
+            primary_object_id: "claims/claims.jsonl".to_string(),
+            links: vec![DashboardLink {
+                label: "claims".to_string(),
+                path: claims_path.clone(),
+            }],
+        });
+    }
+    if stale > 0 {
+        actions.push(DashboardAction {
+            action_id: "act-claims-stale".to_string(),
+            kind: "stale_claims".to_string(),
+            severity: "p1".to_string(),
+            title: format!("{stale} 条 claims 已失效"),
+            body: "有 claims 标记为 stale，相关 source/concept 需要重新验证或刷新。".to_string(),
+            reason: "claim verdict/status is stale".to_string(),
+            status: "open".to_string(),
+            recommended_action: "refresh_affected_sources".to_string(),
+            primary_object_type: "claim_ledger".to_string(),
+            primary_object_id: "claims/claims.jsonl".to_string(),
+            links: vec![DashboardLink {
+                label: "claims".to_string(),
+                path: claims_path.clone(),
+            }],
+        });
+    }
+    if contradicted > 0 {
+        actions.push(DashboardAction {
+            action_id: "act-claims-contradicted".to_string(),
+            kind: "contradiction_review".to_string(),
+            severity: "p1".to_string(),
+            title: format!("{contradicted} 条 claims 存在冲突"),
+            body: "存在 contradicted claims，相关 concept 页面应进入 review，而不是直接稳定发布。"
+                .to_string(),
+            reason: "claim verdict/status is contradicted".to_string(),
+            status: "open".to_string(),
+            recommended_action: "review_contradictions".to_string(),
+            primary_object_type: "claim_ledger".to_string(),
+            primary_object_id: "claims/claims.jsonl".to_string(),
+            links: vec![DashboardLink {
+                label: "claims".to_string(),
+                path: claims_path,
+            }],
+        });
+    }
+    let science_review = count_jsonl(&vault.join("_state").join("science-review-queue.jsonl"));
+    if science_review > 0 {
+        actions.push(DashboardAction {
+            action_id: "act-science-review".to_string(),
+            kind: "science_review".to_string(),
+            severity: "p2".to_string(),
+            title: format!("{science_review} 个 science review 项"),
+            body: "Science review queue 中仍有待处理对象，建议先处理后再做长期 concept 合成。"
+                .to_string(),
+            reason: "science-review-queue.jsonl is not empty".to_string(),
+            status: "open".to_string(),
+            recommended_action: "run_science_review".to_string(),
+            primary_object_type: "review_queue".to_string(),
+            primary_object_id: "_state/science-review-queue.jsonl".to_string(),
+            links: vec![DashboardLink {
+                label: "science review queue".to_string(),
+                path: "_state/science-review-queue.jsonl".to_string(),
+            }],
+        });
+    }
+    actions
+}
+
 fn write_ingest_plan(vault: &Path, entries: Vec<IngestPlanEntry>) -> Result<IngestPlan, String> {
     let summary = IngestPlanSummary {
         total: entries.len(),
@@ -966,6 +1679,14 @@ fn write_ingest_plan(vault: &Path, entries: Vec<IngestPlanEntry>) -> Result<Inge
             .filter(|entry| entry.status == "published")
             .count(),
     };
+    let (registry, artifacts, jobs, actions, impact_edges) =
+        build_ingest_contracts(vault, &entries);
+    let state = vault.join("_state");
+    write_jsonl(&state.join("desktop-source-registry.jsonl"), &registry)?;
+    write_jsonl(&state.join("desktop-artifacts.jsonl"), &artifacts)?;
+    write_jsonl(&state.join("desktop-ingest-jobs.jsonl"), &jobs)?;
+    write_jsonl(&state.join("desktop-actions.jsonl"), &actions)?;
+    write_jsonl(&state.join("desktop-impact-graph.jsonl"), &impact_edges)?;
     let plan_path = vault.join("_state").join("desktop-ingest-plan.json");
     let plan = IngestPlan {
         generated_at: Local::now().to_rfc3339(),
@@ -973,6 +1694,11 @@ fn write_ingest_plan(vault: &Path, entries: Vec<IngestPlanEntry>) -> Result<Inge
         plan_path: to_display(&plan_path),
         summary,
         entries,
+        registry,
+        artifacts,
+        jobs,
+        actions,
+        impact_edges,
     };
     let rendered = serde_json::to_string_pretty(&plan)
         .map_err(|e| format!("failed to serialize ingest plan: {e}"))?;
@@ -1061,25 +1787,7 @@ fn stage_text_artifacts(vault: &Path) -> Result<Vec<String>, String> {
             .ok_or_else(|| "missing artifact path for stageable source".to_string())?;
         let content = fs::read_to_string(&source)
             .map_err(|e| format!("failed to read {}: {e}", source.display()))?;
-        write_text(&artifact, &content)?;
-        let manifest = artifact
-            .parent()
-            .ok_or_else(|| "artifact has no parent directory".to_string())?
-            .join("manifest.json");
-        let row = serde_json::json!({
-            "source_path": source.strip_prefix(vault).unwrap_or(source.as_path()).to_string_lossy(),
-            "combined": artifact.strip_prefix(vault).unwrap_or(artifact.as_path()).to_string_lossy(),
-            "sha256": entry.sha256,
-            "parser": "llm-wiki-desktop-text-stager",
-            "staged_at": Local::now().to_rfc3339(),
-            "limitations": ["line anchors are preserved, but page/table anchors require a richer runtime parser"],
-        });
-        write_text(
-            &manifest,
-            &(serde_json::to_string_pretty(&row)
-                .map_err(|e| format!("failed to serialize manifest: {e}"))?
-                + "\n"),
-        )?;
+        write_text_artifact_contract(vault, &source, &artifact, &entry.sha256, &content)?;
         append_cache_row(vault, &source, &entry.sha256, &artifact)?;
         staged.push(to_display(&artifact));
     }
@@ -1390,9 +2098,37 @@ mod tests {
         write_text(&source, "# Note\n").expect("write source");
         let staged = stage_text_artifacts(&vault).expect("stage text artifact");
         assert_eq!(staged.len(), 1);
+        let artifact = PathBuf::from(&staged[0]);
+        let artifact_dir = artifact.parent().expect("artifact dir");
+        assert!(artifact_dir.join("manifest.json").is_file());
+        assert!(artifact_dir.join("chunks.jsonl").is_file());
 
         let plan = plan_ingest(to_display(&vault)).expect("plan staged source");
         assert_eq!(plan.summary.cached, 1);
+        assert_eq!(plan.registry.len(), 1);
+        assert_eq!(plan.artifacts.len(), 1);
+        assert_eq!(plan.jobs.len(), 1);
+        assert!(!plan.actions.is_empty());
+        assert!(!plan.impact_edges.is_empty());
+        assert_eq!(plan.artifacts[0].status, "fresh");
+        assert!(plan.artifacts[0].anchors_lines);
+        assert!(vault
+            .join("_state")
+            .join("desktop-source-registry.jsonl")
+            .is_file());
+        assert!(vault
+            .join("_state")
+            .join("desktop-artifacts.jsonl")
+            .is_file());
+        assert!(vault
+            .join("_state")
+            .join("desktop-ingest-jobs.jsonl")
+            .is_file());
+        assert!(vault.join("_state").join("desktop-actions.jsonl").is_file());
+        assert!(vault
+            .join("_state")
+            .join("desktop-impact-graph.jsonl")
+            .is_file());
         let log_path = vault.join("log-archive").join("desktop").join("test.log");
         let published =
             record_published_ingest(&vault, &plan, "test-pipeline", &log_path).expect("publish");

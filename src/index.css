@@ -387,14 +387,22 @@ select {
   color: #3b4843;
 }
 
-.ingest-list {
+.ingest-list,
+.action-list,
+.queue-list,
+.contract-list,
+.impact-list {
   display: grid;
   gap: 8px;
   max-height: 270px;
   overflow: auto;
 }
 
-.ingest-list button {
+.ingest-list button,
+.action-list button,
+.queue-list button,
+.contract-list button,
+.impact-list button {
   position: relative;
   display: block;
   width: 100%;
@@ -408,23 +416,47 @@ select {
 
 .ingest-list strong,
 .ingest-list em,
-.ingest-list code {
+.ingest-list code,
+.action-list strong,
+.action-list em,
+.action-list code,
+.queue-list strong,
+.queue-list em,
+.queue-list code,
+.contract-list strong,
+.contract-list em,
+.contract-list code,
+.impact-list strong,
+.impact-list em,
+.impact-list code {
   display: block;
 }
 
-.ingest-list strong {
+.ingest-list strong,
+.action-list strong,
+.queue-list strong,
+.contract-list strong,
+.impact-list strong {
   overflow-wrap: anywhere;
   font-size: 13px;
 }
 
-.ingest-list em {
+.ingest-list em,
+.action-list em,
+.queue-list em,
+.contract-list em,
+.impact-list em {
   margin-top: 4px;
   color: #64706a;
   font-size: 12px;
   font-style: normal;
 }
 
-.ingest-list code {
+.ingest-list code,
+.action-list code,
+.queue-list code,
+.contract-list code,
+.impact-list code {
   margin-top: 6px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -468,6 +500,32 @@ select {
 .status-chip.published {
   background: #e7f4ec;
   color: #315f46;
+}
+
+.status-chip.queued,
+.status-chip.fresh,
+.status-chip.p2 {
+  background: #e8eef8;
+  color: #245b93;
+}
+
+.status-chip.succeeded,
+.status-chip.p3 {
+  background: #e7f4ec;
+  color: #1f6f45;
+}
+
+.status-chip.legacy,
+.status-chip.p1 {
+  background: #fff0d5;
+  color: #8a5d10;
+}
+
+.status-chip.stale,
+.status-chip.failed,
+.status-chip.p0 {
+  background: #f8e8e8;
+  color: #a43131;
 }
 
 .log-list {
