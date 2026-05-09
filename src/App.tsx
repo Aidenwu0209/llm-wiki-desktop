@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type DragEvent } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   AlertTriangle,
@@ -9,6 +9,7 @@ import {
   Database,
   FileInput,
   FolderOpen,
+  GitCompare,
   ListChecks,
   Play,
   RefreshCw,
@@ -22,21 +23,45 @@ import {
   XCircle,
 } from "lucide-react";
 import {
+  applyWritebackProposal,
+  createDiagnosticBundle,
+  createFollowupAction,
   createVault,
-  importToInbox,
+  createWritebackProposal,
+  importSources,
   inspectVault,
   listClaimLedger,
+  listEvidencePaths,
+  listReviewQueue,
+  listWritebackProposals,
+  loadDesktopSettings,
+  openObsidianVault,
   openPath,
   planIngest,
   repairObsidianTemplates,
   runIngestLint,
   runIngestPipeline,
   runRuntimeCommand,
+  saveDesktopSettings,
   setClaimVerdict,
   setDashboardActionStatus,
   setIngestJobStatus,
+  setReviewItemStatus,
+  setWritebackStatus,
 } from "./tauri";
-import type { ClaimLedgerItem, IngestPlan, RuntimeSettings, TaskLog, VaultFile, VaultStatus } from "./types";
+import type {
+  ClaimLedgerItem,
+  DesktopSettings,
+  EvidencePathItem,
+  ImportPreview,
+  IngestPlan,
+  ReviewQueueItem,
+  RuntimeSettings,
+  TaskLog,
+  VaultFile,
+  VaultStatus,
+  WritebackProposal,
+} from "./types";
 
 const runtimeActions = [
   { id: "lint", label: "运行 lint", icon: ListChecks },
@@ -64,11 +89,20 @@ const pipeline = [
   "Lint",
 ];
 
-const initialSettings: RuntimeSettings = {
+const initialDesktopSettings: DesktopSettings = {
   runtimePath: "",
   pythonPath: "python3",
-  obsidianProfile: "minimal",
-  skipDownloads: true,
+  uvPath: "uv",
+  layoutParsingApiUrl: "",
+  layoutParsingTokenPresent: false,
+  cloudParsingAllowed: false,
+  defaultIngestMode: "inbox_only",
+  defaultObsidianProfile: "minimal",
+  retryCount: 3,
+  timeoutSeconds: 1800,
+  autoRunLintAfterWrites: true,
+  autoOpenReportsAfterFailures: false,
+  skipObsidianPluginDownloads: true,
 };
 
 function classNames(...items: Array<string | false | null | undefined>) {
@@ -80,6 +114,15 @@ function statusTone(status: VaultStatus | null) {
   if (!status.schemaValid) return "danger";
   if (!status.runtimeInstalled) return "warn";
   return "ok";
+}
+
+function runtimeSettings(settings: DesktopSettings): RuntimeSettings {
+  return {
+    runtimePath: settings.runtimePath,
+    pythonPath: settings.pythonPath || "python3",
+    obsidianProfile: settings.defaultObsidianProfile as RuntimeSettings["obsidianProfile"],
+    skipDownloads: settings.skipObsidianPluginDownloads,
+  };
 }
 
 function pipelineState(index: number, status: VaultStatus | null, plan: IngestPlan | null) {
@@ -106,14 +149,25 @@ function App() {
   const [vaultPath, setVaultPath] = useState("");
   const [newVaultPath, setNewVaultPath] = useState("");
   const [enableObsidian, setEnableObsidian] = useState(true);
-  const [settings, setSettings] = useState<RuntimeSettings>(initialSettings);
+  const [desktopSettings, setDesktopSettings] = useState<DesktopSettings>(initialDesktopSettings);
   const [status, setStatus] = useState<VaultStatus | null>(null);
   const [logs, setLogs] = useState<TaskLog[]>([]);
   const [ingestPlan, setIngestPlan] = useState<IngestPlan | null>(null);
   const [claims, setClaims] = useState<ClaimLedgerItem[]>([]);
+  const [evidencePaths, setEvidencePaths] = useState<EvidencePathItem[]>([]);
+  const [reviewItems, setReviewItems] = useState<ReviewQueueItem[]>([]);
+  const [writebacks, setWritebacks] = useState<WritebackProposal[]>([]);
+  const [importResults, setImportResults] = useState<ImportPreview[]>([]);
   const [selectedFile, setSelectedFile] = useState<VaultFile | null>(null);
   const [actionFilter, setActionFilter] = useState("open");
   const [claimFilter, setClaimFilter] = useState("needs_review");
+  const [reviewFilter, setReviewFilter] = useState("open");
+  const [preserveFolders, setPreserveFolders] = useState(true);
+  const [dragActive, setDragActive] = useState(false);
+  const [writebackTarget, setWritebackTarget] = useState("concepts/");
+  const [writebackTitle, setWritebackTitle] = useState("");
+  const [writebackContent, setWritebackContent] = useState("");
+  const [diagnosticPath, setDiagnosticPath] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -122,6 +176,62 @@ function App() {
     for (const file of status?.files ?? []) groups[file.kind]?.push(file);
     return groups;
   }, [status]);
+
+  const rt = useMemo(() => runtimeSettings(desktopSettings), [desktopSettings]);
+  const enqueueAfterImport = desktopSettings.defaultIngestMode === "enqueue_after_import";
+  const tone = statusTone(status);
+  const planned = ingestPlan?.summary;
+  const runnableIngest = (planned?.ready ?? 0) + (planned?.stageable ?? 0) + (planned?.cached ?? 0);
+  const actions = ingestPlan?.actions ?? [];
+  const jobs = ingestPlan?.jobs ?? [];
+  const artifacts = ingestPlan?.artifacts ?? [];
+  const registry = ingestPlan?.registry ?? [];
+  const impactEdges = ingestPlan?.impactEdges ?? [];
+  const lintFindings = ingestPlan?.lintFindings ?? [];
+  const visibleActions = actions.filter((action) => actionFilter === "all" || action.status === actionFilter);
+  const visibleClaims = claims.filter((claim) => {
+    if (claimFilter === "all") return true;
+    if (claimFilter === "needs_review") return claim.needsReview || claim.status === "needs_review" || claim.verdict === "needs_review";
+    return claim.status === claimFilter || claim.verdict === claimFilter;
+  });
+  const visibleReviewItems = reviewItems.filter((item) => {
+    if (reviewFilter === "all") return true;
+    if (reviewFilter === "open") return !["approved", "resolved", "ignored", "rejected"].includes(item.status);
+    return item.status === reviewFilter;
+  });
+  const brokenEvidence = evidencePaths.filter((item) => item.chainStatus !== "ok").length;
+  const progressDone = jobs.filter((job) => job.status === "succeeded").length;
+  const vaultFilePath = (path?: string | null) => {
+    if (!path) return vaultPath;
+    if (path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path)) return path;
+    return `${vaultPath}/${path}`;
+  };
+
+  async function refresh(path = vaultPath) {
+    if (!path) return;
+    setBusy("inspect");
+    setError(null);
+    try {
+      const nextSettings = await loadDesktopSettings(path);
+      const nextPlan = await planIngest(path);
+      const nextClaims = await listClaimLedger(path);
+      const nextEvidence = await listEvidencePaths(path);
+      const nextReview = await listReviewQueue(path);
+      const nextWritebacks = await listWritebackProposals(path);
+      const nextStatus = await inspectVault(path);
+      setStatus(nextStatus);
+      setIngestPlan(nextPlan);
+      setClaims(nextClaims);
+      setEvidencePaths(nextEvidence);
+      setReviewItems(nextReview);
+      setWritebacks(nextWritebacks);
+      setDesktopSettings(nextSettings);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function chooseVault() {
     const picked = await open({ directory: true, multiple: false, title: "选择 open-llm-wiki vault" });
@@ -133,24 +243,7 @@ function App() {
   async function chooseRuntime() {
     const picked = await open({ directory: true, multiple: false, title: "选择 open-llm-wiki runtime 仓库或已安装 vault" });
     if (typeof picked !== "string") return;
-    setSettings((current) => ({ ...current, runtimePath: picked }));
-  }
-
-  async function refresh(path = vaultPath) {
-    if (!path) return;
-    setBusy("inspect");
-    setError(null);
-    try {
-      const [nextPlan, nextClaims] = await Promise.all([planIngest(path), listClaimLedger(path)]);
-      const nextStatus = await inspectVault(path);
-      setStatus(nextStatus);
-      setIngestPlan(nextPlan);
-      setClaims(nextClaims);
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setBusy(null);
-    }
+    setDesktopSettings((current) => ({ ...current, runtimePath: picked }));
   }
 
   async function handleCreateVault() {
@@ -161,12 +254,11 @@ function App() {
     setBusy("create");
     setError(null);
     try {
-      const next = await createVault(newVaultPath.trim(), settings, enableObsidian);
+      const next = await createVault(newVaultPath.trim(), rt, enableObsidian);
+      await saveDesktopSettings(next.path, desktopSettings);
       setVaultPath(next.path);
-      setStatus(next);
-      setClaims([]);
-      setIngestPlan(null);
       setNewVaultPath("");
+      await refresh(next.path);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -174,20 +266,27 @@ function App() {
     }
   }
 
-  async function handleImport() {
+  async function handleSaveSettings() {
     if (!vaultPath) return;
-    const picked = await open({
-      directory: false,
-      multiple: true,
-      title: "导入 PDF / Markdown / txt 到 raw/inbox",
-      filters: [{ name: "Documents", extensions: ["pdf", "md", "markdown", "txt"] }],
-    });
-    const paths = Array.isArray(picked) ? picked.filter((item): item is string => typeof item === "string") : [];
-    if (!paths.length) return;
+    setBusy("save_settings");
+    setError(null);
+    try {
+      setDesktopSettings(await saveDesktopSettings(vaultPath, desktopSettings));
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleImportPaths(paths: string[]) {
+    if (!vaultPath || paths.length === 0) return;
     setBusy("import");
     setError(null);
     try {
-      const result = await importToInbox(vaultPath, paths);
+      const result = await importSources(vaultPath, paths, enqueueAfterImport, preserveFolders);
+      setImportResults([...result.imported, ...result.skippedDuplicates]);
       if (result.errors.length) setError(result.errors.join("\n"));
       await refresh();
     } catch (err) {
@@ -197,12 +296,42 @@ function App() {
     }
   }
 
+  async function handleImportFiles() {
+    const picked = await open({
+      directory: false,
+      multiple: true,
+      title: "导入 PDF / Markdown / txt 到 raw/inbox",
+      filters: [{ name: "Documents", extensions: ["pdf", "md", "markdown", "txt"] }],
+    });
+    const paths = Array.isArray(picked) ? picked.filter((item): item is string => typeof item === "string") : [];
+    await handleImportPaths(paths);
+  }
+
+  async function handleImportFolder() {
+    const picked = await open({ directory: true, multiple: true, title: "导入文件夹到 raw/inbox" });
+    const paths = Array.isArray(picked) ? picked.filter((item): item is string => typeof item === "string") : typeof picked === "string" ? [picked] : [];
+    await handleImportPaths(paths);
+  }
+
+  async function handleDrop(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    setDragActive(false);
+    const paths = Array.from(event.dataTransfer.files)
+      .map((file) => (file as File & { path?: string }).path)
+      .filter((path): path is string => Boolean(path));
+    if (!paths.length) {
+      setError("拖拽事件没有提供本地文件路径，请使用导入文件或导入文件夹按钮。");
+      return;
+    }
+    await handleImportPaths(paths);
+  }
+
   async function handleRuntime(kind: string) {
     if (!vaultPath) return;
     setBusy(kind);
     setError(null);
     try {
-      const log = await runRuntimeCommand(vaultPath, settings, kind);
+      const log = await runRuntimeCommand(vaultPath, rt, kind);
       setLogs((current) => [log, ...current].slice(0, 12));
       await refresh();
       if (log.exitCode !== 0) setError(`${kind} 失败，exit code ${log.exitCode}`);
@@ -219,10 +348,8 @@ function App() {
     setError(null);
     try {
       const nextPlan = await planIngest(vaultPath);
-      const nextClaims = await listClaimLedger(vaultPath);
       setIngestPlan(nextPlan);
-      setClaims(nextClaims);
-      setStatus(await inspectVault(vaultPath));
+      await refresh();
     } catch (err) {
       setError(String(err));
     } finally {
@@ -264,7 +391,7 @@ function App() {
     setError(null);
     try {
       setIngestPlan(await setDashboardActionStatus(vaultPath, actionId, status));
-      setStatus(await inspectVault(vaultPath));
+      await refresh();
     } catch (err) {
       setError(String(err));
     } finally {
@@ -281,7 +408,7 @@ function App() {
     setError(null);
     try {
       setIngestPlan(await setIngestJobStatus(vaultPath, jobId, status));
-      setStatus(await inspectVault(vaultPath));
+      await refresh();
     } catch (err) {
       setError(String(err));
     } finally {
@@ -298,8 +425,38 @@ function App() {
     setError(null);
     try {
       setClaims(await setClaimVerdict(vaultPath, claimId, verdict));
-      setIngestPlan(await planIngest(vaultPath));
-      setStatus(await inspectVault(vaultPath));
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleReviewStatus(
+    itemId: string,
+    status: "open" | "approved" | "rejected" | "resolved" | "ignored" | "needs_review",
+  ) {
+    if (!vaultPath) return;
+    setBusy(`review:${itemId}`);
+    setError(null);
+    try {
+      setReviewItems(await setReviewItemStatus(vaultPath, itemId, status));
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleFollowup(item: ReviewQueueItem) {
+    if (!vaultPath) return;
+    setBusy(`followup:${item.itemId}`);
+    setError(null);
+    try {
+      setReviewItems(await createFollowupAction(vaultPath, item.title, item.body, item.targetPath));
+      await refresh();
     } catch (err) {
       setError(String(err));
     } finally {
@@ -312,7 +469,7 @@ function App() {
     setBusy("ingest_pipeline");
     setError(null);
     try {
-      const result = await runIngestPipeline(vaultPath, settings);
+      const result = await runIngestPipeline(vaultPath, rt);
       setLogs((current) => [...result.logs, ...current].slice(0, 12));
       await refresh();
       if (result.exitCode !== 0) setError(`ingest pipeline 失败，exit code ${result.exitCode}`);
@@ -323,29 +480,82 @@ function App() {
     }
   }
 
-  const tone = statusTone(status);
-  const planned = ingestPlan?.summary;
-  const runnableIngest = (planned?.ready ?? 0) + (planned?.stageable ?? 0) + (planned?.cached ?? 0);
-  const actions = ingestPlan?.actions ?? [];
-  const jobs = ingestPlan?.jobs ?? [];
-  const artifacts = ingestPlan?.artifacts ?? [];
-  const registry = ingestPlan?.registry ?? [];
-  const impactEdges = ingestPlan?.impactEdges ?? [];
-  const lintFindings = ingestPlan?.lintFindings ?? [];
-  const visibleActions = actions.filter((action) => actionFilter === "all" || action.status === actionFilter);
-  const visibleClaims = claims.filter((claim) => {
-    if (claimFilter === "all") return true;
-    if (claimFilter === "needs_review") return claim.needsReview || claim.status === "needs_review" || claim.verdict === "needs_review";
-    return claim.status === claimFilter || claim.verdict === claimFilter;
-  });
-  const vaultFilePath = (path?: string | null) => {
-    if (!path) return vaultPath;
-    if (path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path)) return path;
-    return `${vaultPath}/${path}`;
-  };
+  async function handleCreateWriteback() {
+    if (!vaultPath || !writebackTarget.trim()) return;
+    setBusy("writeback_proposal");
+    setError(null);
+    try {
+      const proposal = await createWritebackProposal(
+        vaultPath,
+        writebackTarget.trim(),
+        writebackTitle.trim() || "Desktop writeback proposal",
+        writebackContent,
+      );
+      setWritebacks((current) => [proposal, ...current.filter((item) => item.proposalId !== proposal.proposalId)]);
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleWritebackStatus(proposalId: string, status: "proposed" | "approved" | "rejected") {
+    if (!vaultPath) return;
+    setBusy(`writeback:${proposalId}`);
+    setError(null);
+    try {
+      const proposal = await setWritebackStatus(vaultPath, proposalId, status);
+      setWritebacks((current) => [proposal, ...current.filter((item) => item.proposalId !== proposalId)]);
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleApplyWriteback(proposalId: string) {
+    if (!vaultPath) return;
+    setBusy(`apply:${proposalId}`);
+    setError(null);
+    try {
+      const proposal = await applyWritebackProposal(vaultPath, proposalId);
+      if (desktopSettings.autoRunLintAfterWrites) await runIngestLint(vaultPath);
+      setWritebacks((current) => [proposal, ...current.filter((item) => item.proposalId !== proposalId)]);
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleDiagnostic() {
+    if (!vaultPath) return;
+    setBusy("diagnostic");
+    setError(null);
+    try {
+      const path = await createDiagnosticBundle(vaultPath);
+      setDiagnosticPath(path);
+      await openPath(path);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
 
   return (
-    <main className="app-shell">
+    <main
+      className={classNames("app-shell", dragActive && "drag-active")}
+      onDragOver={(event) => {
+        event.preventDefault();
+        setDragActive(true);
+      }}
+      onDragLeave={() => setDragActive(false)}
+      onDrop={handleDrop}
+    >
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">LW</div>
@@ -362,43 +572,56 @@ function App() {
             <button onClick={chooseVault}><FolderOpen size={16} />打开</button>
             <button onClick={() => refresh()} disabled={!vaultPath || busy === "inspect"}><RefreshCw size={16} />刷新</button>
           </div>
-          <input
-            value={newVaultPath}
-            onChange={(event) => setNewVaultPath(event.target.value)}
-            placeholder="/absolute/path/to/new-vault"
-          />
+          <input value={newVaultPath} onChange={(event) => setNewVaultPath(event.target.value)} placeholder="/absolute/path/to/new-vault" />
           <label className="check-row">
             <input type="checkbox" checked={enableObsidian} onChange={(event) => setEnableObsidian(event.target.checked)} />
             创建时启用 Obsidian profile
           </label>
           <button className="wide" onClick={handleCreateVault} disabled={busy === "create"}><Archive size={16} />创建 vault</button>
+          <div className="button-row">
+            <button onClick={() => vaultPath && openPath(vaultPath)} disabled={!vaultPath}><FolderOpen size={16} />文件夹</button>
+            <button onClick={() => vaultPath && openObsidianVault(vaultPath)} disabled={!vaultPath}><SquareStack size={16} />Obsidian</button>
+          </div>
         </section>
 
         <section className="panel">
           <h2>Runtime 设置</h2>
-          <input
-            value={settings.pythonPath}
-            onChange={(event) => setSettings((current) => ({ ...current, pythonPath: event.target.value }))}
-            placeholder="python3"
-          />
-          <div className="path-field" title={settings.runtimePath || "优先使用 vault 内 .open-llm-wiki/scripts"}>{settings.runtimePath || "优先使用 vault 内 runtime"}</div>
+          <input value={desktopSettings.pythonPath} onChange={(event) => setDesktopSettings((current) => ({ ...current, pythonPath: event.target.value }))} placeholder="python3" />
+          <input value={desktopSettings.uvPath} onChange={(event) => setDesktopSettings((current) => ({ ...current, uvPath: event.target.value }))} placeholder="uv" />
+          <div className="path-field" title={desktopSettings.runtimePath || "优先使用 vault 内 .open-llm-wiki/scripts"}>{desktopSettings.runtimePath || "优先使用 vault 内 runtime"}</div>
           <button className="wide" onClick={chooseRuntime}><Settings size={16} />选择 runtime 路径</button>
-          <select
-            value={settings.obsidianProfile}
-            onChange={(event) => setSettings((current) => ({ ...current, obsidianProfile: event.target.value as RuntimeSettings["obsidianProfile"] }))}
-          >
+          <select value={desktopSettings.defaultObsidianProfile} onChange={(event) => setDesktopSettings((current) => ({ ...current, defaultObsidianProfile: event.target.value }))}>
             <option value="minimal">minimal</option>
             <option value="research">research</option>
             <option value="full">full</option>
           </select>
+          <select value={desktopSettings.defaultIngestMode} onChange={(event) => setDesktopSettings((current) => ({ ...current, defaultIngestMode: event.target.value }))}>
+            <option value="inbox_only">先入 inbox</option>
+            <option value="enqueue_after_import">导入后入队</option>
+          </select>
+          <div className="settings-grid">
+            <label>Retry<input type="number" min={1} value={desktopSettings.retryCount} onChange={(event) => setDesktopSettings((current) => ({ ...current, retryCount: Number(event.target.value) || 1 }))} /></label>
+            <label>Timeout<input type="number" min={60} value={desktopSettings.timeoutSeconds} onChange={(event) => setDesktopSettings((current) => ({ ...current, timeoutSeconds: Number(event.target.value) || 60 }))} /></label>
+          </div>
+          <input value={desktopSettings.layoutParsingApiUrl} onChange={(event) => setDesktopSettings((current) => ({ ...current, layoutParsingApiUrl: event.target.value }))} placeholder="Layout parsing API URL" />
+          <p className="note">Token: {desktopSettings.layoutParsingTokenPresent ? "环境变量已配置" : "未检测到"} · 云解析会发送文档内容</p>
           <label className="check-row">
-            <input
-              type="checkbox"
-              checked={settings.skipDownloads}
-              onChange={(event) => setSettings((current) => ({ ...current, skipDownloads: event.target.checked }))}
-            />
+            <input type="checkbox" checked={desktopSettings.cloudParsingAllowed} onChange={(event) => setDesktopSettings((current) => ({ ...current, cloudParsingAllowed: event.target.checked }))} />
+            允许云解析
+          </label>
+          <label className="check-row">
+            <input type="checkbox" checked={desktopSettings.autoRunLintAfterWrites} onChange={(event) => setDesktopSettings((current) => ({ ...current, autoRunLintAfterWrites: event.target.checked }))} />
+            写回后自动 lint
+          </label>
+          <label className="check-row">
+            <input type="checkbox" checked={desktopSettings.autoOpenReportsAfterFailures} onChange={(event) => setDesktopSettings((current) => ({ ...current, autoOpenReportsAfterFailures: event.target.checked }))} />
+            失败后打开 report
+          </label>
+          <label className="check-row">
+            <input type="checkbox" checked={desktopSettings.skipObsidianPluginDownloads} onChange={(event) => setDesktopSettings((current) => ({ ...current, skipObsidianPluginDownloads: event.target.checked }))} />
             Obsidian setup 跳过插件下载
           </label>
+          <button className="wide" onClick={handleSaveSettings} disabled={!vaultPath || busy === "save_settings"}><Check size={16} />保存设置</button>
         </section>
       </aside>
 
@@ -406,7 +629,7 @@ function App() {
         <header className="topbar">
           <div>
             <h2>任务流控制台</h2>
-            <p>所有写入通过 open-llm-wiki runtime 或受限 inbox 导入执行。</p>
+            <p>所有 source 发布、QA、review 和 writeback 都通过 runtime-owned state 留痕。</p>
           </div>
           <div className={classNames("health", tone)}>
             {tone === "ok" ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
@@ -428,21 +651,37 @@ function App() {
           <Metric label="Stageable" value={planned?.stageable ?? 0} />
           <Metric label="Published" value={planned?.published ?? 0} />
           <Metric label="Blocked" value={planned?.blocked ?? 0} emphasis={(planned?.blocked ?? 0) > 0} />
+          <Metric label="Evidence breaks" value={brokenEvidence} emphasis={brokenEvidence > 0} />
           <Metric label="Lint P1/P0" value={lintFindings.filter((finding) => finding.severity === "p0" || finding.severity === "p1").length} emphasis={lintFindings.some((finding) => finding.severity === "p0" || finding.severity === "p1")} />
-          <Metric label="Actions" value={ingestPlan ? actions.length : status?.counts.actions ?? 0} emphasis={actions.length > 0} />
-          <Metric label="Jobs" value={ingestPlan ? jobs.length : status?.counts.ingestJobs ?? 0} />
+          <Metric label="Queue" value={`${progressDone}/${jobs.length}`} />
           <Metric label="Runtime" value={status?.runtimeInstalled ? "installed" : "missing"} />
+          <Metric label="Runtime version" value={status?.runtimeVersion || "unknown"} />
+          <Metric label="Last update" value={status?.lastUpdated ? new Date(status.lastUpdated).toLocaleDateString() : "unknown"} />
           <Metric label="Obsidian" value={status?.obsidianEnabled ? "enabled" : "disabled"} />
           <Metric label="Dashboard" value={status?.dashboardAvailable ? "ready" : "missing"} />
         </section>
 
+        <section className={classNames("drop-zone", dragActive && "active")}>
+          <div>
+            <strong>导入 PDF / Markdown / txt / folder</strong>
+            <span>{enqueueAfterImport ? "导入后写入 runtime-owned ingest queue" : "仅进入 raw/inbox，等待手动规划"}</span>
+          </div>
+          <div className="inline-actions">
+            <button onClick={handleImportFiles} disabled={!vaultPath || busy === "import"}><FileInput size={16} />导入文件</button>
+            <button onClick={handleImportFolder} disabled={!vaultPath || busy === "import"}><FolderOpen size={16} />导入文件夹</button>
+            <label className="check-row">
+              <input type="checkbox" checked={preserveFolders} onChange={(event) => setPreserveFolders(event.target.checked)} />
+              保留目录上下文
+            </label>
+          </div>
+        </section>
+
         <section className="action-strip">
-          <button onClick={handleImport} disabled={!vaultPath || busy === "import"}><FileInput size={16} />导入到 inbox</button>
           <button onClick={handlePlanIngest} disabled={!vaultPath || busy === "plan_ingest"}><ListChecks size={16} />规划 ingest</button>
           <button onClick={handleIngestLint} disabled={!vaultPath || busy === "ingest_lint"}><ShieldCheck size={16} />合约 lint</button>
           <button onClick={handleIngestPipeline} disabled={!vaultPath || busy === "ingest_pipeline" || runnableIngest === 0}><Play size={16} />运行 ingest pipeline</button>
           <button onClick={handleRepairTemplates} disabled={!vaultPath || busy === "repair_templates"}><Wrench size={16} />修复模板</button>
-          <button onClick={() => vaultPath && openPath(vaultPath)} disabled={!vaultPath}><FolderOpen size={16} />打开文件夹</button>
+          <button onClick={handleDiagnostic} disabled={!vaultPath || busy === "diagnostic"}><TerminalSquare size={16} />诊断 bundle</button>
           {runtimeActions.map((action) => {
             const Icon = action.icon;
             return (
@@ -452,6 +691,147 @@ function App() {
             );
           })}
         </section>
+
+        <div className="main-grid">
+          <section className="panel large">
+            <div className="section-head">
+              <h2>导入结果</h2>
+              <span>{importResults.length} files</span>
+            </div>
+            <div className="ingest-list">
+              {importResults.length === 0 && <p className="empty">暂无本轮导入结果。</p>}
+              {importResults.map((item) => (
+                <button key={`${item.sourcePath}-${item.sha256}`} onClick={() => item.targetPath && openPath(item.targetPath)}>
+                  <span className={classNames("status-chip", item.status)}>{item.status}</span>
+                  <strong>{item.fileName}</strong>
+                  <em>{item.mime} · {(item.sizeBytes / 1024).toFixed(1)} KB · {item.folderContext || "root"}</em>
+                  <code>{item.sha256.slice(0, 16)} · {item.doi || item.arxivId || item.titleHint || "no metadata"} · {item.duplicateOf || item.approximateDuplicateOf || item.targetPath}</code>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="panel large">
+            <div className="section-head">
+              <h2>Per-source queue</h2>
+              <span>{jobs.length ? `${progressDone}/${jobs.length} done` : "0 jobs"}</span>
+            </div>
+            <div className="queue-list">
+              {jobs.length === 0 && <p className="empty">暂无 source 任务。</p>}
+              {jobs.map((job) => (
+                <div className="work-item" key={job.jobId}>
+                  <span className={classNames("status-chip", job.status)}>{job.status}</span>
+                  <strong>{job.sourceId || job.fileName}</strong>
+                  <em>{job.currentStep} · {job.nextAction} · attempt {job.attempt}/{job.maxAttempts}</em>
+                  <code>{job.lastError || job.reason}</code>
+                  <div className="inline-actions">
+                    <button title="打开当前 artifact 或原始 source" onClick={() => openPath(vaultFilePath(job.artifactPath || job.sourcePath))}><FolderOpen size={14} />打开</button>
+                    <button title="重新排队" onClick={() => handleJobStatus(job.jobId, "queued")} disabled={job.status === "queued"}><RotateCcw size={14} />重试</button>
+                    <button title="取消本 source 的 pipeline 处理" onClick={() => handleJobStatus(job.jobId, "cancelled")} disabled={job.status === "cancelled"}><XCircle size={14} />取消</button>
+                    <button title="打开 job 日志" onClick={() => job.logPath && openPath(vaultFilePath(job.logPath))} disabled={!job.logPath}><TerminalSquare size={14} />日志</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+
+        <div className="main-grid">
+          <section className="panel large">
+            <div className="section-head">
+              <h2>Evidence path</h2>
+              <span>{evidencePaths.length} claims</span>
+            </div>
+            <div className="impact-list">
+              {evidencePaths.length === 0 && <p className="empty">暂无可追踪 claim。</p>}
+              {evidencePaths.map((item) => (
+                <div className="work-item" key={item.claimId}>
+                  <span className={classNames("status-chip", item.chainStatus)}>{item.chainStatus}</span>
+                  <strong>{item.claimText}</strong>
+                  <em>{item.concept || "no concept"} · {item.sourceId || item.sourceUuid || "no source"}</em>
+                  <code>{item.evidenceAnchor || "missing anchor"} · {item.missing.join(", ") || "chain complete"}</code>
+                  <div className="inline-actions">
+                    <button onClick={() => item.sourcePage && openPath(vaultFilePath(item.sourcePage))} disabled={!item.sourcePage}><FolderOpen size={14} />source</button>
+                    <button onClick={() => item.artifactPath && openPath(vaultFilePath(item.artifactPath))} disabled={!item.artifactPath}><FileInput size={14} />artifact</button>
+                    <button onClick={() => item.qaReportPath && openPath(vaultFilePath(item.qaReportPath))} disabled={!item.qaReportPath}><ShieldCheck size={14} />QA</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="panel large">
+            <div className="section-head">
+              <h2>QA / Review 工作台</h2>
+              <select className="compact-select" value={reviewFilter} onChange={(event) => setReviewFilter(event.target.value)}>
+                <option value="open">open</option>
+                <option value="approved">approved</option>
+                <option value="rejected">rejected</option>
+                <option value="ignored">ignored</option>
+                <option value="all">all</option>
+              </select>
+            </div>
+            <div className="action-list">
+              {visibleReviewItems.length === 0 && <p className="empty">暂无审核项。</p>}
+              {visibleReviewItems.map((item) => (
+                <div className="work-item" key={item.itemId}>
+                  <span className={classNames("status-chip", item.severity)}>{item.severity}</span>
+                  <strong>{item.title}</strong>
+                  <em>{item.kind} · {item.status} · {item.recommendedAction}</em>
+                  <code>{item.body}</code>
+                  <div className="inline-actions">
+                    <button onClick={() => item.targetPath && openPath(vaultFilePath(item.targetPath))} disabled={!item.targetPath}><FolderOpen size={14} />打开</button>
+                    <button onClick={() => handleReviewStatus(item.itemId, "approved")} disabled={item.status === "approved"}><Check size={14} />批准</button>
+                    <button onClick={() => handleReviewStatus(item.itemId, "rejected")} disabled={item.status === "rejected"}><XCircle size={14} />拒绝</button>
+                    <button onClick={() => handleReviewStatus(item.itemId, "ignored")} disabled={item.status === "ignored"}><XCircle size={14} />忽略</button>
+                    <button onClick={() => handleFollowup(item)}><ClipboardList size={14} />follow-up</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+
+        <div className="main-grid">
+          <section className="panel large">
+            <div className="section-head">
+              <h2>Writeback 安全流程</h2>
+              <GitCompare size={18} />
+            </div>
+            <div className="writeback-form">
+              <input value={writebackTarget} onChange={(event) => setWritebackTarget(event.target.value)} placeholder="concepts/example.md" />
+              <input value={writebackTitle} onChange={(event) => setWritebackTitle(event.target.value)} placeholder="proposal title" />
+              <textarea value={writebackContent} onChange={(event) => setWritebackContent(event.target.value)} placeholder="写回后的完整 Markdown 内容；创建 proposal 后才可审批应用。" />
+              <button onClick={handleCreateWriteback} disabled={!vaultPath || busy === "writeback_proposal"}><GitCompare size={16} />生成 diff proposal</button>
+            </div>
+          </section>
+
+          <section className="panel large">
+            <div className="section-head">
+              <h2>Writeback proposals</h2>
+              <span>{writebacks.length} proposals</span>
+            </div>
+            <div className="impact-list">
+              {writebacks.length === 0 && <p className="empty">暂无 writeback proposal。</p>}
+              {writebacks.map((proposal) => (
+                <div className="work-item" key={proposal.proposalId}>
+                  <span className={classNames("status-chip", proposal.status)}>{proposal.status}</span>
+                  <strong>{proposal.title}</strong>
+                  <em>{proposal.targetPath} · {proposal.updatedAt}</em>
+                  <code>{proposal.diff.split("\n").slice(0, 2).join(" | ")}</code>
+                  <div className="inline-actions">
+                    <button onClick={() => openPath(vaultFilePath(proposal.targetPath))}><FolderOpen size={14} />target</button>
+                    <button onClick={() => handleWritebackStatus(proposal.proposalId, "approved")} disabled={proposal.status !== "proposed"}><Check size={14} />审批</button>
+                    <button onClick={() => handleWritebackStatus(proposal.proposalId, "rejected")} disabled={proposal.status === "applied"}><XCircle size={14} />拒绝</button>
+                    <button onClick={() => handleApplyWriteback(proposal.proposalId)} disabled={proposal.status !== "approved"}><Play size={14} />应用</button>
+                    <button onClick={() => proposal.logPath && openPath(vaultFilePath(proposal.logPath))} disabled={!proposal.logPath}><TerminalSquare size={14} />日志</button>
+                  </div>
+                  <pre className="diff-box">{proposal.diff}</pre>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
 
         <div className="main-grid">
           <section className="panel large">
@@ -473,58 +853,16 @@ function App() {
                   <em>{action.body}</em>
                   <code>{action.status} · {action.recommendedAction} · affected {action.affectedObjects.length} · {action.reason}</code>
                   <div className="inline-actions">
-                    <button title="打开关联文件" onClick={() => action.links[0] && openPath(vaultFilePath(action.links[0].path))}>
-                      <FolderOpen size={14} />打开
-                    </button>
-                    <button title="标记已解决" onClick={() => handleActionStatus(action.actionId, "resolved")} disabled={action.status === "resolved"}>
-                      <Check size={14} />解决
-                    </button>
-                    <button title="忽略该行动" onClick={() => handleActionStatus(action.actionId, "ignored")} disabled={action.status === "ignored"}>
-                      <XCircle size={14} />忽略
-                    </button>
-                    <button title="重新打开行动" onClick={() => handleActionStatus(action.actionId, "open")} disabled={action.status === "open"}>
-                      <RotateCcw size={14} />重开
-                    </button>
+                    <button title="打开关联文件" onClick={() => action.links[0] && openPath(vaultFilePath(action.links[0].path))}><FolderOpen size={14} />打开</button>
+                    <button title="标记已解决" onClick={() => handleActionStatus(action.actionId, "resolved")} disabled={action.status === "resolved"}><Check size={14} />解决</button>
+                    <button title="忽略该行动" onClick={() => handleActionStatus(action.actionId, "ignored")} disabled={action.status === "ignored"}><XCircle size={14} />忽略</button>
+                    <button title="重新打开行动" onClick={() => handleActionStatus(action.actionId, "open")} disabled={action.status === "open"}><RotateCcw size={14} />重开</button>
                   </div>
                 </div>
               ))}
             </div>
           </section>
 
-          <section className="panel large">
-            <div className="section-head">
-              <h2>Per-source queue</h2>
-              <span>{jobs.length} jobs</span>
-            </div>
-            <div className="queue-list">
-              {jobs.length === 0 && <p className="empty">暂无 source 任务。</p>}
-              {jobs.map((job) => (
-                <div className="work-item" key={job.jobId}>
-                  <span className={classNames("status-chip", job.status)}>{job.status}</span>
-                  <strong>{job.sourceId || job.fileName}</strong>
-                  <em>{job.currentStep} · {job.nextAction} · attempt {job.attempt}/{job.maxAttempts}</em>
-                  <code>{job.lastError || job.reason}</code>
-                  <div className="inline-actions">
-                    <button title="打开当前 artifact 或原始 source" onClick={() => openPath(vaultFilePath(job.artifactPath || job.sourcePath))}>
-                      <FolderOpen size={14} />打开
-                    </button>
-                    <button title="重新排队" onClick={() => handleJobStatus(job.jobId, "queued")} disabled={job.status === "queued"}>
-                      <RotateCcw size={14} />重试
-                    </button>
-                    <button title="取消本 source 的 pipeline 处理" onClick={() => handleJobStatus(job.jobId, "cancelled")} disabled={job.status === "cancelled"}>
-                      <XCircle size={14} />取消
-                    </button>
-                    <button title="打开 job 日志" onClick={() => job.logPath && openPath(vaultFilePath(job.logPath))} disabled={!job.logPath}>
-                      <TerminalSquare size={14} />日志
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        </div>
-
-        <div className="main-grid">
           <section className="panel large">
             <div className="section-head">
               <h2>Claim Ledger</h2>
@@ -546,30 +884,20 @@ function App() {
                   <em>{claim.sourceId || claim.sourceUuid || claim.sourcePath || `line ${claim.line}`}</em>
                   <code>{claim.evidenceHash || "no evidence hash"} · {claim.evidenceQuote || "no quote"}</code>
                   <div className="inline-actions">
-                    <button title="打开 Claim Ledger" onClick={() => openPath(vaultFilePath("claims/claims.jsonl"))}>
-                      <FolderOpen size={14} />打开
-                    </button>
-                    <button title="标记为支持" onClick={() => handleClaimVerdict(claim.claimId, "supported")} disabled={claim.verdict === "supported"}>
-                      <Check size={14} />支持
-                    </button>
-                    <button title="标记为待审" onClick={() => handleClaimVerdict(claim.claimId, "needs_review")} disabled={claim.verdict === "needs_review"}>
-                      <AlertTriangle size={14} />待审
-                    </button>
-                    <button title="标记为失效" onClick={() => handleClaimVerdict(claim.claimId, "stale")} disabled={claim.verdict === "stale"}>
-                      <RotateCcw size={14} />失效
-                    </button>
-                    <button title="标记为冲突" onClick={() => handleClaimVerdict(claim.claimId, "contradicted")} disabled={claim.verdict === "contradicted"}>
-                      <XCircle size={14} />冲突
-                    </button>
-                    <button title="忽略该 claim" onClick={() => handleClaimVerdict(claim.claimId, "ignored")} disabled={claim.verdict === "ignored"}>
-                      <XCircle size={14} />忽略
-                    </button>
+                    <button onClick={() => openPath(vaultFilePath("claims/claims.jsonl"))}><FolderOpen size={14} />打开</button>
+                    <button onClick={() => handleClaimVerdict(claim.claimId, "supported")} disabled={claim.verdict === "supported"}><Check size={14} />支持</button>
+                    <button onClick={() => handleClaimVerdict(claim.claimId, "needs_review")} disabled={claim.verdict === "needs_review"}><AlertTriangle size={14} />待审</button>
+                    <button onClick={() => handleClaimVerdict(claim.claimId, "stale")} disabled={claim.verdict === "stale"}><RotateCcw size={14} />失效</button>
+                    <button onClick={() => handleClaimVerdict(claim.claimId, "contradicted")} disabled={claim.verdict === "contradicted"}><XCircle size={14} />冲突</button>
+                    <button onClick={() => handleClaimVerdict(claim.claimId, "ignored")} disabled={claim.verdict === "ignored"}><XCircle size={14} />忽略</button>
                   </div>
                 </div>
               ))}
             </div>
           </section>
+        </div>
 
+        <div className="main-grid">
           <section className="panel large">
             <div className="section-head">
               <h2>Source Registry</h2>
@@ -585,6 +913,19 @@ function App() {
                   <code>{entry.sourcePage || "source page pending"} · {entry.artifactSha256 || "no artifact hash"} · {entry.parser || "parser pending"}</code>
                 </button>
               ))}
+            </div>
+          </section>
+
+          <section className="panel large">
+            <div className="section-head">
+              <h2>Sources / Concepts / Reports</h2>
+              <span>{status?.files.length ?? 0} items</span>
+            </div>
+            <div className="browser">
+              <FileColumn title="Inbox" files={grouped.inbox} onSelect={setSelectedFile} />
+              <FileColumn title="Sources" files={[...grouped.source, ...grouped.draft]} onSelect={setSelectedFile} />
+              <FileColumn title="Concepts" files={grouped.concept} onSelect={setSelectedFile} />
+              <FileColumn title="Reports" files={grouped.report} onSelect={setSelectedFile} />
             </div>
           </section>
         </div>
@@ -608,31 +949,13 @@ function App() {
 
           <section className="panel large">
             <div className="section-head">
-              <h2>Sources / Concepts / Reports</h2>
-              <span>{status?.files.length ?? 0} items</span>
-            </div>
-            <div className="browser">
-              <FileColumn title="Inbox" files={grouped.inbox} onSelect={setSelectedFile} />
-              <FileColumn title="Sources" files={[...grouped.source, ...grouped.draft]} onSelect={setSelectedFile} />
-              <FileColumn title="Concepts" files={grouped.concept} onSelect={setSelectedFile} />
-              <FileColumn title="Reports" files={grouped.report} onSelect={setSelectedFile} />
-            </div>
-          </section>
-        </div>
-
-        <div className="main-grid">
-          <section className="panel">
-            <div className="section-head">
               <h2>Ingest plan</h2>
               <ShieldCheck size={18} />
             </div>
             <div className="ingest-list">
               {!ingestPlan?.entries.length && <p className="empty">暂无可规划输入。</p>}
               {ingestPlan?.entries.map((entry) => (
-                <button
-                  key={`${entry.sourcePath}-${entry.sha256}`}
-                  onClick={() => openPath(entry.status === "blocked" ? entry.sourcePath : entry.artifactPath || entry.sourcePath)}
-                >
+                <button key={`${entry.sourcePath}-${entry.sha256}`} onClick={() => openPath(entry.status === "blocked" ? entry.sourcePath : entry.artifactPath || entry.sourcePath)}>
                   <span className={classNames("status-chip", entry.status)}>{entry.status}</span>
                   <strong>{entry.fileName}</strong>
                   <em>{entry.reason}</em>
@@ -642,7 +965,9 @@ function App() {
             </div>
             {ingestPlan && <p className="note">Plan file: {ingestPlan.planPath}</p>}
           </section>
+        </div>
 
+        <div className="main-grid">
           <section className="panel">
             <div className="section-head">
               <h2>任务日志</h2>
@@ -657,11 +982,16 @@ function App() {
                   <em>{log.logPath}</em>
                 </button>
               ))}
+              {diagnosticPath && (
+                <button className="log-item" onClick={() => openPath(diagnosticPath)}>
+                  <span>diagnostic bundle</span>
+                  <strong className="pass">ready</strong>
+                  <em>{diagnosticPath}</em>
+                </button>
+              )}
             </div>
           </section>
-        </div>
 
-        <div className="main-grid">
           <section className="panel">
             <div className="section-head">
               <h2>Artifact contract</h2>
@@ -673,15 +1003,15 @@ function App() {
                 <button key={artifact.artifactPath} onClick={() => openPath(vaultFilePath(artifact.manifestPath || artifact.artifactPath))}>
                   <span className={classNames("status-chip", artifact.status)}>{artifact.status}</span>
                   <strong>{artifact.artifactPath}</strong>
-                  <em>
-                    {artifact.parser || "legacy parser"} · schema {artifact.schemaVersion || "missing"} · valid {artifact.contractValid ? "yes" : "no"} · chunks {artifact.chunkCount}
-                  </em>
+                  <em>{artifact.parser || "legacy parser"} · schema {artifact.schemaVersion || "missing"} · valid {artifact.contractValid ? "yes" : "no"} · chunks {artifact.chunkCount}</em>
                   <code>pages {artifact.anchorsPages ? "yes" : "no"} · tables {artifact.anchorsTables ? "yes" : "no"} · figures {artifact.anchorsFigures ? "yes" : "no"} · {artifact.parseLogPath || artifact.limitations[0] || "contract complete"}</code>
                 </button>
               ))}
             </div>
           </section>
+        </div>
 
+        <div className="main-grid">
           <section className="panel">
             <div className="section-head">
               <h2>Contract lint</h2>
@@ -695,26 +1025,6 @@ function App() {
                   <strong>{finding.title}</strong>
                   <em>{finding.objectType} · {finding.kind}</em>
                   <code>{finding.detail}</code>
-                </button>
-              ))}
-            </div>
-          </section>
-        </div>
-
-        <div className="main-grid">
-          <section className="panel">
-            <div className="section-head">
-              <h2>Impact graph</h2>
-              <span>{impactEdges.length} edges</span>
-            </div>
-            <div className="impact-list">
-              {impactEdges.length === 0 && <p className="empty">暂无影响边。</p>}
-              {impactEdges.map((edge) => (
-                <button key={edge.edgeId}>
-                  <span className={classNames("status-chip", edge.status)}>{edge.status}</span>
-                  <strong>{edge.fromType}{" -> "}{edge.toType}</strong>
-                  <em>{edge.relationship}</em>
-                  <code>{edge.fromId}{" -> "}{edge.toId}</code>
                 </button>
               ))}
             </div>
@@ -733,11 +1043,14 @@ function App() {
                 "_state/actions.jsonl",
                 "_state/impact-graph.jsonl",
                 "_state/lint-findings.jsonl",
+                "_state/review-decisions.jsonl",
+                "_state/writeback-log.jsonl",
+                "_state/import-report.jsonl",
               ].map((path) => (
                 <button key={path} onClick={() => openPath(vaultFilePath(path))}>
                   <span className="status-chip published">state</span>
                   <strong>{path}</strong>
-                  <em>canonical ingest contract</em>
+                  <em>canonical desktop/runtime contract</em>
                   <code>{vaultFilePath(path)}</code>
                 </button>
               ))}
@@ -745,11 +1058,29 @@ function App() {
           </section>
         </div>
 
+        <section className="panel">
+          <div className="section-head">
+            <h2>Impact graph</h2>
+            <span>{impactEdges.length} edges</span>
+          </div>
+          <div className="impact-list compact">
+            {impactEdges.length === 0 && <p className="empty">暂无影响边。</p>}
+            {impactEdges.map((edge) => (
+              <button key={edge.edgeId}>
+                <span className={classNames("status-chip", edge.status)}>{edge.status}</span>
+                <strong>{edge.fromType}{" -> "}{edge.toType}</strong>
+                <em>{edge.relationship}</em>
+                <code>{edge.fromId}{" -> "}{edge.toId}</code>
+              </button>
+            ))}
+          </div>
+        </section>
+
         {selectedFile && (
           <section className="detail-bar">
             <div>
               <strong>{selectedFile.title || selectedFile.name}</strong>
-              <span>{selectedFile.kind} · {selectedFile.status || "no status"} · {selectedFile.updated || "no updated date"}</span>
+              <span>{selectedFile.kind} · {selectedFile.status || "no status"} · {selectedFile.updated || "no updated date"} · QA {selectedFile.qaVerdict || "unknown"}</span>
               <code>{selectedFile.path}</code>
             </div>
             <button onClick={() => openPath(selectedFile.path)}><FolderOpen size={16} />打开</button>

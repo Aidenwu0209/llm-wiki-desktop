@@ -32,6 +32,8 @@ export type VaultStatus = {
   obsidianEnabled: boolean;
   dashboardAvailable: boolean;
   runtimeScriptsPath?: string | null;
+  runtimeVersion?: string | null;
+  lastUpdated?: string | null;
   counts: VaultCounts;
   files: VaultFile[];
   errors: string[];
@@ -60,6 +62,47 @@ export type ImportResult = {
   copied: VaultFile[];
   skippedDuplicates: string[];
   errors: string[];
+};
+
+export type ImportPreview = {
+  sourcePath: string;
+  fileName: string;
+  sizeBytes: number;
+  mime: string;
+  sha256: string;
+  targetPath?: string | null;
+  folderContext?: string | null;
+  duplicateOf?: string | null;
+  duplicateReason?: string | null;
+  approximateDuplicateOf?: string | null;
+  doi?: string | null;
+  arxivId?: string | null;
+  titleHint?: string | null;
+  status: string;
+  enqueued: boolean;
+};
+
+export type ImportBatchResult = {
+  imported: ImportPreview[];
+  skippedDuplicates: ImportPreview[];
+  errors: string[];
+  enqueuedJobs: number;
+};
+
+export type DesktopSettings = {
+  runtimePath: string;
+  pythonPath: string;
+  uvPath: string;
+  layoutParsingApiUrl: string;
+  layoutParsingTokenPresent: boolean;
+  cloudParsingAllowed: boolean;
+  defaultIngestMode: "inbox_only" | "enqueue_after_import" | string;
+  defaultObsidianProfile: "minimal" | "research" | "full" | string;
+  retryCount: number;
+  timeoutSeconds: number;
+  autoRunLintAfterWrites: boolean;
+  autoOpenReportsAfterFailures: boolean;
+  skipObsidianPluginDownloads: boolean;
 };
 
 export type IngestPlanSummary = {
@@ -229,6 +272,52 @@ export type ClaimLedgerItem = {
   evidenceHash?: string | null;
   updatedAt?: string | null;
   line: number;
+};
+
+export type EvidencePathItem = {
+  claimId: string;
+  concept?: string | null;
+  claimText: string;
+  chainStatus: "ok" | "needs_review" | "broken" | string;
+  missing: string[];
+  sourceId?: string | null;
+  sourceUuid?: string | null;
+  sourcePage?: string | null;
+  evidenceAnchor?: string | null;
+  evidenceQuote?: string | null;
+  rawPath?: string | null;
+  artifactPath?: string | null;
+  chunksPath?: string | null;
+  qaReportPath?: string | null;
+  semanticStatus?: string | null;
+  scienceReviewStatus?: string | null;
+};
+
+export type ReviewQueueItem = {
+  itemId: string;
+  kind: string;
+  severity: "p0" | "p1" | "p2" | "p3" | string;
+  title: string;
+  body: string;
+  status: string;
+  targetPath?: string | null;
+  sourceId?: string | null;
+  claimId?: string | null;
+  evidencePath?: string | null;
+  recommendedAction: string;
+};
+
+export type WritebackProposal = {
+  proposalId: string;
+  targetPath: string;
+  title: string;
+  status: "proposed" | "approved" | "rejected" | "applied" | string;
+  diff: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+  appliedAt?: string | null;
+  logPath?: string | null;
 };
 
 export type IngestPipelineResult = {
