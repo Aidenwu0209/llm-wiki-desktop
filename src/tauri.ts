@@ -2,12 +2,17 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   ClaimLedgerItem,
   ContractFinding,
+  DesktopSettings,
+  EvidencePathItem,
+  ImportBatchResult,
   ImportResult,
   IngestPipelineResult,
   IngestPlan,
+  ReviewQueueItem,
   RuntimeSettings,
   TaskLog,
   VaultStatus,
+  WritebackProposal,
 } from "./types";
 
 export function inspectVault(vaultPath: string): Promise<VaultStatus> {
@@ -35,6 +40,23 @@ export function repairObsidianTemplates(vaultPath: string): Promise<VaultStatus>
 
 export function importToInbox(vaultPath: string, paths: string[]): Promise<ImportResult> {
   return invoke("import_to_inbox", { vaultPath, paths });
+}
+
+export function importSources(
+  vaultPath: string,
+  paths: string[],
+  enqueueAfterImport: boolean,
+  preserveFolders: boolean,
+): Promise<ImportBatchResult> {
+  return invoke("import_sources", { vaultPath, paths, enqueueAfterImport, preserveFolders });
+}
+
+export function loadDesktopSettings(vaultPath: string): Promise<DesktopSettings> {
+  return invoke("load_desktop_settings", { vaultPath });
+}
+
+export function saveDesktopSettings(vaultPath: string, settings: DesktopSettings): Promise<DesktopSettings> {
+  return invoke("save_desktop_settings", { vaultPath, settings });
 }
 
 export function planIngest(vaultPath: string): Promise<IngestPlan> {
@@ -73,6 +95,61 @@ export function setClaimVerdict(
   return invoke("set_claim_verdict", { vaultPath, claimId, verdict });
 }
 
+export function listEvidencePaths(vaultPath: string): Promise<EvidencePathItem[]> {
+  return invoke("list_evidence_paths", { vaultPath });
+}
+
+export function listReviewQueue(vaultPath: string): Promise<ReviewQueueItem[]> {
+  return invoke("list_review_queue", { vaultPath });
+}
+
+export function setReviewItemStatus(
+  vaultPath: string,
+  itemId: string,
+  status: "open" | "approved" | "rejected" | "resolved" | "ignored" | "needs_review",
+  note?: string,
+): Promise<ReviewQueueItem[]> {
+  return invoke("set_review_item_status", { vaultPath, itemId, status, note: note ?? null });
+}
+
+export function createFollowupAction(
+  vaultPath: string,
+  title: string,
+  body: string,
+  targetPath?: string | null,
+): Promise<ReviewQueueItem[]> {
+  return invoke("create_followup_action", { vaultPath, title, body, targetPath: targetPath ?? null });
+}
+
+export function createWritebackProposal(
+  vaultPath: string,
+  targetPath: string,
+  title: string,
+  content: string,
+): Promise<WritebackProposal> {
+  return invoke("create_writeback_proposal", { vaultPath, targetPath, title, content });
+}
+
+export function listWritebackProposals(vaultPath: string): Promise<WritebackProposal[]> {
+  return invoke("list_writeback_proposals", { vaultPath });
+}
+
+export function setWritebackStatus(
+  vaultPath: string,
+  proposalId: string,
+  status: "proposed" | "approved" | "rejected",
+): Promise<WritebackProposal> {
+  return invoke("set_writeback_status", { vaultPath, proposalId, status });
+}
+
+export function applyWritebackProposal(vaultPath: string, proposalId: string): Promise<WritebackProposal> {
+  return invoke("apply_writeback_proposal", { vaultPath, proposalId });
+}
+
+export function createDiagnosticBundle(vaultPath: string): Promise<string> {
+  return invoke("create_diagnostic_bundle", { vaultPath });
+}
+
 export function runIngestPipeline(
   vaultPath: string,
   settings: RuntimeSettings,
@@ -103,4 +180,8 @@ export function runRuntimeCommand(
 
 export function openPath(path: string): Promise<void> {
   return invoke("open_path", { path });
+}
+
+export function openObsidianVault(vaultPath: string): Promise<void> {
+  return invoke("open_obsidian_vault", { vaultPath });
 }

@@ -25,7 +25,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -54,7 +55,8 @@ button:disabled {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   min-height: 34px;
   border: 1px solid #c9d2cc;
@@ -62,6 +64,12 @@ select {
   padding: 0 10px;
   background: #ffffff;
   color: #17201d;
+}
+
+textarea {
+  min-height: 120px;
+  padding: 10px;
+  resize: vertical;
 }
 
 .app-shell {
@@ -263,6 +271,57 @@ select {
   padding: 0 12px;
 }
 
+.drop-zone {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border: 1px dashed #9fb0a8;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.drop-zone.active,
+.app-shell.drag-active .drop-zone {
+  border-color: #245b93;
+  background: #eef5fb;
+}
+
+.drop-zone strong,
+.drop-zone span {
+  display: block;
+}
+
+.drop-zone span {
+  margin-top: 4px;
+  color: #64706a;
+  font-size: 13px;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.settings-grid label {
+  display: grid;
+  gap: 4px;
+  color: #64706a;
+  font-size: 12px;
+}
+
+.writeback-form {
+  display: grid;
+  gap: 8px;
+}
+
+.writeback-form button {
+  width: fit-content;
+  padding: 0 12px;
+}
+
 .main-grid {
   display: grid;
   grid-template-columns: minmax(280px, 0.92fr) minmax(420px, 1.35fr);
@@ -400,6 +459,10 @@ select {
   overflow: auto;
 }
 
+.impact-list.compact {
+  max-height: 210px;
+}
+
 .ingest-list button,
 .contract-list button,
 .impact-list button,
@@ -508,12 +571,24 @@ select {
   color: #1f6f45;
 }
 
+.status-chip.imported,
+.status-chip.ok {
+  background: #e7f4ec;
+  color: #1f6f45;
+}
+
 .status-chip.stageable {
   background: #e8eef8;
   color: #245b93;
 }
 
 .status-chip.blocked {
+  background: #f8e8e8;
+  color: #a43131;
+}
+
+.status-chip.broken,
+.status-chip.rejected {
   background: #f8e8e8;
   color: #a43131;
 }
@@ -538,6 +613,8 @@ select {
 .status-chip.succeeded,
 .status-chip.resolved,
 .status-chip.supported,
+.status-chip.approved,
+.status-chip.applied,
 .status-chip.p3 {
   background: #e7f4ec;
   color: #1f6f45;
@@ -545,6 +622,8 @@ select {
 
 .status-chip.legacy,
 .status-chip.needs_review,
+.status-chip.imported_with_duplicate_warning,
+.status-chip.proposed,
 .status-chip.p1 {
   background: #fff0d5;
   color: #8a5d10;
@@ -553,6 +632,7 @@ select {
 .status-chip.stale,
 .status-chip.contradicted,
 .status-chip.failed,
+.status-chip.skipped_duplicate,
 .status-chip.p0 {
   background: #f8e8e8;
   color: #a43131;
@@ -592,6 +672,19 @@ select {
 .log-item .fail {
   background: #f8e8e8;
   color: #a43131;
+}
+
+.diff-box {
+  max-height: 140px;
+  overflow: auto;
+  margin: 10px 0 0;
+  border: 1px solid #d8ded9;
+  border-radius: 6px;
+  background: #fff;
+  padding: 8px;
+  color: #40514a;
+  font-size: 11px;
+  white-space: pre-wrap;
 }
 
 .detail-bar {

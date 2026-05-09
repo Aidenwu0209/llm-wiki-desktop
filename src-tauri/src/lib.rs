@@ -1,4 +1,4 @@
-use chrono::Local;
+use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -49,6 +49,8 @@ struct VaultStatus {
     obsidian_enabled: bool,
     dashboard_available: bool,
     runtime_scripts_path: Option<String>,
+    runtime_version: Option<String>,
+    last_updated: Option<String>,
     counts: VaultCounts,
     files: Vec<VaultFile>,
     errors: Vec<String>,
@@ -74,6 +76,53 @@ struct ImportResult {
     copied: Vec<VaultFile>,
     skipped_duplicates: Vec<String>,
     errors: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ImportPreview {
+    source_path: String,
+    file_name: String,
+    size_bytes: u64,
+    mime: String,
+    sha256: String,
+    target_path: Option<String>,
+    folder_context: Option<String>,
+    duplicate_of: Option<String>,
+    duplicate_reason: Option<String>,
+    approximate_duplicate_of: Option<String>,
+    doi: Option<String>,
+    arxiv_id: Option<String>,
+    title_hint: Option<String>,
+    status: String,
+    enqueued: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportBatchResult {
+    imported: Vec<ImportPreview>,
+    skipped_duplicates: Vec<ImportPreview>,
+    errors: Vec<String>,
+    enqueued_jobs: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct DesktopSettings {
+    runtime_path: String,
+    python_path: String,
+    uv_path: String,
+    layout_parsing_api_url: String,
+    layout_parsing_token_present: bool,
+    cloud_parsing_allowed: bool,
+    default_ingest_mode: String,
+    default_obsidian_profile: String,
+    retry_count: usize,
+    timeout_seconds: usize,
+    auto_run_lint_after_writes: bool,
+    auto_open_reports_after_failures: bool,
+    skip_obsidian_plugin_downloads: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -349,6 +398,58 @@ struct ClaimLedgerItem {
     line: usize,
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct EvidencePathItem {
+    claim_id: String,
+    concept: Option<String>,
+    claim_text: String,
+    chain_status: String,
+    missing: Vec<String>,
+    source_id: Option<String>,
+    source_uuid: Option<String>,
+    source_page: Option<String>,
+    evidence_anchor: Option<String>,
+    evidence_quote: Option<String>,
+    raw_path: Option<String>,
+    artifact_path: Option<String>,
+    chunks_path: Option<String>,
+    qa_report_path: Option<String>,
+    semantic_status: Option<String>,
+    science_review_status: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ReviewQueueItem {
+    item_id: String,
+    kind: String,
+    severity: String,
+    title: String,
+    body: String,
+    status: String,
+    target_path: Option<String>,
+    source_id: Option<String>,
+    claim_id: Option<String>,
+    evidence_path: Option<String>,
+    recommended_action: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct WritebackProposal {
+    proposal_id: String,
+    target_path: String,
+    title: String,
+    status: String,
+    diff: String,
+    content: String,
+    created_at: String,
+    updated_at: String,
+    applied_at: Option<String>,
+    log_path: Option<String>,
+}
+
 const SOURCE_TEMPLATE: &str = r#"---
 type: source
 source_id: ""
@@ -422,6 +523,33 @@ related_concepts: []
 ## 待确认问题
 "#;
 
+impl Default for DesktopSettings {
+    fn default() -> Self {
+        Self {
+            runtime_path: String::new(),
+            python_path: "python3".to_string(),
+            uv_path: "uv".to_string(),
+            layout_parsing_api_url: String::new(),
+            layout_parsing_token_present: std::env::var("OPEN_LLM_WIKI_LAYOUT_TOKEN")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .is_some()
+                || std::env::var("LLM_WIKI_LAYOUT_TOKEN")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+                    .is_some(),
+            cloud_parsing_allowed: false,
+            default_ingest_mode: "inbox_only".to_string(),
+            default_obsidian_profile: "minimal".to_string(),
+            retry_count: 3,
+            timeout_seconds: 1800,
+            auto_run_lint_after_writes: true,
+            auto_open_reports_after_failures: false,
+            skip_obsidian_plugin_downloads: true,
+        }
+    }
+}
+
 fn to_display(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
@@ -492,6 +620,19 @@ fn write_jsonl<T: Serialize>(path: &Path, rows: &[T]) -> Result<(), String> {
         rendered.push('\n');
     }
     write_text(path, &rendered)
+}
+
+fn append_jsonl_value(path: &Path, value: &serde_json::Value) -> Result<(), String> {
+    let existing = read_text(path);
+    write_text(
+        path,
+        &format!(
+            "{}{}\n",
+            existing,
+            serde_json::to_string(value)
+                .map_err(|e| format!("failed to serialize jsonl row: {e}"))?
+        ),
+    )
 }
 
 fn read_json_value(path: &Path) -> Option<serde_json::Value> {
@@ -950,6 +1091,79 @@ fn runtime_scripts_path(vault: &Path) -> Option<PathBuf> {
     }
 }
 
+fn runtime_version_for_scripts(scripts: &Path) -> Option<String> {
+    let root = scripts.parent().unwrap_or(scripts);
+    let version_file = root.join("VERSION");
+    if version_file.is_file() {
+        let version = read_text(&version_file).trim().to_string();
+        if !version.is_empty() {
+            return Some(version);
+        }
+    }
+    for candidate in [
+        root.join("pyproject.toml"),
+        root.parent()?.join("pyproject.toml"),
+    ] {
+        let text = read_text(&candidate);
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if let Some(value) = trimmed.strip_prefix("version") {
+                if let Some((_, raw)) = value.split_once('=') {
+                    let version = raw.trim().trim_matches('"').to_string();
+                    if !version.is_empty() {
+                        return Some(version);
+                    }
+                }
+            }
+        }
+    }
+    Some(format!("desktop-adapter {}", env!("CARGO_PKG_VERSION")))
+}
+
+fn latest_modified_time(root: &Path) -> Option<String> {
+    fn visit(path: &Path, latest: &mut Option<std::time::SystemTime>) {
+        let Ok(metadata) = fs::metadata(path) else {
+            return;
+        };
+        if let Ok(modified) = metadata.modified() {
+            if latest.as_ref().is_none_or(|current| modified > *current) {
+                *latest = Some(modified);
+            }
+        }
+        if path.is_dir() {
+            if let Ok(read_dir) = fs::read_dir(path) {
+                for entry in read_dir.flatten() {
+                    let child = entry.path();
+                    if child
+                        .file_name()
+                        .and_then(OsStr::to_str)
+                        .is_some_and(|name| name == ".git" || name == "node_modules")
+                    {
+                        continue;
+                    }
+                    visit(&child, latest);
+                }
+            }
+        }
+    }
+    let mut latest = None;
+    for child in [
+        "raw",
+        "sources",
+        "concepts",
+        "drafts",
+        "qa-reports",
+        "claims",
+        "_state",
+    ] {
+        visit(&root.join(child), &mut latest);
+    }
+    latest.map(|time| {
+        let datetime: DateTime<Local> = time.into();
+        datetime.to_rfc3339()
+    })
+}
+
 #[tauri::command]
 fn inspect_vault(vault_path: String) -> Result<VaultStatus, String> {
     let vault = PathBuf::from(vault_path);
@@ -1006,26 +1220,23 @@ fn inspect_vault(vault_path: String) -> Result<VaultStatus, String> {
     for path in list_markdown(&vault.join("qa-reports")) {
         files.push(file_item(&vault, &path, "report"));
     }
-    if let Ok(read_dir) = fs::read_dir(vault.join("raw").join("inbox")) {
-        for entry in read_dir.flatten() {
-            let path = entry.path();
-            if path.is_file() {
-                files.push(VaultFile {
-                    name: path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string(),
-                    path: to_display(&path),
-                    kind: "inbox".to_string(),
-                    title: None,
-                    status: None,
-                    updated: None,
-                    qa_verdict: None,
-                    needs_review: 0,
-                });
-            }
-        }
+    let mut inbox_files = Vec::new();
+    collect_inbox_files(&vault.join("raw").join("inbox"), &mut inbox_files);
+    for path in inbox_files {
+        files.push(VaultFile {
+            name: path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+            path: to_display(&path),
+            kind: "inbox".to_string(),
+            title: None,
+            status: None,
+            updated: None,
+            qa_verdict: None,
+            needs_review: 0,
+        });
     }
 
     let runtime = runtime_scripts_path(&vault);
@@ -1035,7 +1246,11 @@ fn inspect_vault(vault_path: String) -> Result<VaultStatus, String> {
         runtime_installed: runtime.is_some(),
         obsidian_enabled: vault.join(".obsidian").is_dir(),
         dashboard_available: vault.join("_dashboard.md").is_file(),
-        runtime_scripts_path: runtime.map(|path| to_display(&path)),
+        runtime_scripts_path: runtime.as_ref().map(|path| to_display(path)),
+        runtime_version: runtime
+            .as_ref()
+            .and_then(|path| runtime_version_for_scripts(path)),
+        last_updated: latest_modified_time(&vault),
         counts: VaultCounts {
             inbox: files.iter().filter(|item| item.kind == "inbox").count(),
             sources: list_markdown(&vault.join("sources")).len(),
@@ -1195,22 +1410,331 @@ fn repair_obsidian_templates(vault_path: String) -> Result<VaultStatus, String> 
 
 #[tauri::command]
 fn import_to_inbox(vault_path: String, paths: Vec<String>) -> Result<ImportResult, String> {
-    let vault = PathBuf::from(vault_path);
+    let batch = import_sources_impl(&PathBuf::from(&vault_path), paths, false, false)?;
+    let copied = batch
+        .imported
+        .iter()
+        .filter_map(|item| {
+            let path = item.target_path.as_ref()?;
+            Some(VaultFile {
+                name: item.file_name.clone(),
+                path: path.clone(),
+                kind: "inbox".to_string(),
+                title: item.title_hint.clone(),
+                status: Some(item.status.clone()),
+                updated: None,
+                qa_verdict: None,
+                needs_review: 0,
+            })
+        })
+        .collect();
+    Ok(ImportResult {
+        copied,
+        skipped_duplicates: batch
+            .skipped_duplicates
+            .iter()
+            .filter_map(|item| item.duplicate_of.clone())
+            .collect(),
+        errors: batch.errors,
+    })
+}
+
+#[tauri::command]
+fn import_sources(
+    vault_path: String,
+    paths: Vec<String>,
+    enqueue_after_import: bool,
+    preserve_folders: bool,
+) -> Result<ImportBatchResult, String> {
+    import_sources_impl(
+        &PathBuf::from(vault_path),
+        paths,
+        enqueue_after_import,
+        preserve_folders,
+    )
+}
+
+#[derive(Debug)]
+struct ImportCandidate {
+    source: PathBuf,
+    folder_context: Option<String>,
+}
+
+fn supported_import_file(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(OsStr::to_str)
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "pdf" | "md" | "markdown" | "txt"
+    )
+}
+
+fn collect_import_dir(
+    root: &Path,
+    current: &Path,
+    preserve_folders: bool,
+    out: &mut Vec<ImportCandidate>,
+) {
+    if let Ok(read_dir) = fs::read_dir(current) {
+        let mut entries = read_dir
+            .flatten()
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        entries.sort();
+        for path in entries {
+            if path
+                .file_name()
+                .and_then(OsStr::to_str)
+                .is_some_and(|name| name.starts_with('.'))
+            {
+                continue;
+            }
+            if path.is_dir() {
+                collect_import_dir(root, &path, preserve_folders, out);
+            } else if path.is_file() && supported_import_file(&path) {
+                let folder_context = if preserve_folders {
+                    path.parent()
+                        .and_then(|parent| parent.strip_prefix(root).ok())
+                        .filter(|rel| !rel.as_os_str().is_empty())
+                        .map(|rel| rel.to_string_lossy().to_string())
+                } else {
+                    None
+                };
+                out.push(ImportCandidate {
+                    source: path,
+                    folder_context,
+                });
+            }
+        }
+    }
+}
+
+fn collect_import_candidates(
+    paths: Vec<String>,
+    preserve_folders: bool,
+) -> (Vec<ImportCandidate>, Vec<String>) {
+    let mut candidates = Vec::new();
+    let mut errors = Vec::new();
+    for raw_path in paths {
+        let path = PathBuf::from(&raw_path);
+        if path.is_dir() {
+            collect_import_dir(&path, &path, preserve_folders, &mut candidates);
+        } else if path.is_file() {
+            if supported_import_file(&path) {
+                candidates.push(ImportCandidate {
+                    source: path,
+                    folder_context: None,
+                });
+            } else {
+                errors.push(format!("unsupported import type: {raw_path}"));
+            }
+        } else {
+            errors.push(format!("skipped missing input: {raw_path}"));
+        }
+    }
+    (candidates, errors)
+}
+
+fn normalize_title(value: &str) -> String {
+    let mut out = String::new();
+    let mut previous_space = false;
+    for ch in value.chars() {
+        if ch.is_alphanumeric() {
+            out.extend(ch.to_lowercase());
+            previous_space = false;
+        } else if !previous_space {
+            out.push(' ');
+            previous_space = true;
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn title_hint_from_path(path: &Path) -> Option<String> {
+    path.file_stem()
+        .and_then(OsStr::to_str)
+        .map(|stem| stem.replace(['_', '-'], " "))
+        .map(|title| title.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|title| !title.is_empty())
+}
+
+fn token_overlap(left: &str, right: &str) -> f32 {
+    let left_tokens = normalize_title(left)
+        .split_whitespace()
+        .map(ToString::to_string)
+        .collect::<HashSet<_>>();
+    let right_tokens = normalize_title(right)
+        .split_whitespace()
+        .map(ToString::to_string)
+        .collect::<HashSet<_>>();
+    if left_tokens.is_empty() || right_tokens.is_empty() {
+        return 0.0;
+    }
+    let intersection = left_tokens.intersection(&right_tokens).count() as f32;
+    let union = left_tokens.union(&right_tokens).count() as f32;
+    intersection / union
+}
+
+fn read_probe_text(path: &Path) -> String {
+    if !is_markdown_or_text(path) {
+        return title_hint_from_path(path).unwrap_or_default();
+    }
+    let mut file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(_) => return title_hint_from_path(path).unwrap_or_default(),
+    };
+    let mut buf = vec![0_u8; 64 * 1024];
+    let read = file.read(&mut buf).unwrap_or(0);
+    let mut text = String::from_utf8_lossy(&buf[..read]).to_string();
+    text.push('\n');
+    text.push_str(&title_hint_from_path(path).unwrap_or_default());
+    text
+}
+
+fn extract_doi(text: &str) -> Option<String> {
+    let lower = text.to_ascii_lowercase();
+    let start = lower.find("10.")?;
+    let candidate = text[start..]
+        .chars()
+        .take_while(|ch| {
+            ch.is_ascii_alphanumeric()
+                || matches!(ch, '.' | '/' | '-' | '_' | '(' | ')' | ':' | ';')
+        })
+        .collect::<String>()
+        .trim_end_matches(['.', ',', ';', ':', ')'])
+        .to_string();
+    (candidate.contains('/') && candidate.len() >= 7).then_some(candidate)
+}
+
+fn extract_arxiv_id(text: &str) -> Option<String> {
+    let lower = text.to_ascii_lowercase();
+    let marker = lower.find("arxiv:").map(|idx| idx + "arxiv:".len());
+    let start = marker.or_else(|| lower.find("arxiv ").map(|idx| idx + "arxiv ".len()))?;
+    let candidate = text[start..]
+        .chars()
+        .skip_while(|ch| ch.is_whitespace())
+        .take_while(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '/' | '_'))
+        .collect::<String>()
+        .trim_end_matches(['.', ',', ';'])
+        .to_string();
+    (!candidate.is_empty()).then_some(candidate)
+}
+
+fn import_metadata(path: &Path) -> (Option<String>, Option<String>, Option<String>) {
+    let text = read_probe_text(path);
+    (
+        extract_doi(&text),
+        extract_arxiv_id(&text),
+        title_hint_from_path(path),
+    )
+}
+
+fn import_report_metadata(
+    vault: &Path,
+) -> (
+    HashMap<String, String>,
+    HashMap<String, String>,
+    Vec<(String, String)>,
+) {
+    let mut doi = HashMap::new();
+    let mut arxiv = HashMap::new();
+    let mut titles = Vec::new();
+    for line in read_text(&vault.join("_state").join("import-report.jsonl")).lines() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let path = json_string(&value, "targetPath")
+            .or_else(|| json_string(&value, "target_path"))
+            .or_else(|| json_string(&value, "sourcePath"))
+            .or_else(|| json_string(&value, "source_path"))
+            .unwrap_or_default();
+        if let Some(value) = json_string(&value, "doi") {
+            doi.insert(value.to_ascii_lowercase(), path.clone());
+        }
+        if let Some(value) =
+            json_string(&value, "arxivId").or_else(|| json_string(&value, "arxiv_id"))
+        {
+            arxiv.insert(value.to_ascii_lowercase(), path.clone());
+        }
+        if let Some(title) =
+            json_string(&value, "titleHint").or_else(|| json_string(&value, "title_hint"))
+        {
+            titles.push((title, path.clone()));
+        }
+    }
+    (doi, arxiv, titles)
+}
+
+fn collect_raw_titles(root: &Path, titles: &mut Vec<(String, String)>) {
+    if let Ok(read_dir) = fs::read_dir(root) {
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            if path
+                .file_name()
+                .and_then(OsStr::to_str)
+                .is_some_and(|name| name.starts_with('.') || name.ends_with("_markdown"))
+            {
+                continue;
+            }
+            if path.is_dir() {
+                collect_raw_titles(&path, titles);
+            } else if path.is_file() {
+                if let Some(title) = title_hint_from_path(&path) {
+                    titles.push((title, to_display(&path)));
+                }
+            }
+        }
+    }
+}
+
+fn approximate_title_duplicate(title: &str, known_titles: &[(String, String)]) -> Option<String> {
+    let normalized = normalize_title(title);
+    if normalized.len() < 8 {
+        return None;
+    }
+    let mut best: Option<(f32, String)> = None;
+    for (known, path) in known_titles {
+        let score = token_overlap(&normalized, known);
+        if score >= 0.82
+            && best
+                .as_ref()
+                .is_none_or(|(best_score, _)| score > *best_score)
+        {
+            best = Some((score, path.clone()));
+        }
+    }
+    best.map(|(_, path)| path)
+}
+
+fn import_sources_impl(
+    vault: &Path,
+    paths: Vec<String>,
+    enqueue_after_import: bool,
+    preserve_folders: bool,
+) -> Result<ImportBatchResult, String> {
+    let vault = vault.to_path_buf();
     require_existing_dir(&vault, "vault")?;
     let inbox = vault.join("raw").join("inbox");
     fs::create_dir_all(&inbox).map_err(|e| format!("failed to create inbox: {e}"))?;
     let mut known_hashes = HashMap::new();
-    collect_hashes(&inbox, &mut known_hashes);
-    let mut copied = Vec::new();
+    collect_hashes(&vault.join("raw"), &mut known_hashes);
+    let (mut doi_index, mut arxiv_index, mut known_titles) = import_report_metadata(&vault);
+    collect_raw_titles(&vault.join("raw"), &mut known_titles);
+    let (candidates, mut errors) = collect_import_candidates(paths, preserve_folders);
+    let mut imported = Vec::new();
     let mut skipped_duplicates = Vec::new();
-    let mut errors = Vec::new();
 
-    for path in paths {
-        let source = PathBuf::from(&path);
-        if !source.is_file() {
-            errors.push(format!("skipped non-file input: {path}"));
-            continue;
-        }
+    for candidate in candidates {
+        let source = candidate.source;
+        let source_display = to_display(&source);
+        let file_name = source
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let size_bytes = fs::metadata(&source).map(|meta| meta.len()).unwrap_or(0);
         let hash = match sha256_file(&source) {
             Ok(value) => value,
             Err(error) => {
@@ -1218,42 +1742,120 @@ fn import_to_inbox(vault_path: String, paths: Vec<String>) -> Result<ImportResul
                 continue;
             }
         };
-        if let Some(existing) = known_hashes.get(&hash) {
-            skipped_duplicates.push(existing.clone());
-            continue;
-        }
-        let Some(file_name) = source.file_name() else {
-            errors.push(format!("missing file name: {path}"));
-            continue;
-        };
-        let dest = unique_dest(&inbox, file_name);
-        if let Err(error) =
-            fs::copy(&source, &dest).map_err(|e| format!("failed to copy {path}: {e}"))
+        let (doi, arxiv_id, title_hint) = import_metadata(&source);
+        let doi_duplicate = doi
+            .as_ref()
+            .and_then(|value| doi_index.get(&value.to_ascii_lowercase()))
+            .cloned();
+        let arxiv_duplicate = arxiv_id
+            .as_ref()
+            .and_then(|value| arxiv_index.get(&value.to_ascii_lowercase()))
+            .cloned();
+        let title_duplicate = title_hint
+            .as_deref()
+            .and_then(|title| approximate_title_duplicate(title, &known_titles));
+        let target_dir = candidate
+            .folder_context
+            .as_ref()
+            .filter(|value| !value.is_empty())
+            .map(|context| inbox.join(context))
+            .unwrap_or_else(|| inbox.clone());
+        if let Err(error) = fs::create_dir_all(&target_dir)
+            .map_err(|e| format!("failed to create {}: {e}", target_dir.display()))
         {
             errors.push(error);
             continue;
         }
-        known_hashes.insert(hash, to_display(&dest));
-        copied.push(VaultFile {
-            name: dest
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string(),
-            path: to_display(&dest),
-            kind: "inbox".to_string(),
-            title: None,
-            status: None,
-            updated: None,
-            qa_verdict: None,
-            needs_review: 0,
-        });
+        let dest = unique_dest(&target_dir, OsStr::new(&file_name));
+        if let Some(existing) = known_hashes.get(&hash) {
+            let preview = ImportPreview {
+                source_path: source_display,
+                file_name,
+                size_bytes,
+                mime: detect_mime(&source),
+                sha256: hash,
+                target_path: Some(to_display(&dest)),
+                folder_context: candidate.folder_context,
+                duplicate_of: Some(existing.clone()),
+                duplicate_reason: Some("sha256".to_string()),
+                approximate_duplicate_of: title_duplicate.or(doi_duplicate).or(arxiv_duplicate),
+                doi,
+                arxiv_id,
+                title_hint,
+                status: "skipped_duplicate".to_string(),
+                enqueued: false,
+            };
+            skipped_duplicates.push(preview.clone());
+            let _ = append_jsonl_value(
+                &vault.join("_state").join("import-report.jsonl"),
+                &serde_json::to_value(&preview)
+                    .map_err(|e| format!("failed to serialize import preview: {e}"))?,
+            );
+            continue;
+        }
+        if let Err(error) = fs::copy(&source, &dest)
+            .map_err(|e| format!("failed to copy {}: {e}", source.display()))
+        {
+            errors.push(error);
+            continue;
+        }
+        known_hashes.insert(hash.clone(), to_display(&dest));
+        if let Some(value) = &doi {
+            doi_index.insert(value.to_ascii_lowercase(), to_display(&dest));
+        }
+        if let Some(value) = &arxiv_id {
+            arxiv_index.insert(value.to_ascii_lowercase(), to_display(&dest));
+        }
+        if let Some(value) = &title_hint {
+            known_titles.push((value.clone(), to_display(&dest)));
+        }
+        let duplicate_reason = doi_duplicate
+            .as_ref()
+            .map(|_| "doi")
+            .or_else(|| arxiv_duplicate.as_ref().map(|_| "arxiv"))
+            .or_else(|| title_duplicate.as_ref().map(|_| "title"));
+        let duplicate_of = doi_duplicate.or(arxiv_duplicate);
+        let status = if duplicate_reason.is_some() || title_duplicate.is_some() {
+            "imported_with_duplicate_warning"
+        } else {
+            "imported"
+        };
+        let preview = ImportPreview {
+            source_path: source_display,
+            file_name,
+            size_bytes,
+            mime: detect_mime(&source),
+            sha256: hash,
+            target_path: Some(to_display(&dest)),
+            folder_context: candidate.folder_context,
+            duplicate_of,
+            duplicate_reason: duplicate_reason.map(ToString::to_string),
+            approximate_duplicate_of: title_duplicate,
+            doi,
+            arxiv_id,
+            title_hint,
+            status: status.to_string(),
+            enqueued: enqueue_after_import,
+        };
+        append_jsonl_value(
+            &vault.join("_state").join("import-report.jsonl"),
+            &serde_json::to_value(&preview)
+                .map_err(|e| format!("failed to serialize import preview: {e}"))?,
+        )?;
+        imported.push(preview);
     }
 
-    Ok(ImportResult {
-        copied,
+    let enqueued_jobs = if enqueue_after_import && !imported.is_empty() {
+        plan_ingest(to_display(&vault))?.jobs.len()
+    } else {
+        0
+    };
+
+    Ok(ImportBatchResult {
+        imported,
         skipped_duplicates,
         errors,
+        enqueued_jobs,
     })
 }
 
@@ -1261,7 +1863,16 @@ fn collect_hashes(root: &Path, hashes: &mut HashMap<String, String>) {
     if let Ok(read_dir) = fs::read_dir(root) {
         for entry in read_dir.flatten() {
             let path = entry.path();
-            if path.is_file() {
+            if path
+                .file_name()
+                .and_then(OsStr::to_str)
+                .is_some_and(|name| name.starts_with('.') || name.ends_with("_markdown"))
+            {
+                continue;
+            }
+            if path.is_dir() {
+                collect_hashes(&path, hashes);
+            } else if path.is_file() {
                 if let Ok(hash) = sha256_file(&path) {
                     hashes.insert(hash, to_display(&path));
                 }
@@ -3270,6 +3881,752 @@ fn set_claim_verdict(
     Ok(claim_ledger_items(&vault))
 }
 
+fn desktop_settings_path(vault: &Path) -> PathBuf {
+    vault.join("_state").join("desktop-settings.json")
+}
+
+#[tauri::command]
+fn load_desktop_settings(vault_path: String) -> Result<DesktopSettings, String> {
+    let vault = PathBuf::from(vault_path);
+    require_existing_dir(&vault, "vault")?;
+    let path = desktop_settings_path(&vault);
+    if !path.is_file() {
+        return Ok(DesktopSettings::default());
+    }
+    let mut settings = serde_json::from_str::<DesktopSettings>(&read_text(&path))
+        .map_err(|e| format!("failed to parse {}: {e}", path.display()))?;
+    if std::env::var("OPEN_LLM_WIKI_LAYOUT_TOKEN")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .is_some()
+        || std::env::var("LLM_WIKI_LAYOUT_TOKEN")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .is_some()
+    {
+        settings.layout_parsing_token_present = true;
+    }
+    Ok(settings)
+}
+
+#[tauri::command]
+fn save_desktop_settings(
+    vault_path: String,
+    mut settings: DesktopSettings,
+) -> Result<DesktopSettings, String> {
+    let vault = PathBuf::from(vault_path);
+    require_existing_dir(&vault, "vault")?;
+    settings.layout_parsing_token_present = settings.layout_parsing_token_present
+        || std::env::var("OPEN_LLM_WIKI_LAYOUT_TOKEN")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .is_some()
+        || std::env::var("LLM_WIKI_LAYOUT_TOKEN")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .is_some();
+    let rendered = serde_json::to_string_pretty(&settings)
+        .map_err(|e| format!("failed to serialize desktop settings: {e}"))?;
+    write_text(&desktop_settings_path(&vault), &(rendered + "\n"))?;
+    Ok(settings)
+}
+
+fn qa_report_for_source(
+    vault: &Path,
+    source_id: Option<&str>,
+    source_page: Option<&str>,
+) -> Option<String> {
+    if let Some(source_id) = source_id {
+        let path = vault.join("qa-reports").join(format!("{source_id}.md"));
+        if path.is_file() {
+            return Some(rel_path(vault, &path));
+        }
+    }
+    if let Some(source_page) = source_page {
+        let stem = Path::new(source_page)
+            .file_stem()
+            .and_then(OsStr::to_str)
+            .unwrap_or_default();
+        if !stem.is_empty() {
+            let path = vault.join("qa-reports").join(format!("{stem}.md"));
+            if path.is_file() {
+                return Some(rel_path(vault, &path));
+            }
+        }
+    }
+    None
+}
+
+#[tauri::command]
+fn list_evidence_paths(vault_path: String) -> Result<Vec<EvidencePathItem>, String> {
+    let vault = PathBuf::from(vault_path);
+    require_existing_dir(&vault, "vault")?;
+    let plan = plan_ingest(to_display(&vault))?;
+    let registry_by_uuid = plan
+        .registry
+        .iter()
+        .map(|entry| (entry.source_uuid.clone(), entry.clone()))
+        .collect::<HashMap<_, _>>();
+    let registry_by_id = plan
+        .registry
+        .iter()
+        .filter_map(|entry| entry.source_id.clone().map(|id| (id, entry.clone())))
+        .collect::<HashMap<_, _>>();
+    let artifact_by_source = plan
+        .artifacts
+        .iter()
+        .map(|artifact| (artifact.source_uuid.clone(), artifact.clone()))
+        .collect::<HashMap<_, _>>();
+    let lint_by_claim = plan
+        .lint_findings
+        .iter()
+        .filter(|finding| finding.object_type == "claim")
+        .map(|finding| (finding.object_id.clone(), finding.clone()))
+        .collect::<HashMap<_, _>>();
+
+    let items = claim_ledger_items(&vault)
+        .into_iter()
+        .map(|claim| {
+            let registry = claim
+                .source_uuid
+                .as_ref()
+                .and_then(|uuid| registry_by_uuid.get(uuid))
+                .or_else(|| {
+                    claim
+                        .source_id
+                        .as_ref()
+                        .and_then(|id| registry_by_id.get(id))
+                });
+            let artifact = claim
+                .source_uuid
+                .as_ref()
+                .and_then(|uuid| artifact_by_source.get(uuid))
+                .or_else(|| registry.and_then(|entry| artifact_by_source.get(&entry.source_uuid)));
+            let source_page = registry
+                .and_then(|entry| entry.source_page.clone())
+                .or_else(|| claim.source_path.clone());
+            let qa_report = qa_report_for_source(
+                &vault,
+                claim
+                    .source_id
+                    .as_deref()
+                    .or_else(|| registry.and_then(|entry| entry.source_id.as_deref())),
+                source_page.as_deref(),
+            );
+            let mut missing = Vec::new();
+            if claim.source_uuid.is_none()
+                && claim.source_id.is_none()
+                && claim.source_path.is_none()
+            {
+                missing.push("missing source".to_string());
+            }
+            if registry.is_none()
+                && source_page
+                    .as_ref()
+                    .is_none_or(|path| !vault.join(path).is_file())
+            {
+                missing.push("missing source page".to_string());
+            }
+            if claim.evidence_quote.is_none() || claim.evidence_hash.is_none() {
+                missing.push("missing evidence".to_string());
+            }
+            if artifact.is_none()
+                || artifact.is_some_and(|item| !vault.join(&item.artifact_path).is_file())
+            {
+                missing.push("missing raw/artifact".to_string());
+            }
+            if qa_report.is_none() {
+                missing.push("missing QA".to_string());
+            }
+            if claim.needs_review || claim.verdict == "needs_review" {
+                missing.push("needs science review".to_string());
+            }
+            missing.sort();
+            missing.dedup();
+            let chain_status = if missing.iter().any(|item| item.starts_with("missing")) {
+                "broken"
+            } else if missing.iter().any(|item| item.contains("review")) {
+                "needs_review"
+            } else {
+                "ok"
+            }
+            .to_string();
+            let semantic_status = lint_by_claim
+                .get(&claim.claim_id)
+                .map(|finding| format!("{}:{}", finding.severity, finding.kind));
+            EvidencePathItem {
+                claim_id: claim.claim_id,
+                concept: claim.concepts.first().cloned(),
+                claim_text: claim.claim_text,
+                chain_status,
+                missing,
+                source_id: claim
+                    .source_id
+                    .or_else(|| registry.and_then(|entry| entry.source_id.clone())),
+                source_uuid: claim
+                    .source_uuid
+                    .or_else(|| registry.map(|entry| entry.source_uuid.clone())),
+                source_page,
+                evidence_anchor: claim.chunk_id.or(claim.evidence_hash.clone()),
+                evidence_quote: claim.evidence_quote,
+                raw_path: registry.map(|entry| entry.raw_path.clone()),
+                artifact_path: artifact.map(|item| item.artifact_path.clone()),
+                chunks_path: artifact.and_then(|item| item.chunks_path.clone()),
+                qa_report_path: qa_report,
+                semantic_status,
+                science_review_status: claim.needs_review.then(|| "needs_review".to_string()),
+            }
+        })
+        .collect();
+    Ok(items)
+}
+
+fn review_decisions(vault: &Path) -> HashMap<String, String> {
+    read_text(&vault.join("_state").join("review-decisions.jsonl"))
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter_map(|value| {
+            Some((
+                json_string(&value, "item_id").or_else(|| json_string(&value, "itemId"))?,
+                json_string(&value, "status")?,
+            ))
+        })
+        .collect()
+}
+
+fn push_review_item(
+    items: &mut Vec<ReviewQueueItem>,
+    decisions: &HashMap<String, String>,
+    mut item: ReviewQueueItem,
+) {
+    if let Some(status) = decisions.get(&item.item_id) {
+        item.status = status.clone();
+    }
+    items.push(item);
+}
+
+#[tauri::command]
+fn list_review_queue(vault_path: String) -> Result<Vec<ReviewQueueItem>, String> {
+    let vault = PathBuf::from(vault_path);
+    require_existing_dir(&vault, "vault")?;
+    let plan = plan_ingest(to_display(&vault))?;
+    let decisions = review_decisions(&vault);
+    let mut items = Vec::new();
+
+    for path in list_markdown(&vault.join("drafts")) {
+        let rel = rel_path(&vault, &path);
+        push_review_item(
+            &mut items,
+            &decisions,
+            ReviewQueueItem {
+                item_id: format!("draft:{rel}"),
+                kind: "draft_qa".to_string(),
+                severity: "p2".to_string(),
+                title: format!(
+                    "draft 待 QA: {}",
+                    path.file_name().unwrap_or_default().to_string_lossy()
+                ),
+                body: "draft 不能直接进入 sources，需要 runtime QA/publish。".to_string(),
+                status: "open".to_string(),
+                target_path: Some(rel),
+                source_id: None,
+                claim_id: None,
+                evidence_path: None,
+                recommended_action: "open_draft_or_run_ingest".to_string(),
+            },
+        );
+    }
+
+    for file in list_markdown(&vault.join("sources")) {
+        if qa_verdict(&vault.join("qa-reports").join(format!(
+            "{}.md",
+            file.file_stem().and_then(OsStr::to_str).unwrap_or_default()
+        ))) == Some("FAIL".to_string())
+        {
+            let rel = rel_path(&vault, &file);
+            push_review_item(
+                &mut items,
+                &decisions,
+                ReviewQueueItem {
+                    item_id: format!("qa_failed:{rel}"),
+                    kind: "qa_failed_source".to_string(),
+                    severity: "p1".to_string(),
+                    title: format!(
+                        "QA failed: {}",
+                        file.file_name().unwrap_or_default().to_string_lossy()
+                    ),
+                    body: "source QA report 为 FAIL，相关 claims 不应进入长期 synthesis。"
+                        .to_string(),
+                    status: "open".to_string(),
+                    target_path: Some(rel),
+                    source_id: file
+                        .file_stem()
+                        .and_then(OsStr::to_str)
+                        .map(ToString::to_string),
+                    claim_id: None,
+                    evidence_path: None,
+                    recommended_action: "open_qa_report".to_string(),
+                },
+            );
+        }
+    }
+
+    for claim in claim_ledger_items(&vault) {
+        if claim.needs_review
+            || matches!(
+                claim.verdict.as_str(),
+                "needs_review" | "stale" | "contradicted"
+            )
+        {
+            push_review_item(
+                &mut items,
+                &decisions,
+                ReviewQueueItem {
+                    item_id: format!("claim:{}", claim.claim_id),
+                    kind: "claim_review".to_string(),
+                    severity: "p1".to_string(),
+                    title: format!("claim 需要审核: {}", claim.claim_id),
+                    body: claim.claim_text.clone(),
+                    status: claim.verdict.clone(),
+                    target_path: Some("claims/claims.jsonl".to_string()),
+                    source_id: claim.source_id.clone(),
+                    claim_id: Some(claim.claim_id.clone()),
+                    evidence_path: claim.source_path.clone(),
+                    recommended_action: "approve_or_reject_claim".to_string(),
+                },
+            );
+        }
+    }
+
+    for finding in plan
+        .lint_findings
+        .iter()
+        .filter(|finding| matches!(finding.severity.as_str(), "p0" | "p1"))
+    {
+        push_review_item(
+            &mut items,
+            &decisions,
+            ReviewQueueItem {
+                item_id: format!("lint:{}", finding.finding_id),
+                kind: "semantic_or_contract_finding".to_string(),
+                severity: finding.severity.clone(),
+                title: finding.title.clone(),
+                body: finding.detail.clone(),
+                status: finding.status.clone(),
+                target_path: finding.path.clone(),
+                source_id: None,
+                claim_id: (finding.object_type == "claim").then(|| finding.object_id.clone()),
+                evidence_path: finding.path.clone(),
+                recommended_action: "rerun_lint_after_fix".to_string(),
+            },
+        );
+    }
+
+    for (index, line) in read_text(&vault.join("_state").join("science-review-queue.jsonl"))
+        .lines()
+        .enumerate()
+    {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let value = serde_json::from_str::<serde_json::Value>(line)
+            .unwrap_or_else(|_| serde_json::json!({}));
+        let id = json_string(&value, "id")
+            .or_else(|| json_string(&value, "claim_id"))
+            .unwrap_or_else(|| format!("line-{}", index + 1));
+        push_review_item(
+            &mut items,
+            &decisions,
+            ReviewQueueItem {
+                item_id: format!("science_review:{id}"),
+                kind: "science_review".to_string(),
+                severity: "p2".to_string(),
+                title: json_string(&value, "title")
+                    .unwrap_or_else(|| format!("science review: {id}")),
+                body: json_string(&value, "reason")
+                    .or_else(|| json_string(&value, "body"))
+                    .unwrap_or_else(|| line.to_string()),
+                status: json_string(&value, "status").unwrap_or_else(|| "open".to_string()),
+                target_path: Some("_state/science-review-queue.jsonl".to_string()),
+                source_id: json_string(&value, "source_id"),
+                claim_id: json_string(&value, "claim_id"),
+                evidence_path: json_string(&value, "evidence_path"),
+                recommended_action: "approve_or_reject_science_review".to_string(),
+            },
+        );
+    }
+    items.sort_by(|a, b| a.severity.cmp(&b.severity).then(a.kind.cmp(&b.kind)));
+    Ok(items)
+}
+
+#[tauri::command]
+fn set_review_item_status(
+    vault_path: String,
+    item_id: String,
+    status: String,
+    note: Option<String>,
+) -> Result<Vec<ReviewQueueItem>, String> {
+    validate_status(
+        &status,
+        &[
+            "open",
+            "approved",
+            "rejected",
+            "resolved",
+            "ignored",
+            "needs_review",
+        ],
+    )?;
+    let vault = PathBuf::from(vault_path);
+    require_existing_dir(&vault, "vault")?;
+    let row = serde_json::json!({
+        "item_id": item_id,
+        "status": status,
+        "note": note.unwrap_or_default(),
+        "updated_at": Local::now().to_rfc3339(),
+    });
+    append_jsonl_value(&vault.join("_state").join("review-decisions.jsonl"), &row)?;
+    if row
+        .get("item_id")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|id| id.starts_with("science_review:"))
+    {
+        append_jsonl_value(
+            &vault.join("_state").join("science-review-decisions.jsonl"),
+            &row,
+        )?;
+    }
+    if let Some(claim_id) = row
+        .get("item_id")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|id| id.strip_prefix("claim:"))
+    {
+        let verdict = match row
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+        {
+            "approved" | "resolved" => "supported",
+            "rejected" => "ignored",
+            "needs_review" => "needs_review",
+            _ => "",
+        };
+        if !verdict.is_empty() {
+            let _ = set_claim_verdict(
+                to_display(&vault),
+                claim_id.to_string(),
+                verdict.to_string(),
+            );
+        }
+    }
+    list_review_queue(to_display(&vault))
+}
+
+#[tauri::command]
+fn create_followup_action(
+    vault_path: String,
+    title: String,
+    body: String,
+    target_path: Option<String>,
+) -> Result<Vec<ReviewQueueItem>, String> {
+    let vault = PathBuf::from(vault_path);
+    require_existing_dir(&vault, "vault")?;
+    let action_id = format!(
+        "followup-{}",
+        short_hash(&sha256_text(&format!("{}:{body}", title)))
+    );
+    let row = serde_json::json!({
+        "id": action_id,
+        "title": title,
+        "body": body,
+        "target_path": target_path,
+        "status": "open",
+        "created_at": Local::now().to_rfc3339(),
+        "source": "llm-wiki-desktop-review-workbench"
+    });
+    append_jsonl_value(&vault.join("_state").join("growth-queue.jsonl"), &row)?;
+    append_jsonl_value(
+        &vault.join("_state").join("desktop-followup-actions.jsonl"),
+        &row,
+    )?;
+    list_review_queue(to_display(&vault))
+}
+
+fn resolve_vault_target(vault: &Path, target_path: &str) -> Result<PathBuf, String> {
+    let candidate = PathBuf::from(target_path);
+    let resolved = if candidate.is_absolute() {
+        candidate
+    } else {
+        vault.join(candidate)
+    };
+    ensure_inside(
+        &resolved,
+        vault,
+        "writeback target must stay inside the vault",
+    )
+}
+
+fn simple_diff(old: &str, new: &str) -> String {
+    if old == new {
+        return "(no textual changes)\n".to_string();
+    }
+    let old_lines = old.lines().collect::<Vec<_>>();
+    let new_lines = new.lines().collect::<Vec<_>>();
+    let max_len = old_lines.len().max(new_lines.len());
+    let mut out = String::new();
+    for index in 0..max_len {
+        match (old_lines.get(index), new_lines.get(index)) {
+            (Some(left), Some(right)) if left == right => {
+                out.push_str("  ");
+                out.push_str(left);
+                out.push('\n');
+            }
+            (Some(left), Some(right)) => {
+                out.push_str("- ");
+                out.push_str(left);
+                out.push('\n');
+                out.push_str("+ ");
+                out.push_str(right);
+                out.push('\n');
+            }
+            (Some(left), None) => {
+                out.push_str("- ");
+                out.push_str(left);
+                out.push('\n');
+            }
+            (None, Some(right)) => {
+                out.push_str("+ ");
+                out.push_str(right);
+                out.push('\n');
+            }
+            (None, None) => {}
+        }
+    }
+    out
+}
+
+fn writeback_proposals_dir(vault: &Path) -> PathBuf {
+    vault.join("_state").join("writeback-proposals")
+}
+
+fn writeback_proposal_path(vault: &Path, proposal_id: &str) -> PathBuf {
+    writeback_proposals_dir(vault).join(format!("{proposal_id}.json"))
+}
+
+fn save_writeback_proposal(vault: &Path, proposal: &WritebackProposal) -> Result<(), String> {
+    let rendered = serde_json::to_string_pretty(proposal)
+        .map_err(|e| format!("failed to serialize writeback proposal: {e}"))?;
+    write_text(
+        &writeback_proposal_path(vault, &proposal.proposal_id),
+        &(rendered + "\n"),
+    )
+}
+
+fn load_writeback_proposal(vault: &Path, proposal_id: &str) -> Result<WritebackProposal, String> {
+    let path = writeback_proposal_path(vault, proposal_id);
+    serde_json::from_str(&read_text(&path))
+        .map_err(|e| format!("failed to parse {}: {e}", path.display()))
+}
+
+#[tauri::command]
+fn create_writeback_proposal(
+    vault_path: String,
+    target_path: String,
+    title: String,
+    content: String,
+) -> Result<WritebackProposal, String> {
+    let vault = PathBuf::from(vault_path);
+    require_existing_dir(&vault, "vault")?;
+    let target = resolve_vault_target(&vault, &target_path)?;
+    if target.is_dir() {
+        return Err("writeback target must be a file path, not a directory".to_string());
+    }
+    let extension = target
+        .extension()
+        .and_then(OsStr::to_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if !matches!(extension.as_str(), "md" | "markdown" | "txt") {
+        return Err("writeback target must be Markdown or text".to_string());
+    }
+    let old = read_text(&target);
+    let now = Local::now().to_rfc3339();
+    let proposal_id = format!(
+        "wb-{}",
+        short_hash(&sha256_text(&format!("{}:{now}", target.display())))
+    );
+    let proposal = WritebackProposal {
+        proposal_id,
+        target_path: rel_path(&vault, &target),
+        title,
+        status: "proposed".to_string(),
+        diff: simple_diff(&old, &content),
+        content,
+        created_at: now.clone(),
+        updated_at: now,
+        applied_at: None,
+        log_path: None,
+    };
+    save_writeback_proposal(&vault, &proposal)?;
+    append_jsonl_value(
+        &vault.join("_state").join("writeback-log.jsonl"),
+        &serde_json::json!({
+            "proposal_id": proposal.proposal_id,
+            "target_path": proposal.target_path,
+            "status": proposal.status,
+            "created_at": proposal.created_at,
+        }),
+    )?;
+    Ok(proposal)
+}
+
+#[tauri::command]
+fn list_writeback_proposals(vault_path: String) -> Result<Vec<WritebackProposal>, String> {
+    let vault = PathBuf::from(vault_path);
+    require_existing_dir(&vault, "vault")?;
+    let mut proposals = Vec::new();
+    if let Ok(read_dir) = fs::read_dir(writeback_proposals_dir(&vault)) {
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(OsStr::to_str) == Some("json") {
+                if let Ok(proposal) = serde_json::from_str::<WritebackProposal>(&read_text(&path)) {
+                    proposals.push(proposal);
+                }
+            }
+        }
+    }
+    proposals.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    Ok(proposals)
+}
+
+#[tauri::command]
+fn set_writeback_status(
+    vault_path: String,
+    proposal_id: String,
+    status: String,
+) -> Result<WritebackProposal, String> {
+    validate_status(&status, &["proposed", "approved", "rejected"])?;
+    let vault = PathBuf::from(vault_path);
+    require_existing_dir(&vault, "vault")?;
+    let mut proposal = load_writeback_proposal(&vault, &proposal_id)?;
+    if proposal.status == "applied" {
+        return Err("applied writeback proposals cannot be changed".to_string());
+    }
+    proposal.status = status;
+    proposal.updated_at = Local::now().to_rfc3339();
+    save_writeback_proposal(&vault, &proposal)?;
+    append_jsonl_value(
+        &vault.join("_state").join("writeback-log.jsonl"),
+        &serde_json::json!({
+            "proposal_id": proposal.proposal_id,
+            "target_path": proposal.target_path,
+            "status": proposal.status,
+            "updated_at": proposal.updated_at,
+        }),
+    )?;
+    Ok(proposal)
+}
+
+#[tauri::command]
+fn apply_writeback_proposal(
+    vault_path: String,
+    proposal_id: String,
+) -> Result<WritebackProposal, String> {
+    let vault = PathBuf::from(vault_path);
+    require_existing_dir(&vault, "vault")?;
+    let mut proposal = load_writeback_proposal(&vault, &proposal_id)?;
+    if proposal.status != "approved" {
+        return Err("writeback proposal must be approved before apply".to_string());
+    }
+    let target = resolve_vault_target(&vault, &proposal.target_path)?;
+    write_text(&target, &proposal.content)?;
+    let log_path = vault
+        .join("log-archive")
+        .join("desktop")
+        .join(format!("{}-writeback.log", proposal.proposal_id));
+    let rendered = format!(
+        "# Writeback Apply Log\n\nproposal_id: {}\ntarget_path: {}\napplied_at: {}\nstatus: applied\n\n## Diff\n\n```diff\n{}```\n",
+        proposal.proposal_id,
+        proposal.target_path,
+        Local::now().to_rfc3339(),
+        proposal.diff
+    );
+    write_text(&log_path, &rendered)?;
+    proposal.status = "applied".to_string();
+    proposal.updated_at = Local::now().to_rfc3339();
+    proposal.applied_at = Some(proposal.updated_at.clone());
+    proposal.log_path = Some(rel_path(&vault, &log_path));
+    save_writeback_proposal(&vault, &proposal)?;
+    append_jsonl_value(
+        &vault.join("_state").join("writeback-log.jsonl"),
+        &serde_json::json!({
+            "proposal_id": proposal.proposal_id,
+            "target_path": proposal.target_path,
+            "status": proposal.status,
+            "applied_at": proposal.applied_at,
+            "log_path": proposal.log_path,
+        }),
+    )?;
+    let _ = plan_ingest(to_display(&vault));
+    Ok(proposal)
+}
+
+#[tauri::command]
+fn create_diagnostic_bundle(vault_path: String) -> Result<String, String> {
+    let vault = PathBuf::from(vault_path);
+    require_existing_dir(&vault, "vault")?;
+    let status = inspect_vault(to_display(&vault))?;
+    let plan = plan_ingest(to_display(&vault))?;
+    let bundle_path = vault.join("log-archive").join("desktop").join(format!(
+        "{}-diagnostic.md",
+        Local::now().format("%Y%m%d-%H%M%S")
+    ));
+    let state_files = [
+        "_state/source-registry.jsonl",
+        "_state/ingest-jobs.jsonl",
+        "_state/actions.jsonl",
+        "_state/lint-findings.jsonl",
+        "_state/science-review-queue.jsonl",
+        "claims/claims.jsonl",
+    ];
+    let mut rendered = format!(
+        "# Desktop Diagnostic Bundle\n\ncreated_at: {}\nvault: {}\nschema_valid: {}\nruntime_installed: {}\nobsidian_enabled: {}\n\n## Counts\n\n```json\n{}\n```\n\n## Ingest Summary\n\n```json\n{}\n```\n\n",
+        Local::now().to_rfc3339(),
+        status.path,
+        status.schema_valid,
+        status.runtime_installed,
+        status.obsidian_enabled,
+        serde_json::to_string_pretty(&status.counts).unwrap_or_default(),
+        serde_json::to_string_pretty(&plan.summary).unwrap_or_default()
+    );
+    if !status.errors.is_empty() {
+        rendered.push_str("## Schema Errors\n\n");
+        for error in status.errors {
+            rendered.push_str(&format!("- {error}\n"));
+        }
+        rendered.push('\n');
+    }
+    rendered.push_str("## Recent State\n\n");
+    for path in state_files {
+        rendered.push_str(&format!("### {path}\n\n```jsonl\n"));
+        let text = read_text(&vault.join(path));
+        for line in text
+            .lines()
+            .rev()
+            .take(20)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+        {
+            rendered.push_str(line);
+            rendered.push('\n');
+        }
+        rendered.push_str("```\n\n");
+    }
+    write_text(&bundle_path, &rendered)?;
+    Ok(to_display(&bundle_path))
+}
+
 fn stage_text_artifacts(vault: &Path) -> Result<Vec<String>, String> {
     let _ = plan_ingest(to_display(vault))?;
     let cached_hashes = load_cached_ingest_hashes(vault);
@@ -3901,6 +5258,121 @@ mod tests {
 
         let _ = fs::remove_dir_all(vault);
     }
+
+    #[test]
+    fn folder_import_preserves_context_detects_duplicates_and_enqueues() {
+        let vault = test_vault("folder-import");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        let import_root = test_vault("external-folder");
+        let nested = import_root.join("papers").join("vision");
+        fs::create_dir_all(&nested).expect("create nested import folder");
+        let paper = nested.join("attention_is_all_you_need.md");
+        write_text(
+            &paper,
+            "# Attention Is All You Need\n\nDOI 10.48550/arXiv.1706.03762\narXiv:1706.03762\n",
+        )
+        .expect("write import source");
+
+        let batch = import_sources_impl(&vault, vec![to_display(&import_root)], true, true)
+            .expect("import folder");
+        assert_eq!(batch.imported.len(), 1);
+        assert_eq!(batch.skipped_duplicates.len(), 0);
+        assert!(batch.enqueued_jobs >= 1);
+        let imported = &batch.imported[0];
+        assert_eq!(imported.folder_context.as_deref(), Some("papers/vision"));
+        assert_eq!(imported.doi.as_deref(), Some("10.48550/arXiv.1706.03762"));
+        assert_eq!(imported.arxiv_id.as_deref(), Some("1706.03762"));
+        assert!(imported
+            .target_path
+            .as_deref()
+            .is_some_and(|path| path.contains("raw/inbox/papers/vision")));
+        let status = inspect_vault(to_display(&vault)).expect("inspect vault after folder import");
+        assert_eq!(status.counts.inbox, 1);
+
+        let duplicate = import_sources_impl(&vault, vec![to_display(&paper)], false, false)
+            .expect("import duplicate");
+        assert_eq!(duplicate.imported.len(), 0);
+        assert_eq!(duplicate.skipped_duplicates.len(), 1);
+        assert_eq!(
+            duplicate.skipped_duplicates[0].duplicate_reason.as_deref(),
+            Some("sha256")
+        );
+        assert!(read_text(&vault.join("_state").join("import-report.jsonl"))
+            .contains("skipped_duplicate"));
+
+        let _ = fs::remove_dir_all(vault);
+        let _ = fs::remove_dir_all(import_root);
+    }
+
+    #[test]
+    fn evidence_paths_surface_missing_qa_and_review_state() {
+        let vault = test_vault("evidence-paths");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        let source = vault.join("raw").join("note.md");
+        write_text(&source, "# Note\n\nAccuracy improved.\n").expect("write source");
+        let staged = stage_text_artifacts(&vault).expect("stage source");
+        assert_eq!(staged.len(), 1);
+        let plan = plan_ingest(to_display(&vault)).expect("plan source");
+        let entry = &plan.registry[0];
+        write_text(
+            &vault.join("claims").join("claims.jsonl"),
+            &format!(
+                "{{\"claim_id\":\"c1\",\"claim_text\":\"Accuracy improved.\",\"needs_review\":true,\"source_uuid\":\"{}\",\"source_id\":\"{}\",\"chunk_id\":\"{}:00001\",\"concepts\":[\"Accuracy\"],\"evidence_quote\":\"Accuracy improved.\",\"evidence_hash\":\"{}\"}}\n",
+                entry.source_uuid,
+                entry.source_id.clone().unwrap_or_default(),
+                entry.source_uuid,
+                sha256_text("Accuracy improved.")
+            ),
+        )
+        .expect("write claim");
+
+        let evidence = list_evidence_paths(to_display(&vault)).expect("list evidence paths");
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(evidence[0].chain_status, "broken");
+        assert!(evidence[0].missing.contains(&"missing QA".to_string()));
+        assert!(evidence[0]
+            .missing
+            .contains(&"needs science review".to_string()));
+        assert!(evidence[0].artifact_path.is_some());
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn writeback_requires_approval_and_logs_apply() {
+        let vault = test_vault("writeback");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        let concept = vault.join("concepts").join("accuracy.md");
+        write_text(&concept, "# Accuracy\n\nOld text.\n").expect("write concept");
+
+        let proposal = create_writeback_proposal(
+            to_display(&vault),
+            "concepts/accuracy.md".to_string(),
+            "Revise accuracy".to_string(),
+            "# Accuracy\n\nNew text with cited evidence.\n".to_string(),
+        )
+        .expect("create proposal");
+        assert_eq!(proposal.status, "proposed");
+        assert!(proposal.diff.contains("- Old text."));
+        assert!(
+            apply_writeback_proposal(to_display(&vault), proposal.proposal_id.clone()).is_err()
+        );
+
+        let approved = set_writeback_status(
+            to_display(&vault),
+            proposal.proposal_id.clone(),
+            "approved".to_string(),
+        )
+        .expect("approve proposal");
+        assert_eq!(approved.status, "approved");
+        let applied = apply_writeback_proposal(to_display(&vault), proposal.proposal_id)
+            .expect("apply proposal");
+        assert_eq!(applied.status, "applied");
+        assert!(read_text(&concept).contains("New text with cited evidence."));
+        assert!(read_text(&vault.join("_state").join("writeback-log.jsonl")).contains("applied"));
+
+        let _ = fs::remove_dir_all(vault);
+    }
 }
 
 fn command_spec(
@@ -4014,6 +5486,24 @@ fn open_path(path: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn open_obsidian_vault(vault_path: String) -> Result<(), String> {
+    let vault = PathBuf::from(vault_path);
+    require_existing_dir(&vault, "vault")?;
+    if cfg!(target_os = "macos") {
+        let status = Command::new("open")
+            .arg("-a")
+            .arg("Obsidian")
+            .arg(&vault)
+            .status()
+            .map_err(|e| format!("failed to launch Obsidian: {e}"))?;
+        if status.success() {
+            return Ok(());
+        }
+    }
+    open_path(to_display(&vault))
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -4023,15 +5513,28 @@ pub fn run() {
             create_vault,
             repair_obsidian_templates,
             import_to_inbox,
+            import_sources,
+            load_desktop_settings,
+            save_desktop_settings,
             plan_ingest,
             run_ingest_lint,
             set_dashboard_action_status,
             set_ingest_job_status,
             list_claim_ledger,
             set_claim_verdict,
+            list_evidence_paths,
+            list_review_queue,
+            set_review_item_status,
+            create_followup_action,
+            create_writeback_proposal,
+            list_writeback_proposals,
+            set_writeback_status,
+            apply_writeback_proposal,
+            create_diagnostic_bundle,
             run_ingest_pipeline,
             run_runtime_command,
-            open_path
+            open_path,
+            open_obsidian_vault
         ])
         .run(tauri::generate_context!())
         .expect("error while running llm-wiki-desktop");
