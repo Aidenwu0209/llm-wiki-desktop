@@ -7,9 +7,10 @@
 - 创建或打开 open-llm-wiki vault。
 - 将 PDF / Markdown / txt 导入到 `raw/inbox/`，并按 SHA-256 跳过重复文件。
 - 生成桌面端 ingest plan：扫描 `raw/inbox/` 与 `raw/*_markdown/combined.md`，按 SHA-256 标记 `ready`、`stageable`、`blocked`、`cached`、`published`，并写入 `_state/desktop-ingest-plan.json`。
-- 对 Markdown / txt 输入执行本地 staging，生成 `raw/<source>_markdown/combined.md` 和 `manifest.json`，再交给 open-llm-wiki runtime。
+- 对 Markdown / txt 输入执行本地 staging，生成 `raw/<source>_markdown/combined.md`、`manifest.json` 和 `chunks.jsonl`，再交给 open-llm-wiki runtime。
 - 一键运行串行 ingest pipeline：source discovery -> corpus ingest -> claims -> normalize -> semantic QA -> contradictions -> science review -> lint。
 - 成功完成 pipeline 后写入 `_state/desktop-ingest-registry.jsonl`，避免未变化输入反复触发整条 ingest 链路。
+- 规划时生成桌面侧核心 contract：`desktop-source-registry.jsonl`、`desktop-artifacts.jsonl`、`desktop-ingest-jobs.jsonl`、`desktop-actions.jsonl`、`desktop-impact-graph.jsonl`。
 - 检测 vault schema、runtime 是否安装、Obsidian profile 是否启用。
 - 调用白名单 runtime 命令：
   - `wiki_lint.py`
@@ -35,7 +36,7 @@
 - 桌面端不默认上传 raw documents。
 - 桌面端不静默应用 query writeback。
 - 桌面端只对 Markdown / txt 做可审计 staging；PDF 仍需要 runtime parser 生成 parsed Markdown artifact。
-- 所有 source page、claim、QA、contradiction、concept 写入都通过 open-llm-wiki 脚本完成，桌面端只保存任务日志、ingest plan、staging manifest、桌面 ingest registry 和 `raw/inbox/` 导入结果。
+- 所有 source page、claim、QA、contradiction、concept 写入都通过 open-llm-wiki 脚本完成，桌面端只保存任务日志、ingest plan、staging manifest、桌面 ingest registry、桌面 action/queue/impact contract 和 `raw/inbox/` 导入结果。
 
 ## Ingest 编排
 
@@ -46,6 +47,12 @@
 - 串行执行：一键 pipeline 不并发调用 runtime，避免多个任务同时改 `index.md`、`claims/` 或 QA report。
 - 非越权写入：desktop 不发布 source，不改 QA verdict，不直接修改 concept synthesis。
 - 桌面锁：pipeline 运行时会写 `_state/desktop-ingest.lock`，防止两个桌面任务同时驱动 runtime。
+- 行动面板：`desktop-actions.jsonl` 将 `parse_required`、`stage_artifact`、`ingest_ready` 等状态转成用户下一步动作。
+- Claim actions：`claims/claims.jsonl` 中的 `needs_review`、`stale`、`contradicted` 会进入行动面板，避免 concept synthesis 静默吸收未验证内容。
+- Per-source queue：`desktop-ingest-jobs.jsonl` 为每个输入提供 `queued`、`blocked`、`succeeded` 等任务视图。
+- Artifact contract：`desktop-artifacts.jsonl` 汇总 manifest、chunks、parser、anchors 和 limitations。
+- Impact graph：`desktop-impact-graph.jsonl` 记录 source -> artifact -> chunks 的基础影响边，后续 runtime 可扩展到 claims/concepts。
+- Obsidian templates：最小 vault 会写入 `templates/source.md` 和 `templates/concept.md`，固定 source/concept 页面结构和 frontmatter。
 
 ## 开发
 

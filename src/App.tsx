@@ -229,6 +229,15 @@ function App() {
   const tone = statusTone(status);
   const planned = ingestPlan?.summary;
   const runnableIngest = (planned?.ready ?? 0) + (planned?.stageable ?? 0) + (planned?.cached ?? 0);
+  const actions = ingestPlan?.actions ?? [];
+  const jobs = ingestPlan?.jobs ?? [];
+  const artifacts = ingestPlan?.artifacts ?? [];
+  const impactEdges = ingestPlan?.impactEdges ?? [];
+  const vaultFilePath = (path?: string | null) => {
+    if (!path) return vaultPath;
+    if (path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path)) return path;
+    return `${vaultPath}/${path}`;
+  };
 
   return (
     <main className="app-shell">
@@ -308,10 +317,14 @@ function App() {
           <Metric label="Concepts" value={status?.counts.concepts ?? 0} />
           <Metric label="Reports" value={status?.counts.reports ?? 0} />
           <Metric label="Review claims" value={status?.counts.claimsNeedingReview ?? 0} emphasis />
+          <Metric label="Stale claims" value={status?.counts.staleClaims ?? 0} emphasis={(status?.counts.staleClaims ?? 0) > 0} />
+          <Metric label="Contradictions" value={status?.counts.contradictedClaims ?? 0} emphasis={(status?.counts.contradictedClaims ?? 0) > 0} />
           <Metric label="Ingest ready" value={planned?.ready ?? 0} />
           <Metric label="Stageable" value={planned?.stageable ?? 0} />
           <Metric label="Published" value={planned?.published ?? 0} />
           <Metric label="Blocked" value={planned?.blocked ?? 0} emphasis={(planned?.blocked ?? 0) > 0} />
+          <Metric label="Actions" value={ingestPlan ? actions.length : status?.counts.actions ?? 0} emphasis={actions.length > 0} />
+          <Metric label="Jobs" value={ingestPlan ? jobs.length : status?.counts.ingestJobs ?? 0} />
           <Metric label="Runtime" value={status?.runtimeInstalled ? "installed" : "missing"} />
           <Metric label="Obsidian" value={status?.obsidianEnabled ? "enabled" : "disabled"} />
           <Metric label="Dashboard" value={status?.dashboardAvailable ? "ready" : "missing"} />
@@ -331,6 +344,44 @@ function App() {
             );
           })}
         </section>
+
+        <div className="main-grid">
+          <section className="panel large">
+            <div className="section-head">
+              <h2>下一步行动</h2>
+              <span>{actions.length} actions</span>
+            </div>
+            <div className="action-list">
+              {actions.length === 0 && <p className="empty">暂无待处理行动。</p>}
+              {actions.map((action) => (
+                <button key={action.actionId} onClick={() => action.links[0] && openPath(vaultFilePath(action.links[0].path))}>
+                  <span className={classNames("status-chip", action.severity)}>{action.severity}</span>
+                  <strong>{action.title}</strong>
+                  <em>{action.body}</em>
+                  <code>{action.recommendedAction} · {action.reason}</code>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="panel large">
+            <div className="section-head">
+              <h2>Per-source queue</h2>
+              <span>{jobs.length} jobs</span>
+            </div>
+            <div className="queue-list">
+              {jobs.length === 0 && <p className="empty">暂无 source 任务。</p>}
+              {jobs.map((job) => (
+                <button key={job.jobId} onClick={() => openPath(vaultFilePath(job.artifactPath || job.sourcePath))}>
+                  <span className={classNames("status-chip", job.status)}>{job.status}</span>
+                  <strong>{job.fileName}</strong>
+                  <em>{job.currentStep} · {job.nextAction}</em>
+                  <code>{job.reason}</code>
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
 
         <div className="main-grid">
           <section className="panel large">
@@ -398,6 +449,44 @@ function App() {
                   <span>{log.kind}</span>
                   <strong className={log.exitCode === 0 ? "pass" : "fail"}>exit {log.exitCode}</strong>
                   <em>{log.logPath}</em>
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
+
+        <div className="main-grid">
+          <section className="panel">
+            <div className="section-head">
+              <h2>Artifact contract</h2>
+              <span>{artifacts.length} artifacts</span>
+            </div>
+            <div className="contract-list">
+              {artifacts.length === 0 && <p className="empty">暂无 artifact contract。</p>}
+              {artifacts.map((artifact) => (
+                <button key={artifact.artifactPath} onClick={() => openPath(vaultFilePath(artifact.manifestPath || artifact.artifactPath))}>
+                  <span className={classNames("status-chip", artifact.status)}>{artifact.status}</span>
+                  <strong>{artifact.artifactPath}</strong>
+                  <em>{artifact.parser || "legacy parser"} · chunks {artifact.chunkCount} · lines {artifact.anchorsLines ? "yes" : "no"} · pages {artifact.anchorsPages ? "yes" : "no"}</em>
+                  {artifact.limitations[0] && <code>{artifact.limitations[0]}</code>}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="panel">
+            <div className="section-head">
+              <h2>Impact graph</h2>
+              <span>{impactEdges.length} edges</span>
+            </div>
+            <div className="impact-list">
+              {impactEdges.length === 0 && <p className="empty">暂无影响边。</p>}
+              {impactEdges.map((edge) => (
+                <button key={edge.edgeId}>
+                  <span className={classNames("status-chip", edge.status)}>{edge.status}</span>
+                  <strong>{edge.fromType}{" -> "}{edge.toType}</strong>
+                  <em>{edge.relationship}</em>
+                  <code>{edge.fromId}{" -> "}{edge.toId}</code>
                 </button>
               ))}
             </div>
