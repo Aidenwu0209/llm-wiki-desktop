@@ -87,6 +87,12 @@ export type DashboardLink = {
   path: string;
 };
 
+export type DashboardAffectedObject = {
+  objectType: string;
+  objectId: string;
+  status: string;
+};
+
 export type DashboardAction = {
   actionId: string;
   kind: string;
@@ -98,6 +104,7 @@ export type DashboardAction = {
   recommendedAction: string;
   primaryObjectType: string;
   primaryObjectId: string;
+  affectedObjects: DashboardAffectedObject[];
   links: DashboardLink[];
 };
 
@@ -116,6 +123,7 @@ export type DesktopIngestJob = {
 export type DesktopRegistryEntry = {
   sourceUuid: string;
   sourceId?: string | null;
+  duplicateOf?: string | null;
   sourcePath: string;
   sourceSha256: string;
   artifactPath?: string | null;
@@ -131,6 +139,9 @@ export type ArtifactContractSummary = {
   artifactPath: string;
   manifestPath?: string | null;
   chunksPath?: string | null;
+  tablesPath?: string | null;
+  figuresPath?: string | null;
+  parseLogPath?: string | null;
   parser?: string | null;
   parserVersion?: string | null;
   sourceSha256?: string | null;
@@ -139,6 +150,9 @@ export type ArtifactContractSummary = {
   chunkCount: number;
   anchorsLines: boolean;
   anchorsPages: boolean;
+  anchorsTables: boolean;
+  anchorsFigures: boolean;
+  anchorsEquations: boolean;
   limitations: string[];
 };
 
@@ -163,6 +177,23 @@ export type IngestPlan = {
   jobs: DesktopIngestJob[];
   actions: DashboardAction[];
   impactEdges: ImpactEdge[];
+};
+
+export type ClaimLedgerItem = {
+  claimId: string;
+  claimText: string;
+  sourceId?: string | null;
+  sourceUuid?: string | null;
+  sourcePath?: string | null;
+  chunkId?: string | null;
+  verdict: string;
+  status: string;
+  needsReview: boolean;
+  concepts: string[];
+  evidenceQuote?: string | null;
+  evidenceHash?: string | null;
+  updatedAt?: string | null;
+  line: number;
 };
 
 export type IngestPipelineResult = {
