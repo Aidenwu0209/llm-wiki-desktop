@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ClaimLedgerItem,
+  ContractFinding,
   ImportResult,
   IngestPipelineResult,
   IngestPlan,
@@ -38,6 +39,10 @@ export function importToInbox(vaultPath: string, paths: string[]): Promise<Impor
 
 export function planIngest(vaultPath: string): Promise<IngestPlan> {
   return invoke("plan_ingest", { vaultPath });
+}
+
+export function runIngestLint(vaultPath: string): Promise<ContractFinding[]> {
+  return invoke("run_ingest_lint", { vaultPath });
 }
 
 export function setDashboardActionStatus(

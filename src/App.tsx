@@ -29,6 +29,7 @@ import {
   openPath,
   planIngest,
   repairObsidianTemplates,
+  runIngestLint,
   runIngestPipeline,
   runRuntimeCommand,
   setClaimVerdict,
@@ -243,6 +244,20 @@ function App() {
     }
   }
 
+  async function handleIngestLint() {
+    if (!vaultPath) return;
+    setBusy("ingest_lint");
+    setError(null);
+    try {
+      await runIngestLint(vaultPath);
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function handleActionStatus(actionId: string, status: "open" | "resolved" | "ignored") {
     if (!vaultPath) return;
     setBusy(`action:${actionId}`);
@@ -316,6 +331,7 @@ function App() {
   const artifacts = ingestPlan?.artifacts ?? [];
   const registry = ingestPlan?.registry ?? [];
   const impactEdges = ingestPlan?.impactEdges ?? [];
+  const lintFindings = ingestPlan?.lintFindings ?? [];
   const visibleActions = actions.filter((action) => actionFilter === "all" || action.status === actionFilter);
   const visibleClaims = claims.filter((claim) => {
     if (claimFilter === "all") return true;
@@ -412,6 +428,7 @@ function App() {
           <Metric label="Stageable" value={planned?.stageable ?? 0} />
           <Metric label="Published" value={planned?.published ?? 0} />
           <Metric label="Blocked" value={planned?.blocked ?? 0} emphasis={(planned?.blocked ?? 0) > 0} />
+          <Metric label="Lint P1/P0" value={lintFindings.filter((finding) => finding.severity === "p0" || finding.severity === "p1").length} emphasis={lintFindings.some((finding) => finding.severity === "p0" || finding.severity === "p1")} />
           <Metric label="Actions" value={ingestPlan ? actions.length : status?.counts.actions ?? 0} emphasis={actions.length > 0} />
           <Metric label="Jobs" value={ingestPlan ? jobs.length : status?.counts.ingestJobs ?? 0} />
           <Metric label="Runtime" value={status?.runtimeInstalled ? "installed" : "missing"} />
@@ -422,6 +439,7 @@ function App() {
         <section className="action-strip">
           <button onClick={handleImport} disabled={!vaultPath || busy === "import"}><FileInput size={16} />导入到 inbox</button>
           <button onClick={handlePlanIngest} disabled={!vaultPath || busy === "plan_ingest"}><ListChecks size={16} />规划 ingest</button>
+          <button onClick={handleIngestLint} disabled={!vaultPath || busy === "ingest_lint"}><ShieldCheck size={16} />合约 lint</button>
           <button onClick={handleIngestPipeline} disabled={!vaultPath || busy === "ingest_pipeline" || runnableIngest === 0}><Play size={16} />运行 ingest pipeline</button>
           <button onClick={handleRepairTemplates} disabled={!vaultPath || busy === "repair_templates"}><Wrench size={16} />修复模板</button>
           <button onClick={() => vaultPath && openPath(vaultPath)} disabled={!vaultPath}><FolderOpen size={16} />打开文件夹</button>
@@ -483,9 +501,9 @@ function App() {
               {jobs.map((job) => (
                 <div className="work-item" key={job.jobId}>
                   <span className={classNames("status-chip", job.status)}>{job.status}</span>
-                  <strong>{job.fileName}</strong>
-                  <em>{job.currentStep} · {job.nextAction}</em>
-                  <code>{job.reason}</code>
+                  <strong>{job.sourceId || job.fileName}</strong>
+                  <em>{job.currentStep} · {job.nextAction} · attempt {job.attempt}/{job.maxAttempts}</em>
+                  <code>{job.lastError || job.reason}</code>
                   <div className="inline-actions">
                     <button title="打开当前 artifact 或原始 source" onClick={() => openPath(vaultFilePath(job.artifactPath || job.sourcePath))}>
                       <FolderOpen size={14} />打开
@@ -495,6 +513,9 @@ function App() {
                     </button>
                     <button title="取消本 source 的 pipeline 处理" onClick={() => handleJobStatus(job.jobId, "cancelled")} disabled={job.status === "cancelled"}>
                       <XCircle size={14} />取消
+                    </button>
+                    <button title="打开 job 日志" onClick={() => job.logPath && openPath(vaultFilePath(job.logPath))} disabled={!job.logPath}>
+                      <TerminalSquare size={14} />日志
                     </button>
                   </div>
                 </div>
@@ -559,9 +580,9 @@ function App() {
               {registry.map((entry) => (
                 <button key={`${entry.sourceUuid}-${entry.sourcePath}`} onClick={() => openPath(vaultFilePath(entry.sourcePath))}>
                   <span className={classNames("status-chip", entry.status)}>{entry.status}</span>
-                  <strong>{entry.sourcePath}</strong>
-                  <em>{entry.sourceId || entry.sourceUuid}{entry.duplicateOf ? ` · duplicate of ${entry.duplicateOf}` : ""}</em>
-                  <code>{entry.artifactSha256 || "no artifact hash"} · {entry.parser || "parser pending"}</code>
+                  <strong>{entry.sourceId || entry.sourceUuid}</strong>
+                  <em>{entry.sourcePath}{entry.duplicateOf ? ` · duplicate of ${entry.duplicateOf}` : ""}</em>
+                  <code>{entry.sourcePage || "source page pending"} · {entry.artifactSha256 || "no artifact hash"} · {entry.parser || "parser pending"}</code>
                 </button>
               ))}
             </div>
@@ -653,14 +674,34 @@ function App() {
                   <span className={classNames("status-chip", artifact.status)}>{artifact.status}</span>
                   <strong>{artifact.artifactPath}</strong>
                   <em>
-                    {artifact.parser || "legacy parser"} · chunks {artifact.chunkCount} · lines {artifact.anchorsLines ? "yes" : "no"} · pages {artifact.anchorsPages ? "yes" : "no"} · tables {artifact.anchorsTables ? "yes" : "no"} · figures {artifact.anchorsFigures ? "yes" : "no"}
+                    {artifact.parser || "legacy parser"} · schema {artifact.schemaVersion || "missing"} · valid {artifact.contractValid ? "yes" : "no"} · chunks {artifact.chunkCount}
                   </em>
-                  <code>{artifact.parseLogPath || artifact.tablesPath || artifact.figuresPath || artifact.limitations[0] || "contract complete"}</code>
+                  <code>pages {artifact.anchorsPages ? "yes" : "no"} · tables {artifact.anchorsTables ? "yes" : "no"} · figures {artifact.anchorsFigures ? "yes" : "no"} · {artifact.parseLogPath || artifact.limitations[0] || "contract complete"}</code>
                 </button>
               ))}
             </div>
           </section>
 
+          <section className="panel">
+            <div className="section-head">
+              <h2>Contract lint</h2>
+              <span>{lintFindings.length} findings</span>
+            </div>
+            <div className="impact-list">
+              {lintFindings.length === 0 && <p className="empty">暂无 contract finding。</p>}
+              {lintFindings.map((finding) => (
+                <button key={finding.findingId} onClick={() => finding.path && openPath(vaultFilePath(finding.path))}>
+                  <span className={classNames("status-chip", finding.severity)}>{finding.severity}</span>
+                  <strong>{finding.title}</strong>
+                  <em>{finding.objectType} · {finding.kind}</em>
+                  <code>{finding.detail}</code>
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
+
+        <div className="main-grid">
           <section className="panel">
             <div className="section-head">
               <h2>Impact graph</h2>
@@ -674,6 +715,30 @@ function App() {
                   <strong>{edge.fromType}{" -> "}{edge.toType}</strong>
                   <em>{edge.relationship}</em>
                   <code>{edge.fromId}{" -> "}{edge.toId}</code>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="panel">
+            <div className="section-head">
+              <h2>Canonical state</h2>
+              <span>runtime-owned</span>
+            </div>
+            <div className="impact-list">
+              {[
+                "_state/source-registry.jsonl",
+                "_state/artifacts.jsonl",
+                "_state/ingest-jobs.jsonl",
+                "_state/actions.jsonl",
+                "_state/impact-graph.jsonl",
+                "_state/lint-findings.jsonl",
+              ].map((path) => (
+                <button key={path} onClick={() => openPath(vaultFilePath(path))}>
+                  <span className="status-chip published">state</span>
+                  <strong>{path}</strong>
+                  <em>canonical ingest contract</em>
+                  <code>{vaultFilePath(path)}</code>
                 </button>
               ))}
             </div>

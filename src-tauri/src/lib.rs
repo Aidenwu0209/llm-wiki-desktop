@@ -113,6 +113,7 @@ struct IngestPlan {
     jobs: Vec<DesktopIngestJob>,
     actions: Vec<DashboardAction>,
     impact_edges: Vec<ImpactEdge>,
+    lint_findings: Vec<ContractFinding>,
 }
 
 struct IngestContracts {
@@ -187,13 +188,23 @@ struct DashboardAction {
 struct DesktopIngestJob {
     job_id: String,
     source_uuid: String,
+    source_id: Option<String>,
     source_path: String,
     file_name: String,
+    kind: String,
     artifact_path: Option<String>,
     status: String,
     current_step: String,
     next_action: String,
     reason: String,
+    attempt: usize,
+    max_attempts: usize,
+    started_at: Option<String>,
+    ended_at: Option<String>,
+    last_error: Option<String>,
+    log_path: Option<String>,
+    inputs: Vec<String>,
+    outputs: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -202,20 +213,29 @@ struct DesktopRegistryEntry {
     source_uuid: String,
     source_id: Option<String>,
     duplicate_of: Option<String>,
+    raw_path: String,
+    canonical_path: String,
     source_path: String,
     source_sha256: String,
+    mime: String,
     artifact_path: Option<String>,
     artifact_sha256: Option<String>,
     parser: Option<String>,
     parser_version: Option<String>,
     status: String,
+    source_page: Option<String>,
     last_error: Option<String>,
+    created_at: Option<String>,
+    updated_at: Option<String>,
+    published_at: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct ArtifactContractSummary {
     source_path: String,
+    source_id: Option<String>,
+    source_uuid: String,
     artifact_path: String,
     manifest_path: Option<String>,
     chunks_path: Option<String>,
@@ -224,9 +244,11 @@ struct ArtifactContractSummary {
     parse_log_path: Option<String>,
     parser: Option<String>,
     parser_version: Option<String>,
+    schema_version: Option<String>,
     source_sha256: Option<String>,
     artifact_sha256: Option<String>,
     status: String,
+    contract_valid: bool,
     chunk_count: usize,
     anchors_lines: bool,
     anchors_pages: bool,
@@ -234,6 +256,21 @@ struct ArtifactContractSummary {
     anchors_figures: bool,
     anchors_equations: bool,
     limitations: Vec<String>,
+    lint_errors: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ContractFinding {
+    finding_id: String,
+    severity: String,
+    kind: String,
+    object_type: String,
+    object_id: String,
+    title: String,
+    detail: String,
+    status: String,
+    path: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -491,6 +528,13 @@ fn json_string_array(value: &serde_json::Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn json_usize(value: &serde_json::Value, key: &str) -> Option<usize> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|item| usize::try_from(item).ok())
+}
+
 fn detect_mime(path: &Path) -> String {
     let ext = path
         .extension()
@@ -612,14 +656,10 @@ fn validate_status(status: &str, allowed: &[&str]) -> Result<(), String> {
     }
 }
 
-fn job_id_for_source_hash(hash: &str) -> String {
-    format!("job-{}", short_hash(hash))
-}
-
 fn cancelled_job_ids(vault: &Path) -> HashSet<String> {
-    load_status_overrides(vault, "desktop-job-overrides.jsonl")
+    load_ingest_jobs(vault)
         .into_iter()
-        .filter_map(|(id, status)| (status == "cancelled").then_some(id))
+        .filter_map(|(id, job)| (job.status == "cancelled").then_some(id))
         .collect()
 }
 
@@ -733,6 +773,99 @@ fn set_json_bool(value: &mut serde_json::Value, key: &str, next: bool) {
     }
 }
 
+fn source_id_number(source_id: &str) -> Option<usize> {
+    source_id
+        .strip_prefix("LLM-")
+        .and_then(|value| value.parse::<usize>().ok())
+}
+
+fn format_source_id(number: usize) -> String {
+    format!("LLM-{number:04}")
+}
+
+fn next_source_id_number(vault: &Path, rows: &[serde_json::Value]) -> usize {
+    let max_existing = rows
+        .iter()
+        .filter_map(|row| json_string(row, "source_id"))
+        .filter_map(|source_id| source_id_number(&source_id))
+        .max()
+        .unwrap_or(0);
+    let counter_text = read_text(&vault.join("_state").join("id-counter.md"));
+    let counter_next = counter_text.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("next:")
+            .and_then(|value| value.trim().parse::<usize>().ok())
+    });
+    max_existing.max(counter_next.unwrap_or(1).saturating_sub(1)) + 1
+}
+
+fn write_next_source_id(vault: &Path, next: usize) -> Result<(), String> {
+    write_text(
+        &vault.join("_state").join("id-counter.md"),
+        &format!("# ID Counter\nnext: {next}\n"),
+    )
+}
+
+fn registry_rows(vault: &Path) -> Vec<serde_json::Value> {
+    read_text(&vault.join("_state").join("source-registry.jsonl"))
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .collect()
+}
+
+fn existing_source_ids(vault: &Path) -> HashMap<String, String> {
+    let mut ids = HashMap::new();
+    for row in registry_rows(vault) {
+        let Some(source_id) = json_string(&row, "source_id") else {
+            continue;
+        };
+        for key in [
+            json_string(&row, "source_uuid"),
+            json_string(&row, "source_sha256"),
+            json_string(&row, "raw_sha256"),
+            json_string(&row, "source_path"),
+            json_string(&row, "raw_path"),
+            json_string(&row, "canonical_path"),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            ids.insert(key, source_id.clone());
+        }
+        for key in json_string_array(&row, "duplicate_paths") {
+            ids.insert(key, source_id.clone());
+        }
+    }
+    ids
+}
+
+fn source_id_for_hash(vault: &Path, hash: &str) -> Option<String> {
+    let uuid = source_uuid(hash);
+    existing_source_ids(vault)
+        .get(&uuid)
+        .cloned()
+        .or_else(|| existing_source_ids(vault).get(hash).cloned())
+}
+
+fn source_id_for_source(vault: &Path, hash: &str, source_path: &str) -> Option<String> {
+    let ids = existing_source_ids(vault);
+    let uuid = source_uuid(hash);
+    ids.get(&uuid)
+        .cloned()
+        .or_else(|| ids.get(hash).cloned())
+        .or_else(|| ids.get(source_path).cloned())
+}
+
+fn source_page_for_id(source_id: &str) -> String {
+    format!("sources/{source_id}.md")
+}
+
+fn job_id_for_source_id(source_id: Option<&str>, hash: &str) -> String {
+    source_id
+        .map(|id| format!("JOB-{id}"))
+        .unwrap_or_else(|| format!("job-{}", short_hash(hash)))
+}
+
 fn parse_frontmatter(path: &Path) -> HashMap<String, String> {
     let text = read_text(path);
     let mut fields = HashMap::new();
@@ -838,6 +971,11 @@ fn inspect_vault(vault_path: String) -> Result<VaultStatus, String> {
         "_state/growth-queue.jsonl",
         "_state/id-counter.md",
         "_state/source-registry.jsonl",
+        "_state/artifacts.jsonl",
+        "_state/ingest-jobs.jsonl",
+        "_state/actions.jsonl",
+        "_state/impact-graph.jsonl",
+        "_state/lint-findings.jsonl",
         "_state/science-review-queue.jsonl",
         "claims/claims.jsonl",
     ];
@@ -912,8 +1050,12 @@ fn inspect_vault(vault_path: String) -> Result<VaultStatus, String> {
             growth_queue: count_jsonl(&vault.join("_state").join("growth-queue.jsonl")),
             stale_claims,
             contradicted_claims,
-            ingest_jobs: count_jsonl(&vault.join("_state").join("desktop-ingest-jobs.jsonl")),
-            actions: count_jsonl(&vault.join("_state").join("desktop-actions.jsonl")),
+            ingest_jobs: count_jsonl(&vault.join("_state").join("ingest-jobs.jsonl")).max(
+                count_jsonl(&vault.join("_state").join("desktop-ingest-jobs.jsonl")),
+            ),
+            actions: count_jsonl(&vault.join("_state").join("actions.jsonl")).max(count_jsonl(
+                &vault.join("_state").join("desktop-actions.jsonl"),
+            )),
         },
         files,
         errors,
@@ -1009,6 +1151,11 @@ fn create_minimal_vault(vault: &Path) -> Result<(), String> {
         "# ID Counter\nnext: 1\n",
     )?;
     write_text(vault.join("_state/source-registry.jsonl").as_path(), "")?;
+    write_text(vault.join("_state/artifacts.jsonl").as_path(), "")?;
+    write_text(vault.join("_state/ingest-jobs.jsonl").as_path(), "")?;
+    write_text(vault.join("_state/actions.jsonl").as_path(), "")?;
+    write_text(vault.join("_state/impact-graph.jsonl").as_path(), "")?;
+    write_text(vault.join("_state/lint-findings.jsonl").as_path(), "")?;
     write_text(
         vault.join("_state/desktop-source-registry.jsonl").as_path(),
         "",
@@ -1335,7 +1482,13 @@ fn token_count(text: &str) -> usize {
     text.split_whitespace().count()
 }
 
-fn chunk_rows(vault: &Path, source_sha256: &str, artifact: &Path, content: &str) -> Vec<ChunkRow> {
+fn chunk_rows(
+    vault: &Path,
+    source_sha256: &str,
+    source_id: Option<&str>,
+    artifact: &Path,
+    content: &str,
+) -> Vec<ChunkRow> {
     let source_uuid = source_uuid(source_sha256);
     let artifact_path = rel_path(vault, artifact);
     let mut chunks = Vec::new();
@@ -1363,7 +1516,7 @@ fn chunk_rows(vault: &Path, source_sha256: &str, artifact: &Path, content: &str)
         chunks.push(ChunkRow {
             chunk_id: format!("{source_uuid}:{idx:05}"),
             source_uuid: source_uuid.clone(),
-            source_id: None,
+            source_id: source_id.map(ToString::to_string),
             artifact_path: artifact_path.clone(),
             heading_path,
             line_start,
@@ -1445,6 +1598,7 @@ fn write_text_artifact_contract(
     source: &Path,
     artifact: &Path,
     source_sha256: &str,
+    source_id: Option<&str>,
     content: &str,
 ) -> Result<(), String> {
     write_text(artifact, content)?;
@@ -1452,10 +1606,12 @@ fn write_text_artifact_contract(
     let parent = artifact
         .parent()
         .ok_or_else(|| "artifact has no parent directory".to_string())?;
-    let chunks = chunk_rows(vault, source_sha256, artifact, content);
+    let chunks = chunk_rows(vault, source_sha256, source_id, artifact, content);
     write_jsonl(&parent.join("chunks.jsonl"), &chunks)?;
     let manifest = serde_json::json!({
+        "schema_version": 1,
         "source_uuid": source_uuid(source_sha256),
+        "source_id": source_id,
         "source_path": rel_path(vault, source),
         "source_sha256": source_sha256,
         "artifact_sha256": artifact_sha256,
@@ -1665,6 +1821,7 @@ fn append_cache_row(
 fn artifact_summary_for_entry(
     vault: &Path,
     entry: &IngestPlanEntry,
+    source_id: Option<&str>,
 ) -> Option<ArtifactContractSummary> {
     let artifact_path = entry.artifact_path.as_ref()?;
     let artifact = PathBuf::from(artifact_path);
@@ -1696,6 +1853,8 @@ fn artifact_summary_for_entry(
 
     Some(ArtifactContractSummary {
         source_path: rel_path(vault, &PathBuf::from(&entry.source_path)),
+        source_id: source_id.map(ToString::to_string),
+        source_uuid: source_uuid(&entry.sha256),
         artifact_path: rel_path(vault, &artifact),
         manifest_path: manifest_path
             .is_file()
@@ -1714,9 +1873,24 @@ fn artifact_summary_for_entry(
         parser_version: manifest
             .as_ref()
             .and_then(|value| json_string(value, "parser_version")),
+        schema_version: manifest
+            .as_ref()
+            .and_then(|value| json_string(value, "schema_version"))
+            .or_else(|| {
+                manifest
+                    .as_ref()
+                    .and_then(|value| json_usize(value, "schema_version"))
+                    .map(|version| version.to_string())
+            }),
         source_sha256: manifest_source_sha,
         artifact_sha256,
         status,
+        contract_valid: manifest.is_some()
+            && chunks_path.is_file()
+            && manifest
+                .as_ref()
+                .and_then(|value| json_string(value, "artifact_sha256"))
+                .is_some_and(|hash| sha256_file(&artifact).ok().as_deref() == Some(hash.as_str())),
         chunk_count: count_jsonl(&chunks_path),
         anchors_lines: manifest
             .as_ref()
@@ -1739,6 +1913,7 @@ fn artifact_summary_for_entry(
             .unwrap_or_else(|| {
                 vec!["manifest.json is missing; artifact is treated as legacy".to_string()]
             }),
+        lint_errors: Vec::new(),
     })
 }
 
@@ -1749,12 +1924,17 @@ fn registry_entry_for_plan_entry(vault: &Path, entry: &IngestPlanEntry) -> Deskt
         .as_ref()
         .filter(|path| path.is_file())
         .and_then(|path| sha256_file(path).ok());
+    let source_rel = rel_path(vault, &PathBuf::from(&entry.source_path));
+    let source_id = source_id_for_source(vault, &entry.sha256, &source_rel);
     DesktopRegistryEntry {
         source_uuid: source_uuid(&entry.sha256),
-        source_id: None,
+        source_id: source_id.clone(),
         duplicate_of: None,
-        source_path: rel_path(vault, &PathBuf::from(&entry.source_path)),
+        raw_path: source_rel.clone(),
+        canonical_path: source_rel.clone(),
+        source_path: source_rel,
         source_sha256: entry.sha256.clone(),
+        mime: detect_mime(&PathBuf::from(&entry.source_path)),
         artifact_path: artifact.as_ref().map(|path| rel_path(vault, path)),
         artifact_sha256,
         parser: manifest
@@ -1764,19 +1944,70 @@ fn registry_entry_for_plan_entry(vault: &Path, entry: &IngestPlanEntry) -> Deskt
             .as_ref()
             .and_then(|value| json_string(value, "parser_version")),
         status: entry.status.clone(),
+        source_page: source_id.as_deref().map(source_page_for_id),
         last_error: (entry.status == "blocked").then(|| entry.reason.clone()),
+        created_at: None,
+        updated_at: Some(Local::now().to_rfc3339()),
+        published_at: None,
     }
 }
 
 fn annotate_duplicate_registry_entries(registry: &mut [DesktopRegistryEntry]) {
-    let mut first_by_hash: HashMap<String, String> = HashMap::new();
+    let mut first_id_by_hash: HashMap<String, String> = HashMap::new();
     for entry in registry {
-        if let Some(first) = first_by_hash.get(&entry.source_sha256) {
-            entry.duplicate_of = Some(first.clone());
+        if let Some(first_id) = first_id_by_hash.get(&entry.source_sha256) {
+            entry.duplicate_of = Some(first_id.clone());
         } else {
-            first_by_hash.insert(entry.source_sha256.clone(), entry.source_path.clone());
+            if let Some(source_id) = &entry.source_id {
+                first_id_by_hash.insert(entry.source_sha256.clone(), source_id.clone());
+            }
         }
     }
+}
+
+fn assign_stable_source_ids(
+    vault: &Path,
+    registry: &mut [DesktopRegistryEntry],
+) -> Result<(), String> {
+    let rows = registry_rows(vault);
+    let mut id_by_hash = existing_source_ids(vault);
+    let mut next = next_source_id_number(vault, &rows);
+    let now = Local::now().to_rfc3339();
+
+    for entry in registry.iter_mut() {
+        let existing = id_by_hash
+            .get(&entry.source_uuid)
+            .cloned()
+            .or_else(|| id_by_hash.get(&entry.source_sha256).cloned())
+            .or_else(|| id_by_hash.get(&entry.source_path).cloned())
+            .or_else(|| id_by_hash.get(&entry.raw_path).cloned())
+            .or_else(|| id_by_hash.get(&entry.canonical_path).cloned());
+        let source_id = if let Some(existing) = existing {
+            existing
+        } else {
+            let allocated = format_source_id(next);
+            next += 1;
+            id_by_hash.insert(entry.source_uuid.clone(), allocated.clone());
+            id_by_hash.insert(entry.source_sha256.clone(), allocated.clone());
+            id_by_hash.insert(entry.source_path.clone(), allocated.clone());
+            id_by_hash.insert(entry.raw_path.clone(), allocated.clone());
+            id_by_hash.insert(entry.canonical_path.clone(), allocated.clone());
+            allocated
+        };
+        id_by_hash.insert(entry.source_uuid.clone(), source_id.clone());
+        id_by_hash.insert(entry.source_sha256.clone(), source_id.clone());
+        id_by_hash.insert(entry.source_path.clone(), source_id.clone());
+        id_by_hash.insert(entry.raw_path.clone(), source_id.clone());
+        id_by_hash.insert(entry.canonical_path.clone(), source_id.clone());
+        entry.source_id = Some(source_id.clone());
+        entry.source_page = Some(source_page_for_id(&source_id));
+        if entry.created_at.is_none() {
+            entry.created_at = Some(now.clone());
+        }
+        entry.updated_at = Some(now.clone());
+    }
+    annotate_duplicate_registry_entries(registry);
+    write_next_source_id(vault, next)
 }
 
 fn registry_key(value: &serde_json::Value) -> Option<String> {
@@ -1784,6 +2015,9 @@ fn registry_key(value: &serde_json::Value) -> Option<String> {
         .or_else(|| json_string(value, "sourceUuid"))
         .or_else(|| json_string(value, "source_sha256"))
         .or_else(|| json_string(value, "sourceSha256"))
+        .or_else(|| json_string(value, "source_path"))
+        .or_else(|| json_string(value, "raw_path"))
+        .or_else(|| json_string(value, "canonical_path"))
 }
 
 fn set_json_if_missing(
@@ -1807,7 +2041,20 @@ fn merge_runtime_source_registry(
         .collect::<Vec<_>>();
     let mut index_by_key = HashMap::new();
     for (index, value) in values.iter().enumerate() {
-        if let Some(key) = registry_key(value) {
+        for key in [
+            registry_key(value),
+            json_string(value, "source_uuid"),
+            json_string(value, "source_sha256"),
+            json_string(value, "source_path"),
+            json_string(value, "raw_path"),
+            json_string(value, "canonical_path"),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            index_by_key.insert(key, index);
+        }
+        for key in json_string_array(value, "duplicate_paths") {
             index_by_key.insert(key, index);
         }
     }
@@ -1816,7 +2063,26 @@ fn merge_runtime_source_registry(
         let idx = index_by_key
             .get(&entry.source_uuid)
             .copied()
-            .or_else(|| index_by_key.get(&entry.source_sha256).copied());
+            .or_else(|| index_by_key.get(&entry.source_sha256).copied())
+            .or_else(|| index_by_key.get(&entry.source_path).copied())
+            .or_else(|| index_by_key.get(&entry.raw_path).copied())
+            .or_else(|| index_by_key.get(&entry.canonical_path).copied());
+        if entry.duplicate_of.is_some() {
+            if let Some(index) = idx {
+                if let Some(map) = values[index].as_object_mut() {
+                    let duplicate_paths = map
+                        .entry("duplicate_paths".to_string())
+                        .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+                    if let Some(items) = duplicate_paths.as_array_mut() {
+                        let value = serde_json::Value::String(entry.source_path.clone());
+                        if !items.contains(&value) {
+                            items.push(value);
+                        }
+                    }
+                }
+            }
+            continue;
+        }
         let row = if let Some(index) = idx {
             &mut values[index]
         } else {
@@ -1824,20 +2090,42 @@ fn merge_runtime_source_registry(
             let index = values.len() - 1;
             index_by_key.insert(entry.source_uuid.clone(), index);
             index_by_key.insert(entry.source_sha256.clone(), index);
+            index_by_key.insert(entry.source_path.clone(), index);
+            index_by_key.insert(entry.raw_path.clone(), index);
+            index_by_key.insert(entry.canonical_path.clone(), index);
             &mut values[index]
         };
         if !row.is_object() {
             *row = serde_json::json!({});
         }
         if let Some(map) = row.as_object_mut() {
-            set_json_if_missing(map, "source_uuid", entry.source_uuid.clone());
-            set_json_if_missing(map, "source_sha256", entry.source_sha256.clone());
-            set_json_if_missing(map, "source_path", entry.source_path.clone());
-            set_json_if_missing(map, "raw_path", entry.source_path.clone());
-            set_json_if_missing(map, "canonical_path", entry.source_path.clone());
+            map.insert(
+                "source_uuid".to_string(),
+                serde_json::Value::String(entry.source_uuid.clone()),
+            );
             if let Some(source_id) = &entry.source_id {
                 set_json_if_missing(map, "source_id", source_id.clone());
             }
+            map.insert(
+                "source_sha256".to_string(),
+                serde_json::Value::String(entry.source_sha256.clone()),
+            );
+            map.insert(
+                "source_path".to_string(),
+                serde_json::Value::String(entry.source_path.clone()),
+            );
+            map.insert(
+                "raw_path".to_string(),
+                serde_json::Value::String(entry.raw_path.clone()),
+            );
+            map.insert(
+                "canonical_path".to_string(),
+                serde_json::Value::String(entry.canonical_path.clone()),
+            );
+            map.insert(
+                "mime".to_string(),
+                serde_json::Value::String(entry.mime.clone()),
+            );
             if let Some(duplicate_of) = &entry.duplicate_of {
                 map.insert(
                     "duplicate_of".to_string(),
@@ -1868,7 +2156,13 @@ fn merge_runtime_source_registry(
                     serde_json::Value::String(version.clone()),
                 );
             }
-            set_json_if_missing(map, "status", entry.status.clone());
+            if let Some(source_page) = &entry.source_page {
+                set_json_if_missing(map, "source_page", source_page.clone());
+            }
+            map.insert(
+                "status".to_string(),
+                serde_json::Value::String(entry.status.clone()),
+            );
             map.insert(
                 "desktop_status".to_string(),
                 serde_json::Value::String(entry.status.clone()),
@@ -1883,13 +2177,29 @@ fn merge_runtime_source_registry(
                     serde_json::Value::String(error.clone()),
                 );
             }
+            if let Some(created_at) = &entry.created_at {
+                set_json_if_missing(map, "created_at", created_at.clone());
+            }
+            if let Some(updated_at) = &entry.updated_at {
+                map.insert(
+                    "updated_at".to_string(),
+                    serde_json::Value::String(updated_at.clone()),
+                );
+            }
+            if let Some(published_at) = &entry.published_at {
+                set_json_if_missing(map, "published_at", published_at.clone());
+            }
         }
     }
 
     write_jsonl(&path, &values)
 }
 
-fn job_for_plan_entry(vault: &Path, entry: &IngestPlanEntry) -> DesktopIngestJob {
+fn job_for_plan_entry(
+    vault: &Path,
+    entry: &IngestPlanEntry,
+    source_id: Option<&str>,
+) -> DesktopIngestJob {
     let status = match entry.status.as_str() {
         "published" => "succeeded",
         "blocked" => "blocked",
@@ -1903,10 +2213,12 @@ fn job_for_plan_entry(vault: &Path, entry: &IngestPlanEntry) -> DesktopIngestJob
         _ => "inspect",
     };
     DesktopIngestJob {
-        job_id: job_id_for_source_hash(&entry.sha256),
+        job_id: job_id_for_source_id(source_id, &entry.sha256),
         source_uuid: source_uuid(&entry.sha256),
+        source_id: source_id.map(ToString::to_string),
         source_path: rel_path(vault, &PathBuf::from(&entry.source_path)),
         file_name: entry.file_name.clone(),
+        kind: current_step.to_string(),
         artifact_path: entry
             .artifact_path
             .as_ref()
@@ -1915,7 +2227,138 @@ fn job_for_plan_entry(vault: &Path, entry: &IngestPlanEntry) -> DesktopIngestJob
         current_step: current_step.to_string(),
         next_action: entry.action.clone(),
         reason: entry.reason.clone(),
+        attempt: 0,
+        max_attempts: 3,
+        started_at: None,
+        ended_at: None,
+        last_error: (entry.status == "blocked").then(|| entry.reason.clone()),
+        log_path: None,
+        inputs: vec![rel_path(vault, &PathBuf::from(&entry.source_path))],
+        outputs: entry
+            .artifact_path
+            .as_ref()
+            .map(|path| vec![rel_path(vault, &PathBuf::from(path))])
+            .unwrap_or_default(),
     }
+}
+
+fn job_from_value(value: &serde_json::Value) -> Option<DesktopIngestJob> {
+    let job_id = json_string(value, "job_id").or_else(|| json_string(value, "jobId"))?;
+    Some(DesktopIngestJob {
+        job_id,
+        source_uuid: json_string(value, "source_uuid")
+            .or_else(|| json_string(value, "sourceUuid"))?,
+        source_id: json_string(value, "source_id").or_else(|| json_string(value, "sourceId")),
+        source_path: json_string(value, "source_path")
+            .or_else(|| json_string(value, "sourcePath"))
+            .unwrap_or_default(),
+        file_name: json_string(value, "file_name")
+            .or_else(|| json_string(value, "fileName"))
+            .unwrap_or_default(),
+        kind: json_string(value, "kind").unwrap_or_else(|| "inspect".to_string()),
+        artifact_path: json_string(value, "artifact_path")
+            .or_else(|| json_string(value, "artifactPath")),
+        status: json_string(value, "status").unwrap_or_else(|| "queued".to_string()),
+        current_step: json_string(value, "current_step")
+            .or_else(|| json_string(value, "currentStep"))
+            .unwrap_or_else(|| "inspect".to_string()),
+        next_action: json_string(value, "next_action")
+            .or_else(|| json_string(value, "nextAction"))
+            .unwrap_or_default(),
+        reason: json_string(value, "reason").unwrap_or_default(),
+        attempt: json_usize(value, "attempt").unwrap_or(0),
+        max_attempts: json_usize(value, "max_attempts")
+            .or_else(|| json_usize(value, "maxAttempts"))
+            .unwrap_or(3),
+        started_at: json_string(value, "started_at").or_else(|| json_string(value, "startedAt")),
+        ended_at: json_string(value, "ended_at").or_else(|| json_string(value, "endedAt")),
+        last_error: json_string(value, "last_error").or_else(|| json_string(value, "lastError")),
+        log_path: json_string(value, "log_path").or_else(|| json_string(value, "logPath")),
+        inputs: json_string_array(value, "inputs"),
+        outputs: json_string_array(value, "outputs"),
+    })
+}
+
+fn load_ingest_jobs(vault: &Path) -> HashMap<String, DesktopIngestJob> {
+    read_text(&vault.join("_state").join("ingest-jobs.jsonl"))
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter_map(|value| job_from_value(&value))
+        .map(|job| (job.job_id.clone(), job))
+        .collect()
+}
+
+fn merge_ingest_jobs(vault: &Path, planned: Vec<DesktopIngestJob>) -> Vec<DesktopIngestJob> {
+    let existing = load_ingest_jobs(vault);
+    planned
+        .into_iter()
+        .map(|mut job| {
+            if let Some(previous) = existing.get(&job.job_id) {
+                job.attempt = previous.attempt;
+                job.max_attempts = previous.max_attempts.max(1);
+                job.started_at = previous.started_at.clone();
+                job.ended_at = previous.ended_at.clone();
+                job.last_error = previous.last_error.clone().or(job.last_error);
+                job.log_path = previous.log_path.clone();
+                if matches!(
+                    previous.status.as_str(),
+                    "queued" | "running" | "failed" | "cancelled"
+                ) && job.status != "blocked"
+                    && job.status != "succeeded"
+                {
+                    job.status = previous.status.clone();
+                }
+            }
+            job
+        })
+        .collect()
+}
+
+fn write_ingest_jobs(vault: &Path, jobs: &[DesktopIngestJob]) -> Result<(), String> {
+    write_jsonl(&vault.join("_state").join("ingest-jobs.jsonl"), jobs)
+}
+
+fn update_ingest_job_record(
+    vault: &Path,
+    job_id: &str,
+    status: &str,
+    last_error: Option<String>,
+    log_path: Option<String>,
+) -> Result<(), String> {
+    let mut jobs = load_ingest_jobs(vault)
+        .into_values()
+        .collect::<Vec<DesktopIngestJob>>();
+    let now = Local::now().to_rfc3339();
+    let mut found = false;
+    for job in &mut jobs {
+        if job.job_id != job_id {
+            continue;
+        }
+        found = true;
+        if status == "queued" && matches!(job.status.as_str(), "failed" | "cancelled" | "blocked") {
+            job.attempt = job.attempt.saturating_add(1);
+            job.started_at = None;
+            job.ended_at = None;
+            job.last_error = None;
+        } else if status == "running" {
+            job.started_at = Some(now.clone());
+            job.ended_at = None;
+        } else if matches!(status, "succeeded" | "failed" | "cancelled" | "blocked") {
+            job.ended_at = Some(now.clone());
+        }
+        job.status = status.to_string();
+        if let Some(error) = last_error.clone() {
+            job.last_error = Some(error);
+        }
+        if let Some(path) = log_path.clone() {
+            job.log_path = Some(path);
+        }
+    }
+    if !found {
+        return Err(format!("job not found: {job_id}"));
+    }
+    jobs.sort_by(|a, b| a.job_id.cmp(&b.job_id));
+    write_ingest_jobs(vault, &jobs)
 }
 
 fn action_for_plan_entry(vault: &Path, entry: &IngestPlanEntry) -> Option<DashboardAction> {
@@ -2079,48 +2522,58 @@ fn apply_dashboard_action_overrides(vault: &Path, actions: &mut [DashboardAction
     }
 }
 
-fn apply_ingest_job_overrides(vault: &Path, jobs: &mut [DesktopIngestJob]) {
-    let overrides = load_status_overrides(vault, "desktop-job-overrides.jsonl");
-    for job in jobs {
-        if let Some(status) = overrides.get(&job.job_id) {
-            job.status = status.clone();
-        }
-    }
-}
-
-fn build_ingest_contracts(vault: &Path, entries: &[IngestPlanEntry]) -> IngestContracts {
+fn build_ingest_contracts(
+    vault: &Path,
+    entries: &[IngestPlanEntry],
+) -> Result<IngestContracts, String> {
     let mut registry = entries
         .iter()
         .map(|entry| registry_entry_for_plan_entry(vault, entry))
         .collect::<Vec<_>>();
-    annotate_duplicate_registry_entries(&mut registry);
+    assign_stable_source_ids(vault, &mut registry)?;
+    let source_ids = registry
+        .iter()
+        .map(|entry| (entry.source_sha256.clone(), entry.source_id.clone()))
+        .collect::<HashMap<_, _>>();
     let artifacts = entries
         .iter()
-        .filter_map(|entry| artifact_summary_for_entry(vault, entry))
+        .filter_map(|entry| {
+            artifact_summary_for_entry(
+                vault,
+                entry,
+                source_ids.get(&entry.sha256).and_then(Option::as_deref),
+            )
+        })
         .collect::<Vec<_>>();
-    let mut jobs = entries
+    let jobs = entries
         .iter()
-        .map(|entry| job_for_plan_entry(vault, entry))
+        .map(|entry| {
+            job_for_plan_entry(
+                vault,
+                entry,
+                source_ids.get(&entry.sha256).and_then(Option::as_deref),
+            )
+        })
         .collect::<Vec<_>>();
+    let jobs = merge_ingest_jobs(vault, jobs);
     let mut actions = entries
         .iter()
         .filter_map(|entry| action_for_plan_entry(vault, entry))
         .collect::<Vec<_>>();
     actions.extend(vault_level_actions(vault));
-    apply_ingest_job_overrides(vault, &mut jobs);
     apply_dashboard_action_overrides(vault, &mut actions);
     let mut impact_edges = entries
         .iter()
         .flat_map(|entry| impact_edges_for_plan_entry(vault, entry))
         .collect::<Vec<_>>();
     impact_edges.extend(claim_impact_edges(vault));
-    IngestContracts {
+    Ok(IngestContracts {
         registry,
         artifacts,
         jobs,
         actions,
         impact_edges,
-    }
+    })
 }
 
 fn vault_level_actions(vault: &Path) -> Vec<DashboardAction> {
@@ -2227,6 +2680,348 @@ fn vault_level_actions(vault: &Path) -> Vec<DashboardAction> {
     actions
 }
 
+fn contract_finding(
+    severity: &str,
+    kind: &str,
+    object_type: &str,
+    object_id: &str,
+    title: String,
+    detail: String,
+    path: Option<String>,
+) -> ContractFinding {
+    let finding_id = format!(
+        "lint-{}",
+        short_hash(&sha256_text(&format!(
+            "{severity}:{kind}:{object_type}:{object_id}:{detail}"
+        )))
+    );
+    ContractFinding {
+        finding_id,
+        severity: severity.to_string(),
+        kind: kind.to_string(),
+        object_type: object_type.to_string(),
+        object_id: object_id.to_string(),
+        title,
+        detail,
+        status: "open".to_string(),
+        path,
+    }
+}
+
+fn lint_ingest_contracts(
+    vault: &Path,
+    registry: &[DesktopRegistryEntry],
+    artifacts: &[ArtifactContractSummary],
+    jobs: &[DesktopIngestJob],
+    impact_edges: &[ImpactEdge],
+) -> Vec<ContractFinding> {
+    let mut findings = Vec::new();
+    let mut id_to_uuid = HashMap::new();
+    let mut known_sources = HashSet::new();
+    for entry in registry {
+        known_sources.insert(entry.source_uuid.clone());
+        let object_id = entry
+            .source_id
+            .clone()
+            .unwrap_or_else(|| entry.source_uuid.clone());
+        if entry.source_id.is_none() {
+            findings.push(contract_finding(
+                "p0",
+                "missing_source_id",
+                "source",
+                &entry.source_uuid,
+                "source registry 缺少 stable source_id".to_string(),
+                "每个 source_uuid 必须分配稳定 LLM-NNNN，不能依赖文件排序。".to_string(),
+                Some(entry.source_path.clone()),
+            ));
+        }
+        if let Some(source_id) = &entry.source_id {
+            if let Some(previous_uuid) =
+                id_to_uuid.insert(source_id.clone(), entry.source_uuid.clone())
+            {
+                if previous_uuid != entry.source_uuid && entry.duplicate_of.is_none() {
+                    findings.push(contract_finding(
+                        "p0",
+                        "duplicate_source_id",
+                        "source",
+                        source_id,
+                        format!("{source_id} 被多个 source_uuid 使用"),
+                        "source_id 必须唯一；重复 raw 文件应使用 duplicate_of 指向既有 identity。"
+                            .to_string(),
+                        Some(entry.source_path.clone()),
+                    ));
+                }
+            }
+        }
+        if !vault.join(&entry.source_path).is_file() {
+            findings.push(contract_finding(
+                "p1",
+                "missing_raw_source",
+                "source",
+                &object_id,
+                "registry 指向的 raw source 不存在".to_string(),
+                format!("missing {}", entry.source_path),
+                Some(entry.source_path.clone()),
+            ));
+        }
+        if matches!(entry.status.as_str(), "ready" | "cached" | "published")
+            && entry
+                .artifact_path
+                .as_ref()
+                .is_none_or(|path| !vault.join(path).is_file())
+        {
+            findings.push(contract_finding(
+                "p1",
+                "missing_artifact",
+                "source",
+                &object_id,
+                "可运行 source 缺少 parse artifact".to_string(),
+                "ready/cached/published 状态必须能追溯到 combined.md artifact。".to_string(),
+                entry.artifact_path.clone(),
+            ));
+        }
+        if entry.status == "published"
+            && entry
+                .source_page
+                .as_ref()
+                .is_none_or(|path| !vault.join(path).is_file())
+        {
+            findings.push(contract_finding(
+                "p1",
+                "missing_source_page",
+                "source",
+                &object_id,
+                "published source 缺少 source page".to_string(),
+                "published registry row 必须能追溯到 sources/LLM-NNNN.md。".to_string(),
+                entry.source_page.clone(),
+            ));
+        }
+    }
+
+    for artifact in artifacts {
+        if artifact.manifest_path.is_none() {
+            findings.push(contract_finding(
+                "p1",
+                "missing_manifest",
+                "artifact",
+                &artifact.artifact_path,
+                "artifact 缺少 manifest.json".to_string(),
+                "正式 parser contract 要求每个 artifact 都提供 manifest.json。".to_string(),
+                Some(artifact.artifact_path.clone()),
+            ));
+        }
+        if artifact.status == "stale" {
+            findings.push(contract_finding(
+                "p1",
+                "stale_artifact",
+                "artifact",
+                &artifact.artifact_path,
+                "artifact source hash 已过期".to_string(),
+                "source_sha256 与 manifest 不一致，必须重新解析后再 ingest。".to_string(),
+                artifact.manifest_path.clone(),
+            ));
+        }
+        if artifact.manifest_path.is_some() && artifact.schema_version.is_none() {
+            findings.push(contract_finding(
+                "p2",
+                "missing_manifest_schema_version",
+                "artifact",
+                &artifact.artifact_path,
+                "manifest 缺少 schema_version".to_string(),
+                "缺少 schema_version 会让未来 migration 和 lint 难以判断 contract 版本。"
+                    .to_string(),
+                artifact.manifest_path.clone(),
+            ));
+        }
+        if artifact.manifest_path.is_some() && artifact.chunks_path.is_none() {
+            findings.push(contract_finding(
+                "p1",
+                "missing_chunks",
+                "artifact",
+                &artifact.artifact_path,
+                "artifact 缺少 chunks.jsonl".to_string(),
+                "claim/evidence path 依赖 chunk_id，不能只保留 combined.md。".to_string(),
+                artifact.manifest_path.clone(),
+            ));
+        }
+        if artifact.manifest_path.is_some() && !artifact.contract_valid {
+            findings.push(contract_finding(
+                "p1",
+                "invalid_artifact_hash",
+                "artifact",
+                &artifact.artifact_path,
+                "artifact hash 与 manifest 不一致".to_string(),
+                "manifest.artifact_sha256 必须匹配当前 combined.md。".to_string(),
+                artifact.manifest_path.clone(),
+            ));
+        }
+        if artifact.chunk_count == 0 && artifact.chunks_path.is_some() {
+            findings.push(contract_finding(
+                "p2",
+                "empty_chunks",
+                "artifact",
+                &artifact.artifact_path,
+                "chunks.jsonl 为空".to_string(),
+                "没有 chunk row 时，claim 无法绑定 evidence anchor。".to_string(),
+                artifact.chunks_path.clone(),
+            ));
+        }
+        if artifact.anchors_pages
+            || artifact.anchors_tables
+            || artifact.anchors_figures
+            || artifact.anchors_equations
+        {
+            continue;
+        }
+        if artifact
+            .limitations
+            .iter()
+            .all(|item| !item.contains("line anchors"))
+        {
+            findings.push(contract_finding(
+                "p3",
+                "limited_anchor_coverage",
+                "artifact",
+                &artifact.artifact_path,
+                "artifact 只有有限 evidence anchors".to_string(),
+                "建议 parser 明确写出 pages/tables/figures/equations 的覆盖情况和 limitations。"
+                    .to_string(),
+                artifact.manifest_path.clone(),
+            ));
+        }
+    }
+
+    for job in jobs {
+        if job.inputs.is_empty() {
+            findings.push(contract_finding(
+                "p2",
+                "job_missing_inputs",
+                "job",
+                &job.job_id,
+                "ingest job 缺少 inputs".to_string(),
+                "queue row 必须记录输入对象，方便恢复和审计。".to_string(),
+                job.log_path.clone(),
+            ));
+        }
+        if job.status == "failed" && job.last_error.is_none() {
+            findings.push(contract_finding(
+                "p2",
+                "failed_job_missing_error",
+                "job",
+                &job.job_id,
+                "failed job 缺少 last_error".to_string(),
+                "失败状态必须能解释原因，不能只显示 failed。".to_string(),
+                job.log_path.clone(),
+            ));
+        }
+        if job.attempt > job.max_attempts {
+            findings.push(contract_finding(
+                "p1",
+                "job_attempt_exceeded",
+                "job",
+                &job.job_id,
+                "job retry 次数超过上限".to_string(),
+                format!(
+                    "attempt {} > max_attempts {}",
+                    job.attempt, job.max_attempts
+                ),
+                job.log_path.clone(),
+            ));
+        }
+    }
+
+    for claim in claim_ledger_items(vault) {
+        if matches!(claim.verdict.as_str(), "supported" | "needs_review")
+            && (claim.evidence_quote.is_none() || claim.evidence_hash.is_none())
+        {
+            findings.push(contract_finding(
+                "p1",
+                "claim_missing_evidence",
+                "claim",
+                &claim.claim_id,
+                "claim 缺少 evidence quote/hash".to_string(),
+                "长期 synthesis 依赖的 claim 必须有短 quote 和 hash。".to_string(),
+                Some("claims/claims.jsonl".to_string()),
+            ));
+        }
+        if claim.source_uuid.is_some()
+            && claim
+                .source_uuid
+                .as_ref()
+                .is_some_and(|source_uuid| !known_sources.contains(source_uuid))
+        {
+            findings.push(contract_finding(
+                "p2",
+                "claim_unknown_source",
+                "claim",
+                &claim.claim_id,
+                "claim 指向未知 source_uuid".to_string(),
+                "Claim Ledger 与 source registry 不一致。".to_string(),
+                Some("claims/claims.jsonl".to_string()),
+            ));
+        }
+    }
+
+    for edge in impact_edges {
+        if edge.from_id.is_empty() || edge.to_id.is_empty() {
+            findings.push(contract_finding(
+                "p2",
+                "broken_impact_edge",
+                "impact_edge",
+                &edge.edge_id,
+                "impact graph 存在空节点".to_string(),
+                "dependency edge 必须有完整 from_id/to_id。".to_string(),
+                Some("_state/impact-graph.jsonl".to_string()),
+            ));
+        }
+    }
+
+    findings.sort_by(|a, b| a.severity.cmp(&b.severity).then(a.kind.cmp(&b.kind)));
+    findings
+}
+
+fn actions_for_lint_findings(findings: &[ContractFinding]) -> Vec<DashboardAction> {
+    findings
+        .iter()
+        .filter(|finding| matches!(finding.severity.as_str(), "p0" | "p1"))
+        .map(|finding| DashboardAction {
+            action_id: format!("act-{}", finding.finding_id),
+            kind: "lint_error".to_string(),
+            severity: finding.severity.clone(),
+            title: finding.title.clone(),
+            body: finding.detail.clone(),
+            reason: finding.kind.clone(),
+            status: "open".to_string(),
+            recommended_action: "run_ingest_lint".to_string(),
+            primary_object_type: finding.object_type.clone(),
+            primary_object_id: finding.object_id.clone(),
+            affected_objects: vec![DashboardAffectedObject {
+                object_type: finding.object_type.clone(),
+                object_id: finding.object_id.clone(),
+                status: finding.severity.clone(),
+            }],
+            links: finding
+                .path
+                .as_ref()
+                .map(|path| {
+                    vec![DashboardLink {
+                        label: "object".to_string(),
+                        path: path.clone(),
+                    }]
+                })
+                .unwrap_or_default(),
+        })
+        .collect()
+}
+
+fn write_lint_findings(vault: &Path, findings: &[ContractFinding]) -> Result<(), String> {
+    write_jsonl(&vault.join("_state").join("lint-findings.jsonl"), findings)?;
+    write_jsonl(
+        &vault.join("_state").join("desktop-lint-findings.jsonl"),
+        findings,
+    )
+}
+
 fn write_ingest_plan(vault: &Path, entries: Vec<IngestPlanEntry>) -> Result<IngestPlan, String> {
     let summary = IngestPlanSummary {
         total: entries.len(),
@@ -2255,10 +3050,18 @@ fn write_ingest_plan(vault: &Path, entries: Vec<IngestPlanEntry>) -> Result<Inge
         registry,
         artifacts,
         jobs,
-        actions,
+        mut actions,
         impact_edges,
-    } = build_ingest_contracts(vault, &entries);
+    } = build_ingest_contracts(vault, &entries)?;
+    let lint_findings = lint_ingest_contracts(vault, &registry, &artifacts, &jobs, &impact_edges);
+    actions.extend(actions_for_lint_findings(&lint_findings));
+    apply_dashboard_action_overrides(vault, &mut actions);
     let state = vault.join("_state");
+    write_jsonl(&state.join("artifacts.jsonl"), &artifacts)?;
+    write_ingest_jobs(vault, &jobs)?;
+    write_jsonl(&state.join("actions.jsonl"), &actions)?;
+    write_jsonl(&state.join("impact-graph.jsonl"), &impact_edges)?;
+    write_lint_findings(vault, &lint_findings)?;
     write_jsonl(&state.join("desktop-source-registry.jsonl"), &registry)?;
     merge_runtime_source_registry(vault, &registry)?;
     write_jsonl(&state.join("desktop-artifacts.jsonl"), &artifacts)?;
@@ -2277,6 +3080,7 @@ fn write_ingest_plan(vault: &Path, entries: Vec<IngestPlanEntry>) -> Result<Inge
         jobs,
         actions,
         impact_edges,
+        lint_findings,
     };
     let rendered = serde_json::to_string_pretty(&plan)
         .map_err(|e| format!("failed to serialize ingest plan: {e}"))?;
@@ -2350,6 +3154,12 @@ fn plan_ingest(vault_path: String) -> Result<IngestPlan, String> {
 }
 
 #[tauri::command]
+fn run_ingest_lint(vault_path: String) -> Result<Vec<ContractFinding>, String> {
+    let plan = plan_ingest(vault_path)?;
+    Ok(plan.lint_findings)
+}
+
+#[tauri::command]
 fn set_dashboard_action_status(
     vault_path: String,
     action_id: String,
@@ -2386,7 +3196,10 @@ fn set_ingest_job_status(
     )?;
     let vault = PathBuf::from(vault_path);
     require_existing_dir(&vault, "vault")?;
-    append_status_override(&vault, "desktop-job-overrides.jsonl", &job_id, &status)?;
+    if load_ingest_jobs(&vault).is_empty() {
+        let _ = plan_ingest(to_display(&vault))?;
+    }
+    update_ingest_job_record(&vault, &job_id, &status, None, None)?;
     plan_ingest(to_display(&vault))
 }
 
@@ -2458,13 +3271,15 @@ fn set_claim_verdict(
 }
 
 fn stage_text_artifacts(vault: &Path) -> Result<Vec<String>, String> {
+    let _ = plan_ingest(to_display(vault))?;
     let cached_hashes = load_cached_ingest_hashes(vault);
     let published_keys = load_published_ingest_keys(vault);
     let cancelled = cancelled_job_ids(vault);
     let mut staged = Vec::new();
     for source in collect_ingest_inputs(vault) {
         let entry = plan_entry_for_source(vault, &source, &cached_hashes, &published_keys)?;
-        if cancelled.contains(&job_id_for_source_hash(&entry.sha256)) {
+        let source_id = source_id_for_hash(vault, &entry.sha256);
+        if cancelled.contains(&job_id_for_source_id(source_id.as_deref(), &entry.sha256)) {
             continue;
         }
         if entry.status != "stageable" {
@@ -2477,7 +3292,14 @@ fn stage_text_artifacts(vault: &Path) -> Result<Vec<String>, String> {
             .ok_or_else(|| "missing artifact path for stageable source".to_string())?;
         let content = fs::read_to_string(&source)
             .map_err(|e| format!("failed to read {}: {e}", source.display()))?;
-        write_text_artifact_contract(vault, &source, &artifact, &entry.sha256, &content)?;
+        write_text_artifact_contract(
+            vault,
+            &source,
+            &artifact,
+            &entry.sha256,
+            source_id.as_deref(),
+            &content,
+        )?;
         append_cache_row(vault, &source, &entry.sha256, &artifact)?;
         staged.push(to_display(&artifact));
     }
@@ -2574,7 +3396,8 @@ fn record_published_ingest(
     let mut published_sources = Vec::new();
 
     for entry in &plan.entries {
-        if cancelled.contains(&job_id_for_source_hash(&entry.sha256)) {
+        let source_id = source_id_for_hash(vault, &entry.sha256);
+        if cancelled.contains(&job_id_for_source_id(source_id.as_deref(), &entry.sha256)) {
             continue;
         }
         if entry.status != "ready" && entry.status != "cached" {
@@ -2650,12 +3473,16 @@ fn run_ingest_pipeline(
     let runnable = initial_plan
         .entries
         .iter()
-        .filter(|entry| !cancelled.contains(&job_id_for_source_hash(&entry.sha256)))
+        .filter(|entry| {
+            let source_id = source_id_for_hash(&vault, &entry.sha256);
+            !cancelled.contains(&job_id_for_source_id(source_id.as_deref(), &entry.sha256))
+        })
         .filter(|entry| matches!(entry.status.as_str(), "ready" | "stageable" | "cached"))
         .count();
     if runnable == 0 {
         let cancelled_runnable = initial_plan.entries.iter().any(|entry| {
-            cancelled.contains(&job_id_for_source_hash(&entry.sha256))
+            let source_id = source_id_for_hash(&vault, &entry.sha256);
+            cancelled.contains(&job_id_for_source_id(source_id.as_deref(), &entry.sha256))
                 && matches!(entry.status.as_str(), "ready" | "stageable" | "cached")
         });
         if cancelled_runnable {
@@ -2674,6 +3501,16 @@ fn run_ingest_pipeline(
     }
     let staged_artifacts = stage_text_artifacts(&vault)?;
     let final_plan = plan_ingest(to_display(&vault))?;
+    let runnable_job_ids = final_plan
+        .entries
+        .iter()
+        .filter(|entry| matches!(entry.status.as_str(), "ready" | "cached"))
+        .filter_map(|entry| {
+            let source_id = source_id_for_hash(&vault, &entry.sha256);
+            let job_id = job_id_for_source_id(source_id.as_deref(), &entry.sha256);
+            (!cancelled.contains(&job_id)).then_some(job_id)
+        })
+        .collect::<Vec<_>>();
 
     let sequence = [
         "discover",
@@ -2692,6 +3529,9 @@ fn run_ingest_pipeline(
         .join(format!("{id}.log"));
     let mut logs = Vec::new();
     let mut exit_code = 0;
+    for job_id in &runnable_job_ids {
+        let _ = update_ingest_job_record(&vault, job_id, "running", None, None);
+    }
     for kind in sequence {
         let log = run_runtime_task(
             &vault,
@@ -2703,6 +3543,18 @@ fn run_ingest_pipeline(
         )?;
         if log.exit_code != 0 {
             exit_code = log.exit_code;
+            for job_id in &runnable_job_ids {
+                let _ = update_ingest_job_record(
+                    &vault,
+                    job_id,
+                    "failed",
+                    Some(format!(
+                        "runtime step {} failed with exit {}",
+                        log.kind, log.exit_code
+                    )),
+                    Some(log.log_path.clone()),
+                );
+            }
             logs.push(log);
             break;
         }
@@ -2711,6 +3563,15 @@ fn run_ingest_pipeline(
 
     let published_sources = if exit_code == 0 {
         let sources = record_published_ingest(&vault, &final_plan, &id, &log_path)?;
+        for job_id in &runnable_job_ids {
+            let _ = update_ingest_job_record(
+                &vault,
+                job_id,
+                "succeeded",
+                None,
+                Some(to_display(&log_path)),
+            );
+        }
         let _ = plan_ingest(to_display(&vault))?;
         sources
     } else {
@@ -2925,8 +3786,81 @@ mod tests {
                 .status,
             "cancelled"
         );
+        assert!(vault.join("_state").join("ingest-jobs.jsonl").is_file());
+        assert!(read_text(&vault.join("_state").join("ingest-jobs.jsonl")).contains("cancelled"));
         let staged = stage_text_artifacts(&vault).expect("stage text artifacts");
         assert!(staged.is_empty());
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn source_ids_are_stable_across_rename_and_duplicates() {
+        let vault = test_vault("stable-source-id");
+        let source = vault.join("raw").join("alpha.md");
+        write_text(&source, "# Same Source\n").expect("write source");
+
+        let first_plan = plan_ingest(to_display(&vault)).expect("plan source");
+        let first_id = first_plan.registry[0]
+            .source_id
+            .clone()
+            .expect("source id allocated");
+        assert_eq!(first_id, "LLM-0001");
+
+        let renamed = vault.join("raw").join("zeta.md");
+        fs::rename(&source, &renamed).expect("rename source");
+        let second_plan = plan_ingest(to_display(&vault)).expect("plan renamed source");
+        let renamed_entry = second_plan
+            .registry
+            .iter()
+            .find(|entry| entry.source_path.ends_with("zeta.md"))
+            .expect("renamed entry");
+        assert_eq!(renamed_entry.source_id.as_deref(), Some(first_id.as_str()));
+
+        let duplicate = vault.join("raw").join("duplicate.md");
+        write_text(&duplicate, "# Same Source\n").expect("write duplicate source");
+        let duplicate_plan = plan_ingest(to_display(&vault)).expect("plan duplicate source");
+        let duplicates = duplicate_plan
+            .registry
+            .iter()
+            .filter(|entry| entry.source_id.as_deref() == Some(first_id.as_str()))
+            .count();
+        assert_eq!(duplicates, 2);
+        assert!(duplicate_plan
+            .registry
+            .iter()
+            .any(|entry| entry.duplicate_of.as_deref() == Some(first_id.as_str())));
+        assert!(read_text(&vault.join("_state").join("source-registry.jsonl")).contains(&first_id));
+
+        write_text(&renamed, "# Same Source\nupdated\n").expect("mutate same source path");
+        let changed_plan = plan_ingest(to_display(&vault)).expect("plan changed source");
+        let changed_entry = changed_plan
+            .registry
+            .iter()
+            .find(|entry| entry.source_path.ends_with("zeta.md"))
+            .expect("changed entry");
+        assert_eq!(changed_entry.source_id.as_deref(), Some(first_id.as_str()));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn contract_lint_writes_canonical_findings() {
+        let vault = test_vault("contract-lint");
+        let source = vault.join("raw").join("paper.pdf");
+        fs::write(&source, b"pdf bytes").expect("write pdf");
+        let source_hash = sha256_file(&source).expect("source hash");
+        let artifact = artifact_for_source(&vault, &source, &source_hash);
+        write_text(&artifact, "parsed without manifest\n").expect("write legacy artifact");
+
+        let findings = run_ingest_lint(to_display(&vault)).expect("run lint");
+        assert!(findings
+            .iter()
+            .any(|finding| finding.kind == "missing_manifest"));
+        assert!(vault.join("_state").join("lint-findings.jsonl").is_file());
+        assert!(vault.join("_state").join("artifacts.jsonl").is_file());
+        assert!(vault.join("_state").join("actions.jsonl").is_file());
+        assert!(vault.join("_state").join("impact-graph.jsonl").is_file());
 
         let _ = fs::remove_dir_all(vault);
     }
@@ -3090,6 +4024,7 @@ pub fn run() {
             repair_obsidian_templates,
             import_to_inbox,
             plan_ingest,
+            run_ingest_lint,
             set_dashboard_action_status,
             set_ingest_job_status,
             list_claim_ledger,
