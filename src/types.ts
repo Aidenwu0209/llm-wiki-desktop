@@ -111,31 +111,50 @@ export type DashboardAction = {
 export type DesktopIngestJob = {
   jobId: string;
   sourceUuid: string;
+  sourceId?: string | null;
   sourcePath: string;
   fileName: string;
+  kind: string;
   artifactPath?: string | null;
   status: string;
   currentStep: string;
   nextAction: string;
   reason: string;
+  attempt: number;
+  maxAttempts: number;
+  startedAt?: string | null;
+  endedAt?: string | null;
+  lastError?: string | null;
+  logPath?: string | null;
+  inputs: string[];
+  outputs: string[];
 };
 
 export type DesktopRegistryEntry = {
   sourceUuid: string;
   sourceId?: string | null;
   duplicateOf?: string | null;
+  rawPath: string;
+  canonicalPath: string;
   sourcePath: string;
   sourceSha256: string;
+  mime: string;
   artifactPath?: string | null;
   artifactSha256?: string | null;
   parser?: string | null;
   parserVersion?: string | null;
   status: string;
+  sourcePage?: string | null;
   lastError?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  publishedAt?: string | null;
 };
 
 export type ArtifactContractSummary = {
   sourcePath: string;
+  sourceId?: string | null;
+  sourceUuid: string;
   artifactPath: string;
   manifestPath?: string | null;
   chunksPath?: string | null;
@@ -144,9 +163,11 @@ export type ArtifactContractSummary = {
   parseLogPath?: string | null;
   parser?: string | null;
   parserVersion?: string | null;
+  schemaVersion?: string | null;
   sourceSha256?: string | null;
   artifactSha256?: string | null;
   status: string;
+  contractValid: boolean;
   chunkCount: number;
   anchorsLines: boolean;
   anchorsPages: boolean;
@@ -154,6 +175,7 @@ export type ArtifactContractSummary = {
   anchorsFigures: boolean;
   anchorsEquations: boolean;
   limitations: string[];
+  lintErrors: string[];
 };
 
 export type ImpactEdge = {
@@ -177,6 +199,19 @@ export type IngestPlan = {
   jobs: DesktopIngestJob[];
   actions: DashboardAction[];
   impactEdges: ImpactEdge[];
+  lintFindings: ContractFinding[];
+};
+
+export type ContractFinding = {
+  findingId: string;
+  severity: "p0" | "p1" | "p2" | "p3" | string;
+  kind: string;
+  objectType: string;
+  objectId: string;
+  title: string;
+  detail: string;
+  status: string;
+  path?: string | null;
 };
 
 export type ClaimLedgerItem = {
