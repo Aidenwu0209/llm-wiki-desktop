@@ -65,6 +65,7 @@ import type {
 
 const runtimeActions = [
   { id: "lint", label: "运行 lint", icon: ListChecks },
+  { id: "parse_pdfs", label: "本地解析 PDFs", icon: FileInput },
   { id: "obsidian_setup", label: "Obsidian setup", icon: SquareStack },
   { id: "status_dashboard", label: "刷新 dashboard", icon: RefreshCw },
   { id: "discover", label: "Source discovery", icon: Search },
@@ -72,6 +73,7 @@ const runtimeActions = [
   { id: "semantic_qa", label: "Semantic QA", icon: ShieldCheck },
   { id: "science_review", label: "Science review", icon: AlertTriangle },
   { id: "concept_revision_preview", label: "Concept preview", icon: Database },
+  { id: "concept_revision_apply", label: "Concept apply", icon: Wrench },
 ];
 
 const pipeline = [
@@ -96,6 +98,7 @@ const initialDesktopSettings: DesktopSettings = {
   layoutParsingApiUrl: "",
   layoutParsingTokenPresent: false,
   cloudParsingAllowed: false,
+  defaultPdfParser: "auto",
   defaultIngestMode: "inbox_only",
   defaultObsidianProfile: "minimal",
   retryCount: 3,
@@ -122,6 +125,9 @@ function runtimeSettings(settings: DesktopSettings): RuntimeSettings {
     pythonPath: settings.pythonPath || "python3",
     obsidianProfile: settings.defaultObsidianProfile as RuntimeSettings["obsidianProfile"],
     skipDownloads: settings.skipObsidianPluginDownloads,
+    pdfParser: settings.defaultPdfParser as RuntimeSettings["pdfParser"],
+    cloudParsingAllowed: settings.cloudParsingAllowed,
+    layoutParsingApiUrl: settings.layoutParsingApiUrl,
   };
 }
 
@@ -132,9 +138,11 @@ function pipelineState(index: number, status: VaultStatus | null, plan: IngestPl
   const blocked = plan?.summary.blocked ?? 0;
   const cached = plan?.summary.cached ?? 0;
   const published = plan?.summary.published ?? 0;
-  const runnable = ready + stageable + cached;
+  const parseable = plan?.entries.filter((entry) => entry.action === "parse_required" && entry.fileName.toLowerCase().endsWith(".pdf")).length ?? 0;
+  const runnable = ready + stageable + cached + parseable;
   if (index === 0) return inbox > 0 ? "ready" : "waiting";
   if (index === 1) {
+    if (blocked > 0 && parseable > 0) return "local parse ready";
     if (blocked > 0 && runnable === 0) return "parse blocked";
     if (runnable > 0) return "ready";
     if (published > 0) return "published";
@@ -164,7 +172,7 @@ function App() {
   const [reviewFilter, setReviewFilter] = useState("open");
   const [preserveFolders, setPreserveFolders] = useState(true);
   const [dragActive, setDragActive] = useState(false);
-  const [writebackTarget, setWritebackTarget] = useState("concepts/");
+  const [writebackTarget, setWritebackTarget] = useState("reviews/query-writeback/research-insight.md");
   const [writebackTitle, setWritebackTitle] = useState("");
   const [writebackContent, setWritebackContent] = useState("");
   const [diagnosticPath, setDiagnosticPath] = useState<string | null>(null);
@@ -182,6 +190,7 @@ function App() {
   const tone = statusTone(status);
   const planned = ingestPlan?.summary;
   const runnableIngest = (planned?.ready ?? 0) + (planned?.stageable ?? 0) + (planned?.cached ?? 0);
+  const parseablePdfs = ingestPlan?.entries.filter((entry) => entry.action === "parse_required" && entry.fileName.toLowerCase().endsWith(".pdf")).length ?? 0;
   const actions = ingestPlan?.actions ?? [];
   const jobs = ingestPlan?.jobs ?? [];
   const artifacts = ingestPlan?.artifacts ?? [];
@@ -604,7 +613,12 @@ function App() {
             <label>Timeout<input type="number" min={60} value={desktopSettings.timeoutSeconds} onChange={(event) => setDesktopSettings((current) => ({ ...current, timeoutSeconds: Number(event.target.value) || 60 }))} /></label>
           </div>
           <input value={desktopSettings.layoutParsingApiUrl} onChange={(event) => setDesktopSettings((current) => ({ ...current, layoutParsingApiUrl: event.target.value }))} placeholder="Layout parsing API URL" />
-          <p className="note">Token: {desktopSettings.layoutParsingTokenPresent ? "环境变量已配置" : "未检测到"} · 云解析会发送文档内容</p>
+          <select value={desktopSettings.defaultPdfParser} onChange={(event) => setDesktopSettings((current) => ({ ...current, defaultPdfParser: event.target.value }))}>
+            <option value="auto">PDF parser: auto / local-first</option>
+            <option value="local-text">PDF parser: local-text</option>
+            <option value="layout-api">PDF parser: layout-api</option>
+          </select>
+          <p className="note">Token: {desktopSettings.layoutParsingTokenPresent ? "环境变量已配置" : "未检测到"} · auto/local-text 不上传 PDF；layout-api 会发送文档内容</p>
           <label className="check-row">
             <input type="checkbox" checked={desktopSettings.cloudParsingAllowed} onChange={(event) => setDesktopSettings((current) => ({ ...current, cloudParsingAllowed: event.target.checked }))} />
             允许云解析
@@ -679,7 +693,7 @@ function App() {
         <section className="action-strip">
           <button onClick={handlePlanIngest} disabled={!vaultPath || busy === "plan_ingest"}><ListChecks size={16} />规划 ingest</button>
           <button onClick={handleIngestLint} disabled={!vaultPath || busy === "ingest_lint"}><ShieldCheck size={16} />合约 lint</button>
-          <button onClick={handleIngestPipeline} disabled={!vaultPath || busy === "ingest_pipeline" || runnableIngest === 0}><Play size={16} />运行 ingest pipeline</button>
+          <button onClick={handleIngestPipeline} disabled={!vaultPath || busy === "ingest_pipeline" || (runnableIngest + parseablePdfs) === 0}><Play size={16} />运行 ingest pipeline</button>
           <button onClick={handleRepairTemplates} disabled={!vaultPath || busy === "repair_templates"}><Wrench size={16} />修复模板</button>
           <button onClick={handleDiagnostic} disabled={!vaultPath || busy === "diagnostic"}><TerminalSquare size={16} />诊断 bundle</button>
           {runtimeActions.map((action) => {
@@ -799,10 +813,10 @@ function App() {
               <GitCompare size={18} />
             </div>
             <div className="writeback-form">
-              <input value={writebackTarget} onChange={(event) => setWritebackTarget(event.target.value)} placeholder="concepts/example.md" />
+              <input value={writebackTarget} onChange={(event) => setWritebackTarget(event.target.value)} placeholder="reviews/query-writeback/example.md 或 concepts/example.md" />
               <input value={writebackTitle} onChange={(event) => setWritebackTitle(event.target.value)} placeholder="proposal title" />
-              <textarea value={writebackContent} onChange={(event) => setWritebackContent(event.target.value)} placeholder="写回后的完整 Markdown 内容；创建 proposal 后才可审批应用。" />
-              <button onClick={handleCreateWriteback} disabled={!vaultPath || busy === "writeback_proposal"}><GitCompare size={16} />生成 diff proposal</button>
+              <textarea value={writebackContent} onChange={(event) => setWritebackContent(event.target.value)} placeholder="proposal 内容；默认写入 reviews/query-writeback/，不静默修改 source/concept。" />
+              <button onClick={handleCreateWriteback} disabled={!vaultPath || busy === "writeback_proposal"}><GitCompare size={16} />生成 review proposal</button>
             </div>
           </section>
 

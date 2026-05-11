@@ -160,6 +160,9 @@ export function runIngestPipeline(
     pythonPath: settings.pythonPath,
     obsidianProfile: settings.obsidianProfile,
     skipDownloads: settings.skipDownloads,
+    pdfParser: settings.pdfParser,
+    cloudParsingAllowed: settings.cloudParsingAllowed,
+    layoutParsingApiUrl: settings.layoutParsingApiUrl,
   });
 }
 
@@ -175,6 +178,9 @@ export function runRuntimeCommand(
     kind,
     obsidianProfile: settings.obsidianProfile,
     skipDownloads: settings.skipDownloads,
+    pdfParser: settings.pdfParser,
+    cloudParsingAllowed: settings.cloudParsingAllowed,
+    layoutParsingApiUrl: settings.layoutParsingApiUrl,
   });
 }
 
