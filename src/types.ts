@@ -44,6 +44,9 @@ export type RuntimeSettings = {
   pythonPath: string;
   obsidianProfile: "minimal" | "research" | "full";
   skipDownloads: boolean;
+  pdfParser: "auto" | "local-text" | "layout-api";
+  cloudParsingAllowed: boolean;
+  layoutParsingApiUrl: string;
 };
 
 export type TaskLog = {
@@ -96,6 +99,7 @@ export type DesktopSettings = {
   layoutParsingApiUrl: string;
   layoutParsingTokenPresent: boolean;
   cloudParsingAllowed: boolean;
+  defaultPdfParser: "auto" | "local-text" | "layout-api" | string;
   defaultIngestMode: "inbox_only" | "enqueue_after_import" | string;
   defaultObsidianProfile: "minimal" | "research" | "full" | string;
   retryCount: number;
@@ -322,6 +326,7 @@ export type WritebackProposal = {
 
 export type IngestPipelineResult = {
   id: string;
+  parsedArtifacts: string[];
   stagedArtifacts: string[];
   publishedSources: string[];
   logs: TaskLog[];

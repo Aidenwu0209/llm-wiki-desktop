@@ -116,6 +116,8 @@ struct DesktopSettings {
     layout_parsing_api_url: String,
     layout_parsing_token_present: bool,
     cloud_parsing_allowed: bool,
+    #[serde(default = "default_pdf_parser")]
+    default_pdf_parser: String,
     default_ingest_mode: String,
     default_obsidian_profile: String,
     retry_count: usize,
@@ -177,6 +179,7 @@ struct IngestContracts {
 #[serde(rename_all = "camelCase")]
 struct IngestPipelineResult {
     id: String,
+    parsed_artifacts: Vec<String>,
     staged_artifacts: Vec<String>,
     published_sources: Vec<String>,
     logs: Vec<TaskLog>,
@@ -523,6 +526,10 @@ related_concepts: []
 ## 待确认问题
 "#;
 
+fn default_pdf_parser() -> String {
+    "auto".to_string()
+}
+
 impl Default for DesktopSettings {
     fn default() -> Self {
         Self {
@@ -539,6 +546,7 @@ impl Default for DesktopSettings {
                     .filter(|value| !value.trim().is_empty())
                     .is_some(),
             cloud_parsing_allowed: false,
+            default_pdf_parser: default_pdf_parser(),
             default_ingest_mode: "inbox_only".to_string(),
             default_obsidian_profile: "minimal".to_string(),
             retry_count: 3,
@@ -1153,6 +1161,7 @@ fn latest_modified_time(root: &Path) -> Option<String> {
         "concepts",
         "drafts",
         "qa-reports",
+        "reviews/query-writeback",
         "claims",
         "_state",
     ] {
@@ -2256,7 +2265,7 @@ fn write_text_artifact_contract(
 
 fn parser_hint_for_source(source: &Path, artifact: &Path) -> String {
     format!(
-        "pdf_to_markdown.py \"{}\" --output \"{}\"",
+        "pdf_to_markdown.py \"{}\" --output \"{}\" --parser auto --no-download-images",
         source.display(),
         artifact
             .parent()
@@ -3906,6 +3915,7 @@ fn load_desktop_settings(vault_path: String) -> Result<DesktopSettings, String> 
     {
         settings.layout_parsing_token_present = true;
     }
+    settings.default_pdf_parser = selected_pdf_parser(&settings.default_pdf_parser)?;
     Ok(settings)
 }
 
@@ -3925,6 +3935,7 @@ fn save_desktop_settings(
             .ok()
             .filter(|value| !value.trim().is_empty())
             .is_some();
+    settings.default_pdf_parser = selected_pdf_parser(&settings.default_pdf_parser)?;
     let rendered = serde_json::to_string_pretty(&settings)
         .map_err(|e| format!("failed to serialize desktop settings: {e}"))?;
     write_text(&desktop_settings_path(&vault), &(rendered + "\n"))?;
@@ -4366,6 +4377,38 @@ fn resolve_vault_target(vault: &Path, target_path: &str) -> Result<PathBuf, Stri
     )
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WritebackTargetKind {
+    Concept,
+    ReviewProposal,
+}
+
+fn writeback_target_kind(vault: &Path, target: &Path) -> Result<WritebackTargetKind, String> {
+    let target_resolved = target.canonicalize().unwrap_or_else(|_| target.to_path_buf());
+    let concepts_root = vault.join("concepts");
+    let concepts_resolved = concepts_root
+        .canonicalize()
+        .unwrap_or(concepts_root);
+    if target_resolved.starts_with(&concepts_resolved) {
+        return Ok(WritebackTargetKind::Concept);
+    }
+    let review_root = vault.join("reviews").join("query-writeback");
+    let review_resolved = review_root
+        .canonicalize()
+        .unwrap_or(review_root);
+    if target_resolved.starts_with(&review_resolved) {
+        return Ok(WritebackTargetKind::ReviewProposal);
+    }
+    Err("writeback target must be under concepts/ or reviews/query-writeback/".to_string())
+}
+
+fn query_writeback_proposal_document(title: &str, content: &str, created_at: &str) -> String {
+    format!(
+        "# Query Writeback Proposal\n\n- created_at: {created_at}\n- status: proposed\n- writeback_applied: false\n- title: {title}\n\n## Proposed Content\n\n{}\n\n## Approval Gate\n\n- This proposal is review evidence only.\n- Do not copy it into source or concept pages until a human explicitly approves the writeback target and content.\n",
+        content.trim()
+    )
+}
+
 fn simple_diff(old: &str, new: &str) -> String {
     if old == new {
         return "(no textual changes)\n".to_string();
@@ -4449,8 +4492,17 @@ fn create_writeback_proposal(
     if !matches!(extension.as_str(), "md" | "markdown" | "txt") {
         return Err("writeback target must be Markdown or text".to_string());
     }
+    let target_kind = writeback_target_kind(&vault, &target)?;
+    if target_kind == WritebackTargetKind::Concept && !target.is_file() {
+        return Err("concept writeback target must already exist".to_string());
+    }
     let old = read_text(&target);
     let now = Local::now().to_rfc3339();
+    let proposal_content = if target_kind == WritebackTargetKind::ReviewProposal {
+        query_writeback_proposal_document(&title, &content, &now)
+    } else {
+        content
+    };
     let proposal_id = format!(
         "wb-{}",
         short_hash(&sha256_text(&format!("{}:{now}", target.display())))
@@ -4460,8 +4512,8 @@ fn create_writeback_proposal(
         target_path: rel_path(&vault, &target),
         title,
         status: "proposed".to_string(),
-        diff: simple_diff(&old, &content),
-        content,
+        diff: simple_diff(&old, &proposal_content),
+        content: proposal_content,
         created_at: now.clone(),
         updated_at: now,
         applied_at: None,
@@ -4539,6 +4591,7 @@ fn apply_writeback_proposal(
         return Err("writeback proposal must be approved before apply".to_string());
     }
     let target = resolve_vault_target(&vault, &proposal.target_path)?;
+    let _target_kind = writeback_target_kind(&vault, &target)?;
     write_text(&target, &proposal.content)?;
     let log_path = vault
         .join("log-archive")
@@ -4671,9 +4724,32 @@ fn run_runtime_command(
     kind: String,
     obsidian_profile: String,
     skip_downloads: bool,
+    pdf_parser: String,
+    cloud_parsing_allowed: bool,
+    layout_parsing_api_url: String,
 ) -> Result<TaskLog, String> {
     let vault = PathBuf::from(vault_path);
     require_existing_dir(&vault, "vault")?;
+    if kind == "parse_pdfs" {
+        let plan = plan_ingest(to_display(&vault))?;
+        let (_artifacts, mut logs) = parse_pdf_artifacts(
+            &vault,
+            &plan,
+            runtime_path.as_deref(),
+            &python_path,
+            &pdf_parser,
+            cloud_parsing_allowed,
+            &layout_parsing_api_url,
+        )?;
+        if logs.is_empty() {
+            return synthetic_task_log(
+                &vault,
+                "parse_pdfs",
+                "no parse_required PDF artifacts found\n",
+            );
+        }
+        return Ok(logs.remove(0));
+    }
     run_runtime_task(
         &vault,
         runtime_path.as_deref(),
@@ -4682,6 +4758,31 @@ fn run_runtime_command(
         &obsidian_profile,
         skip_downloads,
     )
+}
+
+fn synthetic_task_log(vault: &Path, kind: &str, stdout: &str) -> Result<TaskLog, String> {
+    let started_at = Local::now().to_rfc3339();
+    let ended_at = Local::now().to_rfc3339();
+    let id = format!("{}-{}", Local::now().format("%Y%m%d-%H%M%S"), kind);
+    let log_path = vault
+        .join("log-archive")
+        .join("desktop")
+        .join(format!("{id}.log"));
+    let rendered = format!(
+        "# Runtime Task Log\n\nkind: {kind}\nstarted_at: {started_at}\nended_at: {ended_at}\nexit_code: 0\ncommand: synthetic:{kind}\n\n## stdout\n\n{stdout}\n\n## stderr\n\n\n",
+    );
+    write_text(&log_path, &rendered)?;
+    Ok(TaskLog {
+        id,
+        kind: kind.to_string(),
+        command: vec![format!("synthetic:{kind}")],
+        started_at,
+        ended_at,
+        exit_code: 0,
+        stdout: stdout.to_string(),
+        stderr: String::new(),
+        log_path: to_display(&log_path),
+    })
 }
 
 fn run_runtime_task(
@@ -4737,6 +4838,152 @@ fn run_runtime_task(
         stderr,
         log_path: to_display(&log_path),
     })
+}
+
+fn selected_pdf_parser(value: &str) -> Result<String, String> {
+    match value.trim() {
+        "" | "auto" => Ok("auto".to_string()),
+        "local-text" => Ok("local-text".to_string()),
+        "layout-api" => Ok("layout-api".to_string()),
+        other => Err(format!(
+            "unsupported PDF parser '{other}', expected auto, local-text, or layout-api"
+        )),
+    }
+}
+
+fn run_python_script_log(
+    vault: &Path,
+    kind: &str,
+    python_path: &str,
+    script_path: &Path,
+    args: &[String],
+) -> Result<TaskLog, String> {
+    let started_at = Local::now().to_rfc3339();
+    let mut command = vec![python_path.to_string(), to_display(script_path)];
+    command.extend(args.iter().cloned());
+    let output = Command::new(python_path)
+        .arg(script_path)
+        .args(args)
+        .output()
+        .map_err(|e| format!("failed to run {kind}: {e}"))?;
+    let ended_at = Local::now().to_rfc3339();
+    let exit_code = output.status.code().unwrap_or(-1);
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let id = format!("{}-{}", Local::now().format("%Y%m%d-%H%M%S"), kind);
+    let log_path = vault
+        .join("log-archive")
+        .join("desktop")
+        .join(format!("{id}.log"));
+    let rendered = format!(
+        "# Runtime Task Log\n\nkind: {kind}\nstarted_at: {started_at}\nended_at: {ended_at}\nexit_code: {exit_code}\ncommand: {}\n\n## stdout\n\n{}\n\n## stderr\n\n{}\n",
+        command.join(" "),
+        stdout,
+        stderr
+    );
+    write_text(&log_path, &rendered)?;
+    let _ = ensure_inside(&log_path, vault, "task log must stay inside the vault")?;
+    Ok(TaskLog {
+        id,
+        kind: kind.to_string(),
+        command,
+        started_at,
+        ended_at,
+        exit_code,
+        stdout,
+        stderr,
+        log_path: to_display(&log_path),
+    })
+}
+
+fn parse_pdf_artifacts(
+    vault: &Path,
+    plan: &IngestPlan,
+    runtime_path: Option<&str>,
+    python_path: &str,
+    pdf_parser: &str,
+    cloud_parsing_allowed: bool,
+    layout_parsing_api_url: &str,
+) -> Result<(Vec<String>, Vec<TaskLog>), String> {
+    let parser = selected_pdf_parser(pdf_parser)?;
+    if parser == "layout-api" && !cloud_parsing_allowed {
+        return Err("layout-api parser requires explicit cloud parsing approval".to_string());
+    }
+    let scripts_dir = resolve_scripts_dir(vault, runtime_path)?;
+    let script_path = scripts_dir.join("pdf_to_markdown.py");
+    if !script_path.is_file() {
+        return Err(format!(
+            "runtime script not found: {}",
+            script_path.display()
+        ));
+    }
+    let cancelled = cancelled_job_ids(vault);
+    let mut parsed_artifacts = Vec::new();
+    let mut logs = Vec::new();
+    for entry in &plan.entries {
+        if entry.action != "parse_required" {
+            continue;
+        }
+        let source = PathBuf::from(&entry.source_path);
+        if !is_parseable_binary(&source) {
+            continue;
+        }
+        let source_id = source_id_for_hash(vault, &entry.sha256);
+        let job_id = job_id_for_source_id(source_id.as_deref(), &entry.sha256);
+        if cancelled.contains(&job_id) {
+            continue;
+        }
+        let Some(artifact_path) = &entry.artifact_path else {
+            continue;
+        };
+        let artifact = PathBuf::from(artifact_path);
+        let output_dir = artifact
+            .parent()
+            .ok_or_else(|| "artifact path has no parent".to_string())?;
+        ensure_inside(&source, vault, "PDF parse source must stay inside the vault")?;
+        ensure_inside(
+            output_dir,
+            vault,
+            "PDF parse output must stay inside the vault",
+        )?;
+        let _ = update_ingest_job_record(vault, &job_id, "running", None, None);
+        let mut args = vec![
+            to_display(&source),
+            "--output".to_string(),
+            to_display(output_dir),
+            "--parser".to_string(),
+            parser.clone(),
+            "--no-download-images".to_string(),
+        ];
+        if parser == "layout-api" && !layout_parsing_api_url.trim().is_empty() {
+            args.extend([
+                "--api-url".to_string(),
+                layout_parsing_api_url.trim().to_string(),
+            ]);
+        }
+        let log = run_python_script_log(vault, "parse_pdfs", python_path, &script_path, &args)?;
+        if log.exit_code != 0 {
+            let _ = update_ingest_job_record(
+                vault,
+                &job_id,
+                "failed",
+                Some(format!("PDF parse failed with exit {}", log.exit_code)),
+                Some(log.log_path.clone()),
+            );
+            logs.push(log);
+            return Err("PDF parse failed; see desktop task log for details".to_string());
+        }
+        let _ = update_ingest_job_record(
+            vault,
+            &job_id,
+            "succeeded",
+            None,
+            Some(log.log_path.clone()),
+        );
+        parsed_artifacts.push(rel_path(vault, &artifact));
+        logs.push(log);
+    }
+    Ok((parsed_artifacts, logs))
 }
 
 fn record_published_ingest(
@@ -4821,6 +5068,9 @@ fn run_ingest_pipeline(
     python_path: String,
     obsidian_profile: String,
     skip_downloads: bool,
+    pdf_parser: String,
+    cloud_parsing_allowed: bool,
+    layout_parsing_api_url: String,
 ) -> Result<IngestPipelineResult, String> {
     let vault = PathBuf::from(vault_path);
     require_existing_dir(&vault, "vault")?;
@@ -4834,13 +5084,19 @@ fn run_ingest_pipeline(
             let source_id = source_id_for_hash(&vault, &entry.sha256);
             !cancelled.contains(&job_id_for_source_id(source_id.as_deref(), &entry.sha256))
         })
-        .filter(|entry| matches!(entry.status.as_str(), "ready" | "stageable" | "cached"))
+        .filter(|entry| {
+            matches!(entry.status.as_str(), "ready" | "stageable" | "cached")
+                || (entry.action == "parse_required"
+                    && is_parseable_binary(&PathBuf::from(&entry.source_path)))
+        })
         .count();
     if runnable == 0 {
         let cancelled_runnable = initial_plan.entries.iter().any(|entry| {
             let source_id = source_id_for_hash(&vault, &entry.sha256);
             cancelled.contains(&job_id_for_source_id(source_id.as_deref(), &entry.sha256))
-                && matches!(entry.status.as_str(), "ready" | "stageable" | "cached")
+                && (matches!(entry.status.as_str(), "ready" | "stageable" | "cached")
+                    || (entry.action == "parse_required"
+                        && is_parseable_binary(&PathBuf::from(&entry.source_path))))
         });
         if cancelled_runnable {
             return Err(
@@ -4856,6 +5112,15 @@ fn run_ingest_pipeline(
         }
         return Err("no unpublished ingest inputs are ready; parse blocked sources first or import Markdown/txt".to_string());
     }
+    let (parsed_artifacts, mut logs) = parse_pdf_artifacts(
+        &vault,
+        &initial_plan,
+        runtime_path.as_deref(),
+        &python_path,
+        &pdf_parser,
+        cloud_parsing_allowed,
+        &layout_parsing_api_url,
+    )?;
     let staged_artifacts = stage_text_artifacts(&vault)?;
     let final_plan = plan_ingest(to_display(&vault))?;
     let runnable_job_ids = final_plan
@@ -4877,14 +5142,15 @@ fn run_ingest_pipeline(
         "semantic_qa",
         "contradictions",
         "science_review",
+        "concept_revision_apply",
         "lint",
+        "status_dashboard",
     ];
     let id = format!("{}-ingest-pipeline", Local::now().format("%Y%m%d-%H%M%S"));
     let log_path = vault
         .join("log-archive")
         .join("desktop")
         .join(format!("{id}.log"));
-    let mut logs = Vec::new();
     let mut exit_code = 0;
     for job_id in &runnable_job_ids {
         let _ = update_ingest_job_record(&vault, job_id, "running", None, None);
@@ -4935,12 +5201,20 @@ fn run_ingest_pipeline(
         Vec::new()
     };
     let mut rendered = format!(
-        "# Desktop Ingest Pipeline\n\nstarted_at: {}\nexit_code: {}\nstaged_artifacts: {}\npublished_sources: {}\n\n",
+        "# Desktop Ingest Pipeline\n\nstarted_at: {}\nexit_code: {}\nparsed_artifacts: {}\nstaged_artifacts: {}\npublished_sources: {}\n\n",
         Local::now().to_rfc3339(),
         exit_code,
+        parsed_artifacts.len(),
         staged_artifacts.len(),
         published_sources.len()
     );
+    if !parsed_artifacts.is_empty() {
+        rendered.push_str("## Parsed Artifacts\n\n");
+        for artifact in &parsed_artifacts {
+            rendered.push_str(&format!("- {artifact}\n"));
+        }
+        rendered.push('\n');
+    }
     if !staged_artifacts.is_empty() {
         rendered.push_str("## Staged Artifacts\n\n");
         for artifact in &staged_artifacts {
@@ -4966,6 +5240,7 @@ fn run_ingest_pipeline(
 
     Ok(IngestPipelineResult {
         id,
+        parsed_artifacts,
         staged_artifacts,
         published_sources,
         logs,
@@ -5100,7 +5375,10 @@ mod tests {
 
         assert_eq!(entry.status, "blocked");
         assert_eq!(entry.action, "parse_required");
-        assert!(entry.parser_hint.is_some());
+        assert!(entry
+            .parser_hint
+            .as_deref()
+            .is_some_and(|hint| hint.contains("--parser auto --no-download-images")));
 
         let _ = fs::remove_dir_all(vault);
     }
@@ -5373,6 +5651,71 @@ mod tests {
 
         let _ = fs::remove_dir_all(vault);
     }
+
+    #[test]
+    fn writeback_allows_review_proposal_artifacts_only_under_review_area() {
+        let vault = test_vault("writeback-review-proposal");
+        create_minimal_vault(&vault).expect("create minimal vault");
+
+        let proposal = create_writeback_proposal(
+            to_display(&vault),
+            "reviews/query-writeback/deepseek-insight.md".to_string(),
+            "DeepSeek insight".to_string(),
+            "Evidence, inference, hypothesis, and forecast stay separated.".to_string(),
+        )
+        .expect("create review proposal");
+        assert_eq!(proposal.status, "proposed");
+        assert!(proposal.content.contains("writeback_applied: false"));
+        assert!(proposal.content.contains("## Approval Gate"));
+        assert!(!vault
+            .join("reviews")
+            .join("query-writeback")
+            .join("deepseek-insight.md")
+            .exists());
+
+        let rejected = create_writeback_proposal(
+            to_display(&vault),
+            "sources/LLM-0001.md".to_string(),
+            "Unsafe source write".to_string(),
+            "content".to_string(),
+        );
+        assert!(rejected.is_err());
+
+        let approved = set_writeback_status(
+            to_display(&vault),
+            proposal.proposal_id.clone(),
+            "approved".to_string(),
+        )
+        .expect("approve proposal artifact write");
+        assert_eq!(approved.status, "approved");
+        let applied = apply_writeback_proposal(to_display(&vault), proposal.proposal_id)
+            .expect("write review proposal artifact");
+        assert_eq!(applied.status, "applied");
+        let artifact = vault
+            .join("reviews")
+            .join("query-writeback")
+            .join("deepseek-insight.md");
+        assert!(read_text(&artifact).contains("This proposal is review evidence only."));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn runtime_command_spec_tracks_current_open_runtime_contract() {
+        let vault = test_vault("runtime-spec");
+        let semantic = command_spec("semantic_qa", &vault, "minimal", true)
+            .expect("semantic qa command");
+        assert_eq!(semantic.0, "wiki_semantic_qa.py");
+        assert!(semantic.1.contains(&"--assign-verdicts".to_string()));
+        assert!(semantic.1.contains(&"--in-place".to_string()));
+
+        let concept_apply = command_spec("concept_revision_apply", &vault, "minimal", true)
+            .expect("concept apply command");
+        assert_eq!(concept_apply.0, "wiki_concept_revision.py");
+        assert!(concept_apply.1.contains(&"--apply".to_string()));
+
+        let _ = fs::remove_dir_all(vault);
+    }
 }
 
 fn command_spec(
@@ -5419,6 +5762,8 @@ fn command_spec(
             vec![
                 vault_arg,
                 "--write-report".to_string(),
+                "--assign-verdicts".to_string(),
+                "--in-place".to_string(),
                 "--fail-on".to_string(),
                 "p1".to_string(),
             ],
@@ -5436,6 +5781,10 @@ fn command_spec(
             ],
         ),
         "concept_revision_preview" => ("wiki_concept_revision.py", vec![vault_arg]),
+        "concept_revision_apply" => (
+            "wiki_concept_revision.py",
+            vec![vault_arg, "--apply".to_string()],
+        ),
         _ => return Err(format!("unsupported runtime command: {kind}")),
     };
     if kind == "obsidian_setup" && skip_downloads {
