@@ -2,18 +2,40 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   ClaimLedgerItem,
   ContractFinding,
+  DesktopAppState,
   DesktopSettings,
   EvidencePathItem,
   ImportBatchResult,
   ImportResult,
   IngestPipelineResult,
   IngestPlan,
+  QueryWritebackDraft,
   ReviewQueueItem,
   RuntimeSettings,
   TaskLog,
+  TraceabilityWarning,
+  VaultEntryNote,
+  VaultRestoreResult,
+  VaultSuggestion,
   VaultStatus,
   WritebackProposal,
 } from "./types";
+
+export function loadAppState(): Promise<DesktopAppState> {
+  return invoke("load_app_state");
+}
+
+export function saveLastSelectedVault(vaultPath: string): Promise<DesktopAppState> {
+  return invoke("save_last_selected_vault", { vaultPath });
+}
+
+export function restoreLastSelectedVault(): Promise<VaultRestoreResult> {
+  return invoke("restore_last_selected_vault");
+}
+
+export function listVaultSuggestions(): Promise<VaultSuggestion[]> {
+  return invoke("list_vault_suggestions");
+}
 
 export function inspectVault(vaultPath: string): Promise<VaultStatus> {
   return invoke("inspect_vault", { vaultPath });
@@ -99,6 +121,10 @@ export function listEvidencePaths(vaultPath: string): Promise<EvidencePathItem[]
   return invoke("list_evidence_paths", { vaultPath });
 }
 
+export function listTraceabilityWarnings(vaultPath: string): Promise<TraceabilityWarning[]> {
+  return invoke("list_traceability_warnings", { vaultPath });
+}
+
 export function listReviewQueue(vaultPath: string): Promise<ReviewQueueItem[]> {
   return invoke("list_review_queue", { vaultPath });
 }
@@ -128,6 +154,15 @@ export function createWritebackProposal(
   content: string,
 ): Promise<WritebackProposal> {
   return invoke("create_writeback_proposal", { vaultPath, targetPath, title, content });
+}
+
+export function createQueryWritebackProposal(
+  vaultPath: string,
+  query: string,
+  targetPath: string,
+  title: string,
+): Promise<QueryWritebackDraft> {
+  return invoke("create_query_writeback_proposal", { vaultPath, query, targetPath, title });
 }
 
 export function listWritebackProposals(vaultPath: string): Promise<WritebackProposal[]> {
@@ -163,6 +198,8 @@ export function runIngestPipeline(
     pdfParser: settings.pdfParser,
     cloudParsingAllowed: settings.cloudParsingAllowed,
     layoutParsingApiUrl: settings.layoutParsingApiUrl,
+    timeoutSeconds: settings.timeoutSeconds,
+    retryCount: settings.retryCount,
   });
 }
 
@@ -181,13 +218,23 @@ export function runRuntimeCommand(
     pdfParser: settings.pdfParser,
     cloudParsingAllowed: settings.cloudParsingAllowed,
     layoutParsingApiUrl: settings.layoutParsingApiUrl,
+    timeoutSeconds: settings.timeoutSeconds,
+    retryCount: settings.retryCount,
   });
+}
+
+export function cancelRuntimeJob(jobId: string): Promise<void> {
+  return invoke("cancel_runtime_job", { jobId });
 }
 
 export function openPath(path: string): Promise<void> {
   return invoke("open_path", { path });
 }
 
-export function openObsidianVault(vaultPath: string): Promise<void> {
+export function resolveVaultEntryNote(vaultPath: string): Promise<VaultEntryNote> {
+  return invoke("resolve_vault_entry_note", { vaultPath });
+}
+
+export function openObsidianVault(vaultPath: string): Promise<VaultEntryNote> {
   return invoke("open_obsidian_vault", { vaultPath });
 }

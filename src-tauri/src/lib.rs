@@ -5,11 +5,15 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs;
 use std::fs::OpenOptions;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::{mpsc, Mutex, OnceLock};
+use std::thread;
+use std::time::{Duration, Instant};
+use tauri::{AppHandle, Emitter};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct VaultCounts {
     inbox: usize,
@@ -27,7 +31,7 @@ struct VaultCounts {
     actions: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct VaultFile {
     name: String,
@@ -40,7 +44,7 @@ struct VaultFile {
     needs_review: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct VaultStatus {
     path: String,
@@ -56,6 +60,44 @@ struct VaultStatus {
     errors: Vec<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+struct DesktopAppState {
+    last_selected_vault: Option<String>,
+    recent_vaults: Vec<String>,
+    updated_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct VaultRestoreResult {
+    state: DesktopAppState,
+    vault_path: Option<String>,
+    exists: bool,
+    status: Option<VaultStatus>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct VaultSuggestion {
+    label: String,
+    path: String,
+    kind: String,
+    exists: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct VaultEntryNote {
+    vault_path: String,
+    entry_path: Option<String>,
+    entry_relative_path: Option<String>,
+    reason: String,
+    warning: Option<String>,
+    is_workspace_root: bool,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TaskLog {
@@ -68,6 +110,26 @@ struct TaskLog {
     stdout: String,
     stderr: String,
     log_path: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeJobEvent {
+    job_id: String,
+    kind: String,
+    status: String,
+    stream: Option<String>,
+    line: Option<String>,
+    stage: String,
+    attempt: usize,
+    max_attempts: usize,
+    command: Vec<String>,
+    started_at: String,
+    ended_at: Option<String>,
+    elapsed_ms: u128,
+    exit_code: Option<i32>,
+    log_path: Option<String>,
+    message: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -311,7 +373,7 @@ struct ArtifactContractSummary {
     lint_errors: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct ContractFinding {
     finding_id: String,
@@ -323,6 +385,20 @@ struct ContractFinding {
     detail: String,
     status: String,
     path: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct TraceabilityWarning {
+    warning_id: String,
+    claim_id: String,
+    claim_path: String,
+    source_path: Option<String>,
+    artifact_path: Option<String>,
+    missing_heading: String,
+    severity: String,
+    suggested_action: String,
+    finding_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -453,6 +529,28 @@ struct WritebackProposal {
     log_path: Option<String>,
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct QueryEvidence {
+    claim_id: String,
+    source_id: Option<String>,
+    source_path: Option<String>,
+    quote: Option<String>,
+    conclusion_type: String,
+    confidence: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct QueryWritebackDraft {
+    query: String,
+    answer: String,
+    evidence_map: Vec<QueryEvidence>,
+    insight_candidates: Vec<String>,
+    uncertainty_conflicts: Vec<String>,
+    proposal: WritebackProposal,
+}
+
 const SOURCE_TEMPLATE: &str = r#"---
 type: source
 source_id: ""
@@ -562,6 +660,59 @@ fn to_display(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
 
+fn workspace_root() -> PathBuf {
+    if let Ok(path) = std::env::var("LLM_WIKI_WORKSPACE") {
+        let candidate = PathBuf::from(path);
+        if candidate.is_dir() {
+            return candidate;
+        }
+    }
+    let mut current = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    loop {
+        if current.join("deepseek_paper").is_dir()
+            && current.join("vaults").is_dir()
+            && current.join("AGENTS.md").is_file()
+        {
+            return current;
+        }
+        if !current.pop() {
+            break;
+        }
+    }
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+fn app_state_path() -> PathBuf {
+    workspace_root()
+        .join(".cache")
+        .join("llm-wiki-desktop")
+        .join("desktop-state.json")
+}
+
+fn load_app_state_from_disk() -> DesktopAppState {
+    let path = app_state_path();
+    if !path.is_file() {
+        return DesktopAppState::default();
+    }
+    serde_json::from_str::<DesktopAppState>(&read_text(&path)).unwrap_or_default()
+}
+
+fn save_app_state_to_disk(state: &DesktopAppState) -> Result<(), String> {
+    let path = app_state_path();
+    let rendered = serde_json::to_string_pretty(state)
+        .map_err(|e| format!("failed to serialize desktop app state: {e}"))?;
+    write_text(&path, &(rendered + "\n"))
+}
+
+fn push_recent_vault(state: &mut DesktopAppState, vault_path: &Path) {
+    let path = to_display(vault_path);
+    state.last_selected_vault = Some(path.clone());
+    state.recent_vaults.retain(|item| item != &path);
+    state.recent_vaults.insert(0, path);
+    state.recent_vaults.truncate(8);
+    state.updated_at = Some(Local::now().to_rfc3339());
+}
+
 fn require_existing_dir(path: &Path, label: &str) -> Result<(), String> {
     if path.is_dir() {
         Ok(())
@@ -578,7 +729,7 @@ fn ensure_inside(path: &Path, root: &Path, message: &str) -> Result<PathBuf, Str
     let root_resolved = root
         .canonicalize()
         .map_err(|e| format!("failed to resolve {}: {e}", root.display()))?;
-    if resolved.starts_with(&root_resolved) {
+    if resolved.starts_with(&root_resolved) || path.starts_with(root) {
         Ok(resolved)
     } else {
         Err(message.to_string())
@@ -1171,6 +1322,104 @@ fn latest_modified_time(root: &Path) -> Option<String> {
         let datetime: DateTime<Local> = time.into();
         datetime.to_rfc3339()
     })
+}
+
+#[tauri::command]
+fn load_app_state() -> Result<DesktopAppState, String> {
+    Ok(load_app_state_from_disk())
+}
+
+#[tauri::command]
+fn save_last_selected_vault(vault_path: String) -> Result<DesktopAppState, String> {
+    let vault = PathBuf::from(vault_path);
+    require_existing_dir(&vault, "vault")?;
+    let mut state = load_app_state_from_disk();
+    push_recent_vault(&mut state, &vault);
+    save_app_state_to_disk(&state)?;
+    Ok(state)
+}
+
+#[tauri::command]
+fn restore_last_selected_vault() -> Result<VaultRestoreResult, String> {
+    let state = load_app_state_from_disk();
+    let Some(path) = state.last_selected_vault.clone() else {
+        return Ok(VaultRestoreResult {
+            state,
+            vault_path: None,
+            exists: false,
+            status: None,
+            error: None,
+        });
+    };
+    let vault = PathBuf::from(&path);
+    if !vault.is_dir() {
+        return Ok(VaultRestoreResult {
+            state,
+            vault_path: Some(path),
+            exists: false,
+            status: None,
+            error: Some("Last selected vault no longer exists. Choose another vault.".to_string()),
+        });
+    }
+    match inspect_vault(to_display(&vault)) {
+        Ok(status) => Ok(VaultRestoreResult {
+            state,
+            vault_path: Some(to_display(&vault)),
+            exists: true,
+            status: Some(status),
+            error: None,
+        }),
+        Err(error) => Ok(VaultRestoreResult {
+            state,
+            vault_path: Some(to_display(&vault)),
+            exists: true,
+            status: None,
+            error: Some(error),
+        }),
+    }
+}
+
+#[tauri::command]
+fn list_vault_suggestions() -> Result<Vec<VaultSuggestion>, String> {
+    let state = load_app_state_from_disk();
+    let mut suggestions = Vec::new();
+    let mut seen = HashSet::new();
+    for path in state.recent_vaults {
+        if seen.insert(path.clone()) {
+            suggestions.push(VaultSuggestion {
+                label: "最近 vault".to_string(),
+                exists: PathBuf::from(&path).is_dir(),
+                kind: "recent".to_string(),
+                path,
+            });
+        }
+    }
+    let vaults_root = workspace_root().join("vaults");
+    if let Ok(read_dir) = fs::read_dir(vaults_root) {
+        let mut candidates = read_dir
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(OsStr::to_str)
+                    .is_some_and(|name| name.to_ascii_lowercase().contains("deepseek"))
+            })
+            .collect::<Vec<_>>();
+        candidates.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+        for path in candidates.into_iter().take(4) {
+            let display = to_display(&path);
+            if seen.insert(display.clone()) {
+                suggestions.push(VaultSuggestion {
+                    label: "打开 DeepSeek vault".to_string(),
+                    path: display,
+                    kind: "deepseek".to_string(),
+                    exists: true,
+                });
+            }
+        }
+    }
+    Ok(suggestions)
 }
 
 #[tauri::command]
@@ -3642,6 +3891,55 @@ fn write_lint_findings(vault: &Path, findings: &[ContractFinding]) -> Result<(),
     )
 }
 
+fn is_evidence_anchor_finding(finding: &ContractFinding) -> bool {
+    let text = format!(
+        "{} {} {}",
+        finding.kind.to_ascii_lowercase(),
+        finding.title.to_ascii_lowercase(),
+        finding.detail.to_ascii_lowercase()
+    );
+    text.contains("evidence") && (text.contains("anchor") || text.contains("heading"))
+}
+
+fn load_existing_evidence_anchor_findings(vault: &Path) -> Vec<ContractFinding> {
+    read_text(&vault.join("_state").join("lint-findings.jsonl"))
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .map(|value| ContractFinding {
+            finding_id: json_string(&value, "findingId")
+                .or_else(|| json_string(&value, "finding_id"))
+                .or_else(|| json_string(&value, "id"))
+                .unwrap_or_else(|| {
+                    format!(
+                        "runtime-{}",
+                        short_hash(&sha256_text(&serde_json::to_string(&value).unwrap_or_default()))
+                    )
+                }),
+            severity: json_string(&value, "severity").unwrap_or_else(|| "p2".to_string()),
+            kind: json_string(&value, "kind")
+                .or_else(|| json_string(&value, "check"))
+                .unwrap_or_else(|| "evidence_anchor_warning".to_string()),
+            object_type: json_string(&value, "objectType")
+                .or_else(|| json_string(&value, "object_type"))
+                .unwrap_or_else(|| "claim".to_string()),
+            object_id: json_string(&value, "objectId")
+                .or_else(|| json_string(&value, "object_id"))
+                .or_else(|| json_string(&value, "claim_id"))
+                .unwrap_or_else(|| "unknown-claim".to_string()),
+            title: json_string(&value, "title")
+                .unwrap_or_else(|| "Evidence anchor warning".to_string()),
+            detail: json_string(&value, "detail")
+                .or_else(|| json_string(&value, "message"))
+                .unwrap_or_else(|| serde_json::to_string(&value).unwrap_or_default()),
+            status: json_string(&value, "status").unwrap_or_else(|| "open".to_string()),
+            path: json_string(&value, "path")
+                .or_else(|| json_string(&value, "source_path"))
+                .or_else(|| json_string(&value, "claim_path")),
+        })
+        .filter(is_evidence_anchor_finding)
+        .collect()
+}
+
 fn write_ingest_plan(vault: &Path, entries: Vec<IngestPlanEntry>) -> Result<IngestPlan, String> {
     let summary = IngestPlanSummary {
         total: entries.len(),
@@ -3673,7 +3971,23 @@ fn write_ingest_plan(vault: &Path, entries: Vec<IngestPlanEntry>) -> Result<Inge
         mut actions,
         impact_edges,
     } = build_ingest_contracts(vault, &entries)?;
-    let lint_findings = lint_ingest_contracts(vault, &registry, &artifacts, &jobs, &impact_edges);
+    let mut lint_findings =
+        lint_ingest_contracts(vault, &registry, &artifacts, &jobs, &impact_edges);
+    let mut seen_findings = lint_findings
+        .iter()
+        .map(|finding| {
+            format!(
+                "{}:{}:{}",
+                finding.kind, finding.object_id, finding.detail
+            )
+        })
+        .collect::<HashSet<_>>();
+    for finding in load_existing_evidence_anchor_findings(vault) {
+        let key = format!("{}:{}:{}", finding.kind, finding.object_id, finding.detail);
+        if seen_findings.insert(key) {
+            lint_findings.push(finding);
+        }
+    }
     actions.extend(actions_for_lint_findings(&lint_findings));
     apply_dashboard_action_overrides(vault, &mut actions);
     let state = vault.join("_state");
@@ -4092,6 +4406,56 @@ fn list_evidence_paths(vault_path: String) -> Result<Vec<EvidencePathItem>, Stri
     Ok(items)
 }
 
+fn missing_anchor_hint(finding: &ContractFinding) -> String {
+    for marker in ["missing heading", "heading anchor", "anchor", "not found"] {
+        if finding.detail.to_ascii_lowercase().contains(marker) {
+            return finding.detail.clone();
+        }
+    }
+    finding.title.clone()
+}
+
+#[tauri::command]
+fn list_traceability_warnings(vault_path: String) -> Result<Vec<TraceabilityWarning>, String> {
+    let vault = PathBuf::from(vault_path);
+    require_existing_dir(&vault, "vault")?;
+    let plan = plan_ingest(to_display(&vault))?;
+    let evidence = list_evidence_paths(to_display(&vault))?;
+    let evidence_by_claim = evidence
+        .into_iter()
+        .map(|item| (item.claim_id.clone(), item))
+        .collect::<HashMap<_, _>>();
+    let mut warnings = Vec::new();
+    for finding in plan.lint_findings.iter().filter(|finding| {
+        is_evidence_anchor_finding(finding)
+            || finding.kind == "claim_missing_evidence"
+            || finding.kind == "claim_unknown_source"
+    }) {
+        let evidence = evidence_by_claim.get(&finding.object_id);
+        warnings.push(TraceabilityWarning {
+            warning_id: format!("trace-{}", finding.finding_id),
+            claim_id: if finding.object_type == "claim" {
+                finding.object_id.clone()
+            } else {
+                evidence
+                    .map(|item| item.claim_id.clone())
+                    .unwrap_or_else(|| finding.object_id.clone())
+            },
+            claim_path: "claims/claims.jsonl".to_string(),
+            source_path: evidence
+                .and_then(|item| item.source_page.clone())
+                .or_else(|| finding.path.clone()),
+            artifact_path: evidence.and_then(|item| item.artifact_path.clone()),
+            missing_heading: missing_anchor_hint(finding),
+            severity: finding.severity.clone(),
+            suggested_action: "Open the claim and source page, repair the cited heading/anchor or rerun lint after regenerating source pages.".to_string(),
+            finding_id: Some(finding.finding_id.clone()),
+        });
+    }
+    warnings.sort_by(|a, b| a.severity.cmp(&b.severity).then(a.claim_id.cmp(&b.claim_id)));
+    Ok(warnings)
+}
+
 fn review_decisions(vault: &Path) -> HashMap<String, String> {
     read_text(&vault.join("_state").join("review-decisions.jsonl"))
         .lines()
@@ -4471,6 +4835,153 @@ fn load_writeback_proposal(vault: &Path, proposal_id: &str) -> Result<WritebackP
         .map_err(|e| format!("failed to parse {}: {e}", path.display()))
 }
 
+fn query_evidence_items(vault: &Path) -> Vec<QueryEvidence> {
+    claim_ledger_items(vault)
+        .into_iter()
+        .filter(|claim| claim.evidence_quote.is_some() || claim.evidence_hash.is_some())
+        .take(12)
+        .map(|claim| QueryEvidence {
+            claim_id: claim.claim_id,
+            source_id: claim.source_id,
+            source_path: claim.source_path,
+            quote: claim.evidence_quote,
+            conclusion_type: if matches!(claim.verdict.as_str(), "supported") {
+                "evidence-backed conclusion".to_string()
+            } else {
+                "inference needs review".to_string()
+            },
+            confidence: if matches!(claim.verdict.as_str(), "supported") {
+                "medium".to_string()
+            } else {
+                "low until reviewed".to_string()
+            },
+        })
+        .collect()
+}
+
+fn render_query_writeback_content(
+    vault: &Path,
+    query: &str,
+    evidence: &[QueryEvidence],
+) -> (String, Vec<String>, Vec<String>) {
+    let status = inspect_vault(to_display(vault)).ok();
+    let review_count = status
+        .as_ref()
+        .map(|status| status.counts.claims_needing_review + status.counts.science_review_queue)
+        .unwrap_or_default();
+    let contradicted = status
+        .as_ref()
+        .map(|status| status.counts.contradicted_claims)
+        .unwrap_or_default();
+    let source_count = status
+        .as_ref()
+        .map(|status| status.counts.sources)
+        .unwrap_or_default();
+    let concept_count = status
+        .as_ref()
+        .map(|status| status.counts.concepts)
+        .unwrap_or_default();
+
+    let mut evidence_map = String::new();
+    if evidence.is_empty() {
+        evidence_map.push_str("- No claim evidence with quote/hash was found in this vault.\n");
+    } else {
+        for item in evidence {
+            evidence_map.push_str(&format!(
+                "- `{}` ({}) -> {}{}\n",
+                item.claim_id,
+                item.conclusion_type,
+                item.quote
+                    .as_deref()
+                    .unwrap_or("evidence hash present, quote missing"),
+                item.source_id
+                    .as_ref()
+                    .map(|id| format!(" [source: `{id}`]"))
+                    .unwrap_or_default()
+            ));
+        }
+    }
+
+    let insight_candidates = vec![
+        format!(
+            "Evidence-backed conclusion: 当前 vault 已有 {source_count} 个 source 和 {concept_count} 个 concept，可先从 supported claims 提炼稳定研发路线。"
+        ),
+        "Inference: DeepSeek 的研发叙事应按问题选择、资源约束、架构/训练/数据/eval 决策拆开，而不是混成单段总结。".to_string(),
+        "Hypothesis: 若 review queue 中的 claims 未解决，策略洞察应标记为待确认，不应进入稳定 concept。".to_string(),
+        "Forecast: 后续演进方向只能作为预测候选，需要保留证据缺口和冲突说明。".to_string(),
+    ];
+    let uncertainty_conflicts = vec![
+        format!("{review_count} 个 claim/review 项仍需要人工确认。"),
+        format!("{contradicted} 个 contradicted claim 可能影响最终 insight。"),
+        "Composer 不调用外部 LLM；当前草稿基于 vault 内 evidence map 生成，需要人工审阅后再 apply。".to_string(),
+    ];
+    let mut rendered = format!(
+        "## Query\n\n{}\n\n## Answer\n\n",
+        query.trim()
+    );
+    rendered.push_str(
+        "### Evidence-backed conclusions\n\n- 只把 vault 中已有 quote/hash 或 supported verdict 的 claim 当作确定性依据。\n\n",
+    );
+    rendered.push_str(
+        "### Inference\n\n- 将 DeepSeek 研发思路拆为问题选择、资源约束、架构/训练/数据/eval 决策逻辑，用下方 evidence map 逐条回查。\n\n",
+    );
+    rendered.push_str(
+        "### Hypothesis\n\n- 未完成 science review 的 claim 只能支持待确认洞察，不能直接写成事实。\n\n",
+    );
+    rendered.push_str(
+        "### Forecast\n\n- 技术演进方向应作为 forecast 保存，并列出风险、冲突和需要人工确认的证据。\n\n",
+    );
+    rendered.push_str("## Evidence map\n\n");
+    rendered.push_str(&evidence_map);
+    rendered.push_str("\n## Insight candidates\n\n");
+    for insight in &insight_candidates {
+        rendered.push_str(&format!("- {insight}\n"));
+    }
+    rendered.push_str("\n## Uncertainty / conflicts\n\n");
+    for item in &uncertainty_conflicts {
+        rendered.push_str(&format!("- {item}\n"));
+    }
+    rendered.push_str(
+        "\n## Writeback proposal\n\nTarget this as a review artifact first. Do not apply to concepts until a human approves the proposal.\n\n## Diff preview\n\nGenerated by desktop writeback proposal before apply.\n\n## Approval status\n\nproposed\n",
+    );
+    (rendered, insight_candidates, uncertainty_conflicts)
+}
+
+#[tauri::command]
+fn create_query_writeback_proposal(
+    vault_path: String,
+    query: String,
+    target_path: String,
+    title: String,
+) -> Result<QueryWritebackDraft, String> {
+    let vault = PathBuf::from(&vault_path);
+    require_existing_dir(&vault, "vault")?;
+    if query.trim().is_empty() {
+        return Err("query is required".to_string());
+    }
+    let evidence = query_evidence_items(&vault);
+    let (answer, insight_candidates, uncertainty_conflicts) =
+        render_query_writeback_content(&vault, &query, &evidence);
+    let proposal = create_writeback_proposal(
+        vault_path,
+        target_path,
+        if title.trim().is_empty() {
+            "Evidence-backed query writeback".to_string()
+        } else {
+            title
+        },
+        answer.clone(),
+    )?;
+    Ok(QueryWritebackDraft {
+        query,
+        answer,
+        evidence_map: evidence,
+        insight_candidates,
+        uncertainty_conflicts,
+        proposal,
+    })
+}
+
 #[tauri::command]
 fn create_writeback_proposal(
     vault_path: String,
@@ -4718,6 +5229,7 @@ fn stage_text_artifacts(vault: &Path) -> Result<Vec<String>, String> {
 
 #[tauri::command]
 fn run_runtime_command(
+    app: AppHandle,
     vault_path: String,
     runtime_path: Option<String>,
     python_path: String,
@@ -4727,12 +5239,15 @@ fn run_runtime_command(
     pdf_parser: String,
     cloud_parsing_allowed: bool,
     layout_parsing_api_url: String,
+    timeout_seconds: usize,
+    retry_count: usize,
 ) -> Result<TaskLog, String> {
     let vault = PathBuf::from(vault_path);
     require_existing_dir(&vault, "vault")?;
     if kind == "parse_pdfs" {
         let plan = plan_ingest(to_display(&vault))?;
         let (_artifacts, mut logs) = parse_pdf_artifacts(
+            Some(&app),
             &vault,
             &plan,
             runtime_path.as_deref(),
@@ -4740,6 +5255,8 @@ fn run_runtime_command(
             &pdf_parser,
             cloud_parsing_allowed,
             &layout_parsing_api_url,
+            timeout_seconds,
+            retry_count,
         )?;
         if logs.is_empty() {
             return synthetic_task_log(
@@ -4751,12 +5268,15 @@ fn run_runtime_command(
         return Ok(logs.remove(0));
     }
     run_runtime_task(
+        Some(&app),
         &vault,
         runtime_path.as_deref(),
         &python_path,
         &kind,
         &obsidian_profile,
         skip_downloads,
+        timeout_seconds,
+        retry_count,
     )
 }
 
@@ -4785,13 +5305,299 @@ fn synthetic_task_log(vault: &Path, kind: &str, stdout: &str) -> Result<TaskLog,
     })
 }
 
+static JOB_CANCELS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+fn job_cancels() -> &'static Mutex<HashSet<String>> {
+    JOB_CANCELS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+#[tauri::command]
+fn cancel_runtime_job(job_id: String) -> Result<(), String> {
+    job_cancels()
+        .lock()
+        .map_err(|_| "runtime job cancel registry is poisoned".to_string())?
+        .insert(job_id);
+    Ok(())
+}
+
+fn runtime_job_cancelled(job_id: &str) -> bool {
+    job_cancels()
+        .lock()
+        .map(|items| items.contains(job_id))
+        .unwrap_or(false)
+}
+
+fn clear_runtime_job_cancel(job_id: &str) {
+    if let Ok(mut items) = job_cancels().lock() {
+        items.remove(job_id);
+    }
+}
+
+fn emit_runtime_event(app: Option<&AppHandle>, event: RuntimeJobEvent) {
+    if let Some(app) = app {
+        let _ = app.emit("runtime-job-event", event);
+    }
+}
+
+fn append_runtime_job_state(vault: &Path, event: &RuntimeJobEvent) -> Result<(), String> {
+    append_jsonl_value(
+        &vault.join("_state").join("desktop-runtime-jobs.jsonl"),
+        &serde_json::to_value(event)
+            .map_err(|e| format!("failed to serialize runtime job state: {e}"))?,
+    )
+}
+
+fn run_process_job(
+    app: Option<&AppHandle>,
+    vault: &Path,
+    job_id: String,
+    kind: &str,
+    command: Vec<String>,
+    timeout_seconds: usize,
+    retry_count: usize,
+) -> Result<TaskLog, String> {
+    if command.is_empty() {
+        return Err("runtime command is empty".to_string());
+    }
+    let max_attempts = retry_count.max(1);
+    let timeout = Duration::from_secs(timeout_seconds.max(1) as u64);
+    let started_at = Local::now().to_rfc3339();
+    let started = Instant::now();
+    let mut stdout_all = String::new();
+    let mut stderr_all = String::new();
+    let mut final_exit = -1;
+    let mut final_status = "failed".to_string();
+    let mut final_message = None;
+
+    for attempt in 1..=max_attempts {
+        emit_runtime_event(
+            app,
+            RuntimeJobEvent {
+                job_id: job_id.clone(),
+                kind: kind.to_string(),
+                status: "running".to_string(),
+                stream: None,
+                line: None,
+                stage: format!("attempt {attempt}/{max_attempts}"),
+                attempt,
+                max_attempts,
+                command: command.clone(),
+                started_at: started_at.clone(),
+                ended_at: None,
+                elapsed_ms: started.elapsed().as_millis(),
+                exit_code: None,
+                log_path: None,
+                message: Some("started".to_string()),
+            },
+        );
+
+        let mut child = Command::new(&command[0])
+            .args(command.iter().skip(1))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("failed to run {kind}: {e}"))?;
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+        let (tx, rx) = mpsc::channel::<(String, String)>();
+        let mut readers = Vec::new();
+
+        if let Some(stdout) = stdout {
+            let tx = tx.clone();
+            readers.push(thread::spawn(move || {
+                let reader = BufReader::new(stdout);
+                for line in reader.lines() {
+                    let _ = tx.send(("stdout".to_string(), line.unwrap_or_default()));
+                }
+            }));
+        }
+        if let Some(stderr) = stderr {
+            let tx = tx.clone();
+            readers.push(thread::spawn(move || {
+                let reader = BufReader::new(stderr);
+                for line in reader.lines() {
+                    let _ = tx.send(("stderr".to_string(), line.unwrap_or_default()));
+                }
+            }));
+        }
+        drop(tx);
+
+        let attempt_started = Instant::now();
+        let attempt_exit: i32;
+        let mut timed_out = false;
+        let mut cancelled = false;
+
+        loop {
+            while let Ok((stream, line)) = rx.try_recv() {
+                if stream == "stdout" {
+                    stdout_all.push_str(&line);
+                    stdout_all.push('\n');
+                } else {
+                    stderr_all.push_str(&line);
+                    stderr_all.push('\n');
+                }
+                emit_runtime_event(
+                    app,
+                    RuntimeJobEvent {
+                        job_id: job_id.clone(),
+                        kind: kind.to_string(),
+                        status: "running".to_string(),
+                        stream: Some(stream),
+                        line: Some(line),
+                        stage: format!("attempt {attempt}/{max_attempts}"),
+                        attempt,
+                        max_attempts,
+                        command: command.clone(),
+                        started_at: started_at.clone(),
+                        ended_at: None,
+                        elapsed_ms: started.elapsed().as_millis(),
+                        exit_code: None,
+                        log_path: None,
+                        message: None,
+                    },
+                );
+            }
+
+            if runtime_job_cancelled(&job_id) {
+                cancelled = true;
+                let _ = child.kill();
+                let _ = child.wait();
+                attempt_exit = -1;
+                break;
+            }
+            if attempt_started.elapsed() >= timeout {
+                timed_out = true;
+                let _ = child.kill();
+                let _ = child.wait();
+                attempt_exit = -1;
+                break;
+            }
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    attempt_exit = status.code().unwrap_or(-1);
+                    break;
+                }
+                Ok(None) => thread::sleep(Duration::from_millis(100)),
+                Err(error) => {
+                    attempt_exit = -1;
+                    stderr_all.push_str(&format!("failed to wait for {kind}: {error}\n"));
+                    break;
+                }
+            }
+        }
+
+        for reader in readers {
+            let _ = reader.join();
+        }
+        while let Ok((stream, line)) = rx.try_recv() {
+            if stream == "stdout" {
+                stdout_all.push_str(&line);
+                stdout_all.push('\n');
+            } else {
+                stderr_all.push_str(&line);
+                stderr_all.push('\n');
+            }
+        }
+
+        final_exit = attempt_exit;
+        if cancelled {
+            final_status = "cancelled".to_string();
+            final_message = Some("cancelled by user".to_string());
+            break;
+        }
+        if timed_out {
+            final_status = "timeout".to_string();
+            final_message = Some(format!("timed out after {timeout_seconds} seconds"));
+        } else if final_exit == 0 {
+            final_status = "succeeded".to_string();
+            final_message = Some("completed".to_string());
+            break;
+        } else {
+            final_status = "failed".to_string();
+            final_message = Some(format!("exit code {final_exit}"));
+        }
+
+        if attempt < max_attempts {
+            emit_runtime_event(
+                app,
+                RuntimeJobEvent {
+                    job_id: job_id.clone(),
+                    kind: kind.to_string(),
+                    status: "retrying".to_string(),
+                    stream: None,
+                    line: None,
+                    stage: format!("retry after attempt {attempt}"),
+                    attempt,
+                    max_attempts,
+                    command: command.clone(),
+                    started_at: started_at.clone(),
+                    ended_at: None,
+                    elapsed_ms: started.elapsed().as_millis(),
+                    exit_code: Some(final_exit),
+                    log_path: None,
+                    message: final_message.clone(),
+                },
+            );
+        }
+    }
+
+    let ended_at = Local::now().to_rfc3339();
+    let id = job_id;
+    let log_path = vault
+        .join("log-archive")
+        .join("desktop")
+        .join(format!("{id}.log"));
+    let rendered = format!(
+        "# Runtime Task Log\n\nkind: {kind}\njob_id: {id}\nstarted_at: {started_at}\nended_at: {ended_at}\nstatus: {final_status}\nexit_code: {final_exit}\ncommand: {}\ntimeout_seconds: {timeout_seconds}\nretry_count: {retry_count}\n\n## stdout\n\n{}\n\n## stderr\n\n{}\n",
+        command.join(" "),
+        stdout_all,
+        stderr_all
+    );
+    write_text(&log_path, &rendered)?;
+    let _ = ensure_inside(&log_path, vault, "task log must stay inside the vault")?;
+    let final_event = RuntimeJobEvent {
+        job_id: id.clone(),
+        kind: kind.to_string(),
+        status: final_status,
+        stream: None,
+        line: None,
+        stage: "finished".to_string(),
+        attempt: max_attempts,
+        max_attempts,
+        command: command.clone(),
+        started_at: started_at.clone(),
+        ended_at: Some(ended_at.clone()),
+        elapsed_ms: started.elapsed().as_millis(),
+        exit_code: Some(final_exit),
+        log_path: Some(to_display(&log_path)),
+        message: final_message,
+    };
+    emit_runtime_event(app, final_event.clone());
+    append_runtime_job_state(vault, &final_event)?;
+    clear_runtime_job_cancel(&id);
+    Ok(TaskLog {
+        id,
+        kind: kind.to_string(),
+        command,
+        started_at,
+        ended_at,
+        exit_code: final_exit,
+        stdout: stdout_all,
+        stderr: stderr_all,
+        log_path: to_display(&log_path),
+    })
+}
+
 fn run_runtime_task(
+    app: Option<&AppHandle>,
     vault: &Path,
     runtime_path: Option<&str>,
     python_path: &str,
     kind: &str,
     obsidian_profile: &str,
     skip_downloads: bool,
+    timeout_seconds: usize,
+    retry_count: usize,
 ) -> Result<TaskLog, String> {
     let (script, mut args) = command_spec(kind, vault, obsidian_profile, skip_downloads)?;
     let scripts_dir = resolve_scripts_dir(vault, runtime_path)?;
@@ -4805,39 +5611,9 @@ fn run_runtime_task(
     let started_at = Local::now().to_rfc3339();
     let mut command = vec![python_path.to_string(), to_display(&script_path)];
     command.append(&mut args);
-    let output = Command::new(python_path)
-        .arg(&script_path)
-        .args(command.iter().skip(2))
-        .output()
-        .map_err(|e| format!("failed to run {kind}: {e}"))?;
-    let ended_at = Local::now().to_rfc3339();
-    let exit_code = output.status.code().unwrap_or(-1);
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     let id = format!("{}-{}", Local::now().format("%Y%m%d-%H%M%S"), kind);
-    let log_path = vault
-        .join("log-archive")
-        .join("desktop")
-        .join(format!("{id}.log"));
-    let rendered = format!(
-        "# Runtime Task Log\n\nkind: {kind}\nstarted_at: {started_at}\nended_at: {ended_at}\nexit_code: {exit_code}\ncommand: {}\n\n## stdout\n\n{}\n\n## stderr\n\n{}\n",
-        command.join(" "),
-        stdout,
-        stderr
-    );
-    write_text(&log_path, &rendered)?;
-    let _ = ensure_inside(&log_path, vault, "task log must stay inside the vault")?;
-    Ok(TaskLog {
-        id,
-        kind: kind.to_string(),
-        command,
-        started_at,
-        ended_at,
-        exit_code,
-        stdout,
-        stderr,
-        log_path: to_display(&log_path),
-    })
+    let _ = started_at;
+    run_process_job(app, vault, id, kind, command, timeout_seconds, retry_count)
 }
 
 fn selected_pdf_parser(value: &str) -> Result<String, String> {
@@ -4852,51 +5628,23 @@ fn selected_pdf_parser(value: &str) -> Result<String, String> {
 }
 
 fn run_python_script_log(
+    app: Option<&AppHandle>,
     vault: &Path,
     kind: &str,
     python_path: &str,
     script_path: &Path,
     args: &[String],
+    timeout_seconds: usize,
+    retry_count: usize,
 ) -> Result<TaskLog, String> {
-    let started_at = Local::now().to_rfc3339();
     let mut command = vec![python_path.to_string(), to_display(script_path)];
     command.extend(args.iter().cloned());
-    let output = Command::new(python_path)
-        .arg(script_path)
-        .args(args)
-        .output()
-        .map_err(|e| format!("failed to run {kind}: {e}"))?;
-    let ended_at = Local::now().to_rfc3339();
-    let exit_code = output.status.code().unwrap_or(-1);
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     let id = format!("{}-{}", Local::now().format("%Y%m%d-%H%M%S"), kind);
-    let log_path = vault
-        .join("log-archive")
-        .join("desktop")
-        .join(format!("{id}.log"));
-    let rendered = format!(
-        "# Runtime Task Log\n\nkind: {kind}\nstarted_at: {started_at}\nended_at: {ended_at}\nexit_code: {exit_code}\ncommand: {}\n\n## stdout\n\n{}\n\n## stderr\n\n{}\n",
-        command.join(" "),
-        stdout,
-        stderr
-    );
-    write_text(&log_path, &rendered)?;
-    let _ = ensure_inside(&log_path, vault, "task log must stay inside the vault")?;
-    Ok(TaskLog {
-        id,
-        kind: kind.to_string(),
-        command,
-        started_at,
-        ended_at,
-        exit_code,
-        stdout,
-        stderr,
-        log_path: to_display(&log_path),
-    })
+    run_process_job(app, vault, id, kind, command, timeout_seconds, retry_count)
 }
 
 fn parse_pdf_artifacts(
+    app: Option<&AppHandle>,
     vault: &Path,
     plan: &IngestPlan,
     runtime_path: Option<&str>,
@@ -4904,6 +5652,8 @@ fn parse_pdf_artifacts(
     pdf_parser: &str,
     cloud_parsing_allowed: bool,
     layout_parsing_api_url: &str,
+    timeout_seconds: usize,
+    retry_count: usize,
 ) -> Result<(Vec<String>, Vec<TaskLog>), String> {
     let parser = selected_pdf_parser(pdf_parser)?;
     if parser == "layout-api" && !cloud_parsing_allowed {
@@ -4961,7 +5711,16 @@ fn parse_pdf_artifacts(
                 layout_parsing_api_url.trim().to_string(),
             ]);
         }
-        let log = run_python_script_log(vault, "parse_pdfs", python_path, &script_path, &args)?;
+        let log = run_python_script_log(
+            app,
+            vault,
+            "parse_pdfs",
+            python_path,
+            &script_path,
+            &args,
+            timeout_seconds,
+            retry_count,
+        )?;
         if log.exit_code != 0 {
             let _ = update_ingest_job_record(
                 vault,
@@ -5063,6 +5822,7 @@ fn record_published_ingest(
 
 #[tauri::command]
 fn run_ingest_pipeline(
+    app: AppHandle,
     vault_path: String,
     runtime_path: Option<String>,
     python_path: String,
@@ -5071,6 +5831,8 @@ fn run_ingest_pipeline(
     pdf_parser: String,
     cloud_parsing_allowed: bool,
     layout_parsing_api_url: String,
+    timeout_seconds: usize,
+    retry_count: usize,
 ) -> Result<IngestPipelineResult, String> {
     let vault = PathBuf::from(vault_path);
     require_existing_dir(&vault, "vault")?;
@@ -5113,6 +5875,7 @@ fn run_ingest_pipeline(
         return Err("no unpublished ingest inputs are ready; parse blocked sources first or import Markdown/txt".to_string());
     }
     let (parsed_artifacts, mut logs) = parse_pdf_artifacts(
+        Some(&app),
         &vault,
         &initial_plan,
         runtime_path.as_deref(),
@@ -5120,6 +5883,8 @@ fn run_ingest_pipeline(
         &pdf_parser,
         cloud_parsing_allowed,
         &layout_parsing_api_url,
+        timeout_seconds,
+        retry_count,
     )?;
     let staged_artifacts = stage_text_artifacts(&vault)?;
     let final_plan = plan_ingest(to_display(&vault))?;
@@ -5157,12 +5922,15 @@ fn run_ingest_pipeline(
     }
     for kind in sequence {
         let log = run_runtime_task(
+            Some(&app),
             &vault,
             runtime_path.as_deref(),
             &python_path,
             kind,
             &obsidian_profile,
             skip_downloads,
+            timeout_seconds,
+            retry_count,
         )?;
         if log.exit_code != 0 {
             exit_code = log.exit_code;
@@ -5716,6 +6484,125 @@ mod tests {
 
         let _ = fs::remove_dir_all(vault);
     }
+
+    #[test]
+    fn entry_note_prefers_existing_home_and_warns_on_workspace_root() {
+        let vault = test_vault("entry-note");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        let entry = resolve_vault_entry_note_impl(&vault, true).expect("resolve entry");
+        assert_eq!(entry.entry_relative_path.as_deref(), Some("index.md"));
+
+        let workspace = test_vault("workspace-root");
+        fs::create_dir_all(workspace.join("deepseek_paper")).expect("deepseek dir");
+        fs::create_dir_all(workspace.join("vaults")).expect("vaults dir");
+        fs::create_dir_all(workspace.join("open-llm-wiki")).expect("runtime dir");
+        write_text(&workspace.join("AGENTS.md"), "rules").expect("agents");
+        let warning = resolve_vault_entry_note_impl(&workspace, true).expect("workspace entry");
+        assert!(warning.is_workspace_root);
+        assert!(warning.warning.is_some());
+
+        let _ = fs::remove_dir_all(vault);
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn runtime_job_times_out_and_writes_result_log() {
+        let vault = test_vault("job-timeout");
+        let log = run_process_job(
+            None,
+            &vault,
+            "job-timeout-test".to_string(),
+            "timeout_test",
+            vec!["/bin/sh".to_string(), "-c".to_string(), "sleep 2".to_string()],
+            1,
+            1,
+        )
+        .expect("run timeout job");
+        assert_eq!(log.exit_code, -1);
+        assert!(read_text(&PathBuf::from(&log.log_path)).contains("status: timeout"));
+        assert!(vault.join("_state").join("desktop-runtime-jobs.jsonl").is_file());
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn runtime_job_retry_count_reexecutes_failed_command() {
+        let vault = test_vault("job-retry");
+        let marker = vault.join("_state").join("retry-count.txt");
+        let marker_arg = marker.to_string_lossy().replace('\'', "'\\''");
+        let script = format!(
+            "count=$(cat '{marker_arg}' 2>/dev/null || echo 0); count=$((count + 1)); echo $count > '{marker_arg}'; if [ $count -lt 2 ]; then echo retry-fail; exit 7; fi; echo retry-ok; exit 0"
+        );
+        let log = run_process_job(
+            None,
+            &vault,
+            "job-retry-test".to_string(),
+            "retry_test",
+            vec!["/bin/sh".to_string(), "-c".to_string(), script],
+            5,
+            2,
+        )
+        .expect("run retry job");
+        assert_eq!(log.exit_code, 0);
+        assert!(log.stdout.contains("retry-fail"));
+        assert!(log.stdout.contains("retry-ok"));
+        assert_eq!(read_text(&marker).trim(), "2");
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn runtime_job_cancel_terminates_running_child() {
+        let vault = test_vault("job-cancel");
+        let job_id = "job-cancel-test".to_string();
+        let cancel_id = job_id.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(250));
+            cancel_runtime_job(cancel_id).expect("cancel job");
+        });
+        let log = run_process_job(
+            None,
+            &vault,
+            job_id,
+            "cancel_test",
+            vec!["/bin/sh".to_string(), "-c".to_string(), "sleep 5".to_string()],
+            10,
+            1,
+        )
+        .expect("run cancel job");
+        assert_eq!(log.exit_code, -1);
+        assert!(read_text(&PathBuf::from(&log.log_path)).contains("status: cancelled"));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn query_writeback_composer_creates_review_proposal_without_apply() {
+        let vault = test_vault("query-writeback");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        write_text(
+            &vault.join("claims").join("claims.jsonl"),
+            "{\"claim_id\":\"c1\",\"claim_text\":\"DeepSeek optimizes for efficient reasoning.\",\"verdict\":\"supported\",\"source_id\":\"LLM-0001\",\"source_path\":\"sources/LLM-0001.md\",\"evidence_quote\":\"efficient reasoning\"}\n",
+        )
+        .expect("write claim");
+        let draft = create_query_writeback_proposal(
+            to_display(&vault),
+            "Summarize DeepSeek research strategy".to_string(),
+            "reviews/query-writeback/deepseek-research-insights.md".to_string(),
+            "DeepSeek research insights".to_string(),
+        )
+        .expect("create query proposal");
+        assert_eq!(draft.proposal.status, "proposed");
+        assert_eq!(draft.evidence_map.len(), 1);
+        assert!(draft.answer.contains("## Evidence map"));
+        assert!(!vault
+            .join("reviews")
+            .join("query-writeback")
+            .join("deepseek-research-insights.md")
+            .exists());
+
+        let _ = fs::remove_dir_all(vault);
+    }
 }
 
 fn command_spec(
@@ -5813,6 +6700,119 @@ fn resolve_scripts_dir(vault: &Path, runtime_path: Option<&str>) -> Result<PathB
     )
 }
 
+fn is_workspace_root(path: &Path) -> bool {
+    path.join("deepseek_paper").is_dir()
+        && path.join("vaults").is_dir()
+        && path.join("open-llm-wiki").is_dir()
+}
+
+fn vault_entry_candidates(vault: &Path) -> Vec<PathBuf> {
+    let name = vault
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let mut candidates = Vec::new();
+    if name.contains("deepseek") {
+        candidates.extend([
+            vault.join("concepts/deepseek/research-strategy.md"),
+            vault.join("concepts/deepseek-research-strategy.md"),
+            vault.join("concepts/deepseek-decision-logic.md"),
+            vault.join("concepts/deepseek-evolution-forecast.md"),
+            vault.join("reviews/query-writeback/deepseek-research-insights.md"),
+        ]);
+    }
+    candidates.extend([
+        vault.join("Home.md"),
+        vault.join("index.md"),
+        vault.join("README.md"),
+        vault.join("LLM Wiki Home.md"),
+        vault.join("_dashboard.md"),
+    ]);
+    candidates
+}
+
+fn generated_entry_note(vault: &Path) -> PathBuf {
+    vault.join("LLM Wiki Home.md")
+}
+
+fn generate_entry_note(vault: &Path) -> Result<PathBuf, String> {
+    let path = generated_entry_note(vault);
+    if path.is_file() {
+        return Ok(path);
+    }
+    let sources = list_markdown(&vault.join("sources"));
+    let concepts = list_markdown(&vault.join("concepts"));
+    let reviews = count_jsonl(&vault.join("_state").join("science-review-queue.jsonl"));
+    let first_source = sources
+        .first()
+        .map(|path| rel_path(vault, path))
+        .unwrap_or_else(|| "sources/".to_string());
+    let first_concept = concepts
+        .first()
+        .map(|path| rel_path(vault, path))
+        .unwrap_or_else(|| "concepts/".to_string());
+    let rendered = format!(
+        "# LLM Wiki Home\n\n## Start Here\n\n- Sources: [[{}]]\n- Concepts: [[{}]]\n- Review queue: `_state/science-review-queue.jsonl` ({reviews} items)\n- Dashboard: [[_dashboard]]\n\n## Trust Boundary\n\nThis desktop entry note is a navigation aid. Claims, science review, and writeback approval remain runtime-owned state.\n",
+        first_source.trim_end_matches(".md"),
+        first_concept.trim_end_matches(".md")
+    );
+    write_text(&path, &rendered)?;
+    Ok(path)
+}
+
+fn resolve_vault_entry_note_impl(vault: &Path, create_if_missing: bool) -> Result<VaultEntryNote, String> {
+    require_existing_dir(vault, "vault")?;
+    let workspace_root_selected = is_workspace_root(vault);
+    let warning = workspace_root_selected.then(|| {
+        "This looks like the LLM-Wiki workspace root, not a generated vault. Choose a child vault under vaults/ to avoid opening the wrong Obsidian workspace.".to_string()
+    });
+    let mut reason = "matched existing entry note".to_string();
+    let entry = vault_entry_candidates(vault)
+        .into_iter()
+        .find(|path| path.is_file())
+        .or_else(|| {
+            if create_if_missing && !workspace_root_selected {
+                reason = "generated LLM Wiki Home.md entry note".to_string();
+                generate_entry_note(vault).ok()
+            } else {
+                reason = "no entry note found".to_string();
+                None
+            }
+        });
+    Ok(VaultEntryNote {
+        vault_path: to_display(vault),
+        entry_relative_path: entry.as_ref().map(|path| rel_path(vault, path)),
+        entry_path: entry.as_ref().map(|path| to_display(path)),
+        reason,
+        warning,
+        is_workspace_root: workspace_root_selected,
+    })
+}
+
+#[tauri::command]
+fn resolve_vault_entry_note(vault_path: String) -> Result<VaultEntryNote, String> {
+    resolve_vault_entry_note_impl(&PathBuf::from(vault_path), true)
+}
+
+fn percent_encode_uri_path(value: &str) -> String {
+    let mut out = String::new();
+    for &byte in value.as_bytes() {
+        match byte {
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'-'
+            | b'_'
+            | b'.'
+            | b'~'
+            | b'/' => out.push(char::from(byte)),
+            other => out.push_str(&format!("%{other:02X}")),
+        }
+    }
+    out
+}
+
 #[tauri::command]
 fn open_path(path: String) -> Result<(), String> {
     let target = PathBuf::from(path);
@@ -5836,21 +6836,34 @@ fn open_path(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn open_obsidian_vault(vault_path: String) -> Result<(), String> {
+fn open_obsidian_vault(vault_path: String) -> Result<VaultEntryNote, String> {
     let vault = PathBuf::from(vault_path);
     require_existing_dir(&vault, "vault")?;
+    let entry = resolve_vault_entry_note_impl(&vault, true)?;
     if cfg!(target_os = "macos") {
-        let status = Command::new("open")
-            .arg("-a")
-            .arg("Obsidian")
-            .arg(&vault)
-            .status()
-            .map_err(|e| format!("failed to launch Obsidian: {e}"))?;
-        if status.success() {
-            return Ok(());
+        if let Some(entry_path) = &entry.entry_path {
+            let uri = format!("obsidian://open?path={}", percent_encode_uri_path(entry_path));
+            let status = Command::new("open")
+                .arg(&uri)
+                .status()
+                .map_err(|e| format!("failed to launch Obsidian entry note: {e}"))?;
+            if status.success() {
+                return Ok(entry);
+            }
+        } else {
+            let status = Command::new("open")
+                .arg("-a")
+                .arg("Obsidian")
+                .arg(&vault)
+                .status()
+                .map_err(|e| format!("failed to launch Obsidian: {e}"))?;
+            if status.success() {
+                return Ok(entry);
+            }
         }
     }
-    open_path(to_display(&vault))
+    open_path(to_display(&vault))?;
+    Ok(entry)
 }
 
 pub fn run() {
@@ -5858,6 +6871,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            load_app_state,
+            save_last_selected_vault,
+            restore_last_selected_vault,
+            list_vault_suggestions,
             inspect_vault,
             create_vault,
             repair_obsidian_templates,
@@ -5872,17 +6889,21 @@ pub fn run() {
             list_claim_ledger,
             set_claim_verdict,
             list_evidence_paths,
+            list_traceability_warnings,
             list_review_queue,
             set_review_item_status,
             create_followup_action,
+            create_query_writeback_proposal,
             create_writeback_proposal,
             list_writeback_proposals,
             set_writeback_status,
             apply_writeback_proposal,
             create_diagnostic_bundle,
+            cancel_runtime_job,
             run_ingest_pipeline,
             run_runtime_command,
             open_path,
+            resolve_vault_entry_note,
             open_obsidian_vault
         ])
         .run(tauri::generate_context!())

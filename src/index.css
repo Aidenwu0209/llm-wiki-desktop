@@ -733,3 +733,130 @@ textarea {
   padding: 12px;
   font-size: 13px;
 }
+
+.error-box.subtle {
+  border-color: #d6aa54;
+  background: #fff8e8;
+  color: #755a24;
+}
+
+.warn-text {
+  color: #8a5d10;
+}
+
+.empty-vault {
+  display: grid;
+  gap: 14px;
+  border: 1px solid #cbd4cf;
+  border-radius: 8px;
+  background: #fff;
+  padding: 18px;
+}
+
+.empty-vault h2 {
+  margin: 0;
+  font-size: 21px;
+}
+
+.empty-vault p {
+  margin: 6px 0 0;
+  color: #64706a;
+  font-size: 13px;
+}
+
+.empty-actions,
+.create-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.empty-actions button {
+  padding: 0 12px;
+}
+
+.create-inline input {
+  flex: 1;
+  min-width: 360px;
+}
+
+.suggestion-list {
+  display: grid;
+  gap: 8px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.suggestion-list button {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 70px;
+  padding: 10px 10px 10px 92px;
+  text-align: left;
+  border-color: #d8ded9;
+  background: #fbfcfa;
+}
+
+.suggestion-list strong,
+.suggestion-list em,
+.suggestion-list code {
+  display: block;
+}
+
+.suggestion-list em {
+  margin-top: 4px;
+  color: #64706a;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.suggestion-list code {
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+  color: #40514a;
+  font-size: 11px;
+}
+
+.activity-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.activity-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+}
+
+.activity-meta span {
+  min-height: 32px;
+  border: 1px solid #d8ded9;
+  border-radius: 6px;
+  background: #fbfcfa;
+  padding: 7px 9px;
+  color: #40514a;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-log {
+  max-height: 180px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid #d8ded9;
+  border-radius: 6px;
+  background: #17201d;
+  color: #eaf1ec;
+  padding: 10px;
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+
+.composer-result {
+  display: grid;
+  gap: 8px;
+}

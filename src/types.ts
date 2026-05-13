@@ -39,6 +39,36 @@ export type VaultStatus = {
   errors: string[];
 };
 
+export type DesktopAppState = {
+  lastSelectedVault?: string | null;
+  recentVaults: string[];
+  updatedAt?: string | null;
+};
+
+export type VaultRestoreResult = {
+  state: DesktopAppState;
+  vaultPath?: string | null;
+  exists: boolean;
+  status?: VaultStatus | null;
+  error?: string | null;
+};
+
+export type VaultSuggestion = {
+  label: string;
+  path: string;
+  kind: string;
+  exists: boolean;
+};
+
+export type VaultEntryNote = {
+  vaultPath: string;
+  entryPath?: string | null;
+  entryRelativePath?: string | null;
+  reason: string;
+  warning?: string | null;
+  isWorkspaceRoot: boolean;
+};
+
 export type RuntimeSettings = {
   runtimePath: string;
   pythonPath: string;
@@ -47,6 +77,8 @@ export type RuntimeSettings = {
   pdfParser: "auto" | "local-text" | "layout-api";
   cloudParsingAllowed: boolean;
   layoutParsingApiUrl: string;
+  retryCount: number;
+  timeoutSeconds: number;
 };
 
 export type TaskLog = {
@@ -59,6 +91,24 @@ export type TaskLog = {
   stdout: string;
   stderr: string;
   logPath: string;
+};
+
+export type RuntimeJobEvent = {
+  jobId: string;
+  kind: string;
+  status: string;
+  stream?: "stdout" | "stderr" | string | null;
+  line?: string | null;
+  stage: string;
+  attempt: number;
+  maxAttempts: number;
+  command: string[];
+  startedAt: string;
+  endedAt?: string | null;
+  elapsedMs: number;
+  exitCode?: number | null;
+  logPath?: string | null;
+  message?: string | null;
 };
 
 export type ImportResult = {
@@ -261,6 +311,18 @@ export type ContractFinding = {
   path?: string | null;
 };
 
+export type TraceabilityWarning = {
+  warningId: string;
+  claimId: string;
+  claimPath: string;
+  sourcePath?: string | null;
+  artifactPath?: string | null;
+  missingHeading: string;
+  severity: "p0" | "p1" | "p2" | "p3" | string;
+  suggestedAction: string;
+  findingId?: string | null;
+};
+
 export type ClaimLedgerItem = {
   claimId: string;
   claimText: string;
@@ -322,6 +384,24 @@ export type WritebackProposal = {
   updatedAt: string;
   appliedAt?: string | null;
   logPath?: string | null;
+};
+
+export type QueryEvidence = {
+  claimId: string;
+  sourceId?: string | null;
+  sourcePath?: string | null;
+  quote?: string | null;
+  conclusionType: string;
+  confidence: string;
+};
+
+export type QueryWritebackDraft = {
+  query: string;
+  answer: string;
+  evidenceMap: QueryEvidence[];
+  insightCandidates: string[];
+  uncertaintyConflicts: string[];
+  proposal: WritebackProposal;
 };
 
 export type IngestPipelineResult = {
