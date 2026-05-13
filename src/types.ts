@@ -388,9 +388,15 @@ export type WritebackProposal = {
 
 export type QueryEvidence = {
   claimId: string;
+  claimPath: string;
+  claimText: string;
   sourceId?: string | null;
   sourcePath?: string | null;
+  evidenceHash?: string | null;
   quote?: string | null;
+  verdict: string;
+  status: string;
+  concepts: string[];
   conclusionType: string;
   confidence: string;
 };

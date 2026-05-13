@@ -33,6 +33,7 @@ import {
   cancelRuntimeJob,
   importSources,
   inspectVault,
+  isTauriAvailable,
   listClaimLedger,
   listEvidencePaths,
   listReviewQueue,
@@ -47,8 +48,6 @@ import {
   repairObsidianTemplates,
   resolveVaultEntryNote,
   runIngestLint,
-  runIngestPipeline,
-  runRuntimeCommand,
   saveDesktopSettings,
   saveLastSelectedVault,
   setClaimVerdict,
@@ -56,6 +55,8 @@ import {
   setIngestJobStatus,
   setReviewItemStatus,
   setWritebackStatus,
+  startIngestPipelineJob,
+  startRuntimeCommandJob,
   restoreLastSelectedVault,
 } from "./tauri";
 import type {
@@ -105,6 +106,8 @@ const pipeline = [
   "Concept revision",
   "Lint",
 ];
+
+const terminalRuntimeStatuses = ["succeeded", "failed", "timeout", "cancelled"];
 
 const initialDesktopSettings: DesktopSettings = {
   runtimePath: "",
@@ -225,6 +228,7 @@ function App() {
   const registry = ingestPlan?.registry ?? [];
   const impactEdges = ingestPlan?.impactEdges ?? [];
   const lintFindings = ingestPlan?.lintFindings ?? [];
+  const runtimeRunning = Boolean(activeJob && !activeJob.endedAt && !terminalRuntimeStatuses.includes(activeJob.status));
   const visibleActions = actions.filter((action) => actionFilter === "all" || action.status === actionFilter);
   const visibleClaims = claims.filter((claim) => {
     if (claimFilter === "all") return true;
@@ -247,6 +251,12 @@ function App() {
   useEffect(() => {
     let ignore = false;
     async function boot() {
+      if (!isTauriAvailable()) {
+        setAppState({ recentVaults: [] });
+        setVaultSuggestions([]);
+        setRestoreError(null);
+        return;
+      }
       try {
         const [restore, suggestions] = await Promise.all([
           restoreLastSelectedVault(),
@@ -273,6 +283,7 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!isTauriAvailable()) return;
     let unlisten: (() => void) | null = null;
     listen<RuntimeJobEvent>("runtime-job-event", (event) => {
       const next = event.payload;
@@ -288,6 +299,13 @@ function App() {
       }
       if (next.endedAt) {
         setRuntimeHistory((current) => [next, ...current.filter((item) => item.jobId !== next.jobId)].slice(0, 40));
+        if (["failed", "timeout", "cancelled"].includes(next.status)) {
+          setError(`${next.kind} ${next.status}: ${next.message || "see runtime history"}`);
+        }
+        if (vaultPath) {
+          void listRuntimeJobs(vaultPath).then(setRuntimeHistory).catch((err) => setError(String(err)));
+          void refresh(vaultPath);
+        }
       }
     }).then((dispose) => {
       unlisten = dispose;
@@ -295,7 +313,7 @@ function App() {
     return () => {
       unlisten?.();
     };
-  }, []);
+  }, [vaultPath]);
 
   async function refresh(path = vaultPath) {
     if (!path) return;
@@ -432,14 +450,14 @@ function App() {
 
   async function handleRuntime(kind: string) {
     if (!vaultPath) return;
-    setBusy(kind);
+    setBusy(`start:${kind}`);
     setError(null);
     setLiveLogLines([]);
     try {
-      const log = await runRuntimeCommand(vaultPath, rt, kind);
-      setLogs((current) => [log, ...current].slice(0, 12));
-      await refresh();
-      if (log.exitCode !== 0) setError(`${kind} 失败，exit code ${log.exitCode}`);
+      const job = await startRuntimeCommandJob(vaultPath, rt, kind);
+      setActiveJob(job);
+      setRuntimeHistory((current) => [job, ...current.filter((item) => item.jobId !== job.jobId)].slice(0, 40));
+      setLiveLogLines([`${job.status} | ${job.message || "queued"} | ${job.jobId}`]);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -571,14 +589,14 @@ function App() {
 
   async function handleIngestPipeline() {
     if (!vaultPath) return;
-    setBusy("ingest_pipeline");
+    setBusy("start:ingest_pipeline");
     setError(null);
     setLiveLogLines([]);
     try {
-      const result = await runIngestPipeline(vaultPath, rt);
-      setLogs((current) => [...result.logs, ...current].slice(0, 12));
-      await refresh();
-      if (result.exitCode !== 0) setError(`ingest pipeline 失败，exit code ${result.exitCode}`);
+      const job = await startIngestPipelineJob(vaultPath, rt);
+      setActiveJob(job);
+      setRuntimeHistory((current) => [job, ...current.filter((item) => item.jobId !== job.jobId)].slice(0, 40));
+      setLiveLogLines([`${job.status} | ${job.message || "queued"} | ${job.jobId}`]);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -864,13 +882,13 @@ function App() {
         <section className="action-strip">
           <button onClick={handlePlanIngest} disabled={!vaultPath || busy === "plan_ingest"}><ListChecks size={16} />规划 ingest</button>
           <button onClick={handleIngestLint} disabled={!vaultPath || busy === "ingest_lint"}><ShieldCheck size={16} />合约 lint</button>
-          <button onClick={handleIngestPipeline} disabled={!vaultPath || busy === "ingest_pipeline" || (runnableIngest + parseablePdfs) === 0}><Play size={16} />运行 ingest pipeline</button>
+          <button onClick={handleIngestPipeline} disabled={!vaultPath || runtimeRunning || busy === "start:ingest_pipeline" || (runnableIngest + parseablePdfs) === 0}><Play size={16} />运行 ingest pipeline</button>
           <button onClick={handleRepairTemplates} disabled={!vaultPath || busy === "repair_templates"}><Wrench size={16} />修复模板</button>
           <button onClick={handleDiagnostic} disabled={!vaultPath || busy === "diagnostic"}><TerminalSquare size={16} />诊断 bundle</button>
           {runtimeActions.map((action) => {
             const Icon = action.icon;
             return (
-              <button key={action.id} onClick={() => handleRuntime(action.id)} disabled={!vaultPath || busy === action.id}>
+              <button key={action.id} onClick={() => handleRuntime(action.id)} disabled={!vaultPath || runtimeRunning || busy === `start:${action.id}`}>
                 <Icon size={16} />{action.label}
               </button>
             );
@@ -889,9 +907,9 @@ function App() {
             <span>Timeout: {desktopSettings.timeoutSeconds}s</span>
           </div>
           <div className="inline-actions">
-            <button onClick={handleCancelRuntimeJob} disabled={!activeJob || ["succeeded", "failed", "timeout", "cancelled"].includes(activeJob.status)}><XCircle size={14} />取消当前 job</button>
+            <button onClick={handleCancelRuntimeJob} disabled={!activeJob || terminalRuntimeStatuses.includes(activeJob.status)}><XCircle size={14} />取消当前 job</button>
             <button onClick={() => activeJob?.logPath && openPath(activeJob.logPath)} disabled={!activeJob?.logPath}><TerminalSquare size={14} />打开结果日志</button>
-            <button onClick={() => activeJob && handleRetryRuntimeJob(activeJob)} disabled={!activeJob || !["failed", "timeout", "cancelled"].includes(activeJob.status)}><RotateCcw size={14} />重试同类任务</button>
+            <button onClick={() => activeJob && handleRetryRuntimeJob(activeJob)} disabled={!activeJob || runtimeRunning || !["failed", "timeout", "cancelled"].includes(activeJob.status)}><RotateCcw size={14} />重试同类任务</button>
           </div>
           <pre className="live-log">{liveLogLines.length ? liveLogLines.join("\n") : "Runtime stdout/stderr will stream here while commands run."}</pre>
           <div className="runtime-history">
@@ -904,7 +922,7 @@ function App() {
                 <code>{job.logPath || job.message || job.command.join(" ")}</code>
                 <div className="history-actions">
                   <button type="button" onClick={() => job.logPath && openPath(job.logPath)} disabled={!job.logPath}><TerminalSquare size={12} />log</button>
-                  <button type="button" onClick={() => handleRetryRuntimeJob(job)} disabled={!["failed", "timeout", "cancelled"].includes(job.status)}><RotateCcw size={12} />retry</button>
+                  <button type="button" onClick={() => handleRetryRuntimeJob(job)} disabled={runtimeRunning || !["failed", "timeout", "cancelled"].includes(job.status)}><RotateCcw size={12} />retry</button>
                 </div>
               </div>
             ))}
@@ -1052,11 +1070,11 @@ function App() {
                   <strong>Evidence map</strong>
                   <div className="impact-list compact">
                     {queryDraft.evidenceMap.map((item) => (
-                      <button key={item.claimId} onClick={() => item.sourcePath && openPath(vaultFilePath(item.sourcePath))}>
+                      <button key={item.claimId} onClick={() => openPath(vaultFilePath(item.sourcePath || item.claimPath))}>
                         <span className="status-chip proposed">{item.conclusionType}</span>
-                        <strong>{item.claimId}</strong>
-                        <em>{item.sourceId || item.sourcePath || "source unknown"} · {item.confidence}</em>
-                        <code>{item.quote || "hash-backed evidence without quote"}</code>
+                        <strong>{item.claimText || item.claimId}</strong>
+                        <em>{item.sourceId || item.sourcePath || "source unknown"} · {item.verdict}/{item.status} · {item.confidence}</em>
+                        <code>{item.quote || item.evidenceHash || "claim text without direct quote"}{item.concepts.length ? ` · ${item.concepts.join(", ")}` : ""}</code>
                       </button>
                     ))}
                   </div>

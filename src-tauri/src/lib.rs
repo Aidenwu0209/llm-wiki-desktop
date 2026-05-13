@@ -533,9 +533,15 @@ struct WritebackProposal {
 #[serde(rename_all = "camelCase")]
 struct QueryEvidence {
     claim_id: String,
+    claim_path: String,
+    claim_text: String,
     source_id: Option<String>,
     source_path: Option<String>,
+    evidence_hash: Option<String>,
     quote: Option<String>,
+    verdict: String,
+    status: String,
+    concepts: Vec<String>,
     conclusion_type: String,
     confidence: String,
 }
@@ -3912,7 +3918,9 @@ fn load_existing_evidence_anchor_findings(vault: &Path) -> Vec<ContractFinding> 
                 .unwrap_or_else(|| {
                     format!(
                         "runtime-{}",
-                        short_hash(&sha256_text(&serde_json::to_string(&value).unwrap_or_default()))
+                        short_hash(&sha256_text(
+                            &serde_json::to_string(&value).unwrap_or_default()
+                        ))
                     )
                 }),
             severity: json_string(&value, "severity").unwrap_or_else(|| "p2".to_string()),
@@ -3975,12 +3983,7 @@ fn write_ingest_plan(vault: &Path, entries: Vec<IngestPlanEntry>) -> Result<Inge
         lint_ingest_contracts(vault, &registry, &artifacts, &jobs, &impact_edges);
     let mut seen_findings = lint_findings
         .iter()
-        .map(|finding| {
-            format!(
-                "{}:{}:{}",
-                finding.kind, finding.object_id, finding.detail
-            )
-        })
+        .map(|finding| format!("{}:{}:{}", finding.kind, finding.object_id, finding.detail))
         .collect::<HashSet<_>>();
     for finding in load_existing_evidence_anchor_findings(vault) {
         let key = format!("{}:{}:{}", finding.kind, finding.object_id, finding.detail);
@@ -4452,7 +4455,11 @@ fn list_traceability_warnings(vault_path: String) -> Result<Vec<TraceabilityWarn
             finding_id: Some(finding.finding_id.clone()),
         });
     }
-    warnings.sort_by(|a, b| a.severity.cmp(&b.severity).then(a.claim_id.cmp(&b.claim_id)));
+    warnings.sort_by(|a, b| {
+        a.severity
+            .cmp(&b.severity)
+            .then(a.claim_id.cmp(&b.claim_id))
+    });
     Ok(warnings)
 }
 
@@ -4748,18 +4755,16 @@ enum WritebackTargetKind {
 }
 
 fn writeback_target_kind(vault: &Path, target: &Path) -> Result<WritebackTargetKind, String> {
-    let target_resolved = target.canonicalize().unwrap_or_else(|_| target.to_path_buf());
-    let concepts_root = vault.join("concepts");
-    let concepts_resolved = concepts_root
+    let target_resolved = target
         .canonicalize()
-        .unwrap_or(concepts_root);
+        .unwrap_or_else(|_| target.to_path_buf());
+    let concepts_root = vault.join("concepts");
+    let concepts_resolved = concepts_root.canonicalize().unwrap_or(concepts_root);
     if target_resolved.starts_with(&concepts_resolved) {
         return Ok(WritebackTargetKind::Concept);
     }
     let review_root = vault.join("reviews").join("query-writeback");
-    let review_resolved = review_root
-        .canonicalize()
-        .unwrap_or(review_root);
+    let review_resolved = review_root.canonicalize().unwrap_or(review_root);
     if target_resolved.starts_with(&review_resolved) {
         return Ok(WritebackTargetKind::ReviewProposal);
     }
@@ -4836,25 +4841,58 @@ fn load_writeback_proposal(vault: &Path, proposal_id: &str) -> Result<WritebackP
 }
 
 fn query_evidence_items(vault: &Path) -> Vec<QueryEvidence> {
-    claim_ledger_items(vault)
+    let mut claims = claim_ledger_items(vault)
         .into_iter()
-        .filter(|claim| claim.evidence_quote.is_some() || claim.evidence_hash.is_some())
-        .take(12)
-        .map(|claim| QueryEvidence {
-            claim_id: claim.claim_id,
-            source_id: claim.source_id,
-            source_path: claim.source_path,
-            quote: claim.evidence_quote,
-            conclusion_type: if matches!(claim.verdict.as_str(), "supported") {
-                "evidence-backed conclusion".to_string()
+        .filter(|claim| {
+            claim.evidence_quote.is_some()
+                || claim.evidence_hash.is_some()
+                || !claim.claim_text.trim().is_empty()
+        })
+        .collect::<Vec<_>>();
+    claims.sort_by_key(|claim| {
+        let review_rank = match claim.verdict.as_str() {
+            "supported" => 0,
+            "needs_review" => 1,
+            "stale" | "contradicted" => 2,
+            _ => 3,
+        };
+        let evidence_rank = usize::from(claim.evidence_quote.is_none());
+        (review_rank, evidence_rank, claim.line)
+    });
+    claims
+        .into_iter()
+        .take(16)
+        .map(|claim| {
+            let conclusion_type = if matches!(claim.verdict.as_str(), "supported") {
+                "evidence-backed conclusion"
+            } else if matches!(claim.verdict.as_str(), "contradicted" | "stale") {
+                "conflict or stale evidence"
             } else {
-                "inference needs review".to_string()
-            },
-            confidence: if matches!(claim.verdict.as_str(), "supported") {
-                "medium".to_string()
+                "inference needs review"
+            };
+            let confidence = if matches!(claim.verdict.as_str(), "supported")
+                && (claim.evidence_quote.is_some() || claim.evidence_hash.is_some())
+            {
+                "medium"
+            } else if matches!(claim.verdict.as_str(), "contradicted" | "stale") {
+                "blocked by conflict"
             } else {
-                "low until reviewed".to_string()
-            },
+                "low until reviewed"
+            };
+            QueryEvidence {
+                claim_id: claim.claim_id,
+                claim_path: "claims/claims.jsonl".to_string(),
+                claim_text: claim.claim_text,
+                source_id: claim.source_id,
+                source_path: claim.source_path,
+                evidence_hash: claim.evidence_hash,
+                quote: claim.evidence_quote,
+                verdict: claim.verdict,
+                status: claim.status,
+                concepts: claim.concepts,
+                conclusion_type: conclusion_type.to_string(),
+                confidence: confidence.to_string(),
+            }
         })
         .collect()
 }
@@ -4881,6 +4919,21 @@ fn render_query_writeback_content(
         .as_ref()
         .map(|status| status.counts.concepts)
         .unwrap_or_default();
+    let source_refs = list_markdown(&vault.join("sources"))
+        .into_iter()
+        .take(8)
+        .map(|path| rel_path(vault, &path))
+        .collect::<Vec<_>>();
+    let concept_refs = list_markdown(&vault.join("concepts"))
+        .into_iter()
+        .take(8)
+        .map(|path| rel_path(vault, &path))
+        .collect::<Vec<_>>();
+    let supported_count = evidence
+        .iter()
+        .filter(|item| item.conclusion_type == "evidence-backed conclusion")
+        .count();
+    let review_evidence_count = evidence.len().saturating_sub(supported_count);
 
     let mut evidence_map = String::new();
     if evidence.is_empty() {
@@ -4888,51 +4941,97 @@ fn render_query_writeback_content(
     } else {
         for item in evidence {
             evidence_map.push_str(&format!(
-                "- `{}` ({}) -> {}{}\n",
+                "- `{}` ({}) -> {} | claim: {}{}{}{}\n",
                 item.claim_id,
                 item.conclusion_type,
                 item.quote
                     .as_deref()
                     .unwrap_or("evidence hash present, quote missing"),
-                item.source_id
+                item.claim_text,
+                item.source_path
                     .as_ref()
-                    .map(|id| format!(" [source: `{id}`]"))
-                    .unwrap_or_default()
+                    .map(|path| format!(" | source: `{path}`"))
+                    .unwrap_or_default(),
+                item.evidence_hash
+                    .as_ref()
+                    .map(|hash| format!(" | hash: `{}`", hash.chars().take(16).collect::<String>()))
+                    .unwrap_or_default(),
+                if item.concepts.is_empty() {
+                    String::new()
+                } else {
+                    format!(" | concepts: {}", item.concepts.join(", "))
+                }
             ));
         }
     }
 
+    let mut source_index = String::new();
+    if source_refs.is_empty() {
+        source_index.push_str("- No generated source pages found yet.\n");
+    } else {
+        for path in &source_refs {
+            source_index.push_str(&format!("- `{path}`\n"));
+        }
+    }
+
+    let mut concept_index = String::new();
+    if concept_refs.is_empty() {
+        concept_index.push_str("- No concept pages found yet.\n");
+    } else {
+        for path in &concept_refs {
+            concept_index.push_str(&format!("- `{path}`\n"));
+        }
+    }
+
+    let strongest_claims = evidence
+        .iter()
+        .take(4)
+        .map(|item| format!("`{}`: {}", item.claim_id, item.claim_text))
+        .collect::<Vec<_>>();
+    let strongest_summary = if strongest_claims.is_empty() {
+        "当前 vault 尚未提供足够 claim 证据，回答只能停留在待补证据的 proposal。".to_string()
+    } else {
+        strongest_claims.join("; ")
+    };
+
     let insight_candidates = vec![
         format!(
-            "Evidence-backed conclusion: 当前 vault 已有 {source_count} 个 source 和 {concept_count} 个 concept，可先从 supported claims 提炼稳定研发路线。"
+            "Evidence-backed conclusion: 当前 vault 已有 {source_count} 个 source、{concept_count} 个 concept、{supported_count} 条优先 evidence claim，可作为研发路线总结的稳定输入。"
         ),
-        "Inference: DeepSeek 的研发叙事应按问题选择、资源约束、架构/训练/数据/eval 决策拆开，而不是混成单段总结。".to_string(),
+        format!(
+            "Evidence-backed conclusion: 先从这些 claim 提炼确定性内容：{strongest_summary}"
+        ),
+        "Inference: DeepSeek 的研发叙事应按问题选择、资源约束、架构/训练/数据/eval 决策拆开，并要求每个小结回链到 claim/source。".to_string(),
         "Hypothesis: 若 review queue 中的 claims 未解决，策略洞察应标记为待确认，不应进入稳定 concept。".to_string(),
-        "Forecast: 后续演进方向只能作为预测候选，需要保留证据缺口和冲突说明。".to_string(),
+        "Forecast: 后续演进方向只能作为预测候选，需要保留证据缺口、冲突说明和人工确认项。".to_string(),
     ];
     let uncertainty_conflicts = vec![
         format!("{review_count} 个 claim/review 项仍需要人工确认。"),
+        format!("{review_evidence_count} 条 composer evidence 不是 supported verdict，必须标为 inference 或待审证据。"),
         format!("{contradicted} 个 contradicted claim 可能影响最终 insight。"),
         "Composer 不调用外部 LLM；当前草稿基于 vault 内 evidence map 生成，需要人工审阅后再 apply。".to_string(),
     ];
-    let mut rendered = format!(
-        "## Query\n\n{}\n\n## Answer\n\n",
-        query.trim()
-    );
-    rendered.push_str(
-        "### Evidence-backed conclusions\n\n- 只把 vault 中已有 quote/hash 或 supported verdict 的 claim 当作确定性依据。\n\n",
-    );
-    rendered.push_str(
-        "### Inference\n\n- 将 DeepSeek 研发思路拆为问题选择、资源约束、架构/训练/数据/eval 决策逻辑，用下方 evidence map 逐条回查。\n\n",
-    );
-    rendered.push_str(
-        "### Hypothesis\n\n- 未完成 science review 的 claim 只能支持待确认洞察，不能直接写成事实。\n\n",
-    );
-    rendered.push_str(
-        "### Forecast\n\n- 技术演进方向应作为 forecast 保存，并列出风险、冲突和需要人工确认的证据。\n\n",
-    );
+    let mut rendered = format!("## Query\n\n{}\n\n## Answer\n\n", query.trim());
+    rendered.push_str("### Evidence-backed conclusions\n\n");
+    if supported_count == 0 {
+        rendered.push_str("- 当前 vault 没有 supported evidence claim；确定性结论不足，proposal 应保持 review-only。\n\n");
+    } else {
+        rendered.push_str(&format!(
+            "- 以 {supported_count} 条 supported/evidence-backed claim 为确定性输入，优先总结已被 source/claim 链支撑的研发路线。\n- 当前可引用的 source/concept 规模为 {source_count} sources / {concept_count} concepts。\n\n"
+        ));
+    }
+    rendered.push_str("### Inference\n\n");
+    rendered.push_str("- 将 DeepSeek 研发思路拆为问题选择、资源约束、架构/训练/数据/eval 决策逻辑；任何没有 supported verdict 的内容必须保留为 inference。\n\n");
+    rendered.push_str("### Hypothesis\n\n");
+    rendered.push_str("- 未完成 science review 的 claim 只能支持待确认洞察，不能直接写成事实。若 evidence-anchor 或 review 状态异常，应先生成 follow-up action。\n\n");
+    rendered.push_str("### Forecast\n\n");
+    rendered.push_str("- 技术演进方向应作为 forecast 保存，不能写成事实；forecast 必须列出来源、证据缺口、冲突和人工确认要求。\n\n");
     rendered.push_str("## Evidence map\n\n");
     rendered.push_str(&evidence_map);
+    rendered.push_str("\n## Source index\n\n");
+    rendered.push_str(&source_index);
+    rendered.push_str("\n## Concept index\n\n");
+    rendered.push_str(&concept_index);
     rendered.push_str("\n## Insight candidates\n\n");
     for insight in &insight_candidates {
         rendered.push_str(&format!("- {insight}\n"));
@@ -4942,7 +5041,7 @@ fn render_query_writeback_content(
         rendered.push_str(&format!("- {item}\n"));
     }
     rendered.push_str(
-        "\n## Writeback proposal\n\nTarget this as a review artifact first. Do not apply to concepts until a human approves the proposal.\n\n## Diff preview\n\nGenerated by desktop writeback proposal before apply.\n\n## Approval status\n\nproposed\n",
+        "\n## Writeback proposal\n\nTarget this as a review artifact first. Do not apply to concepts until a human approves the proposal.\n\n## Diff preview\n\nGenerated by desktop writeback proposal before apply; the diff is stored on the proposal object and shown in the desktop approval gate.\n\n## Approval status\n\nproposed\n",
     );
     (rendered, insight_candidates, uncertainty_conflicts)
 }
@@ -5242,6 +5341,38 @@ fn run_runtime_command(
     timeout_seconds: usize,
     retry_count: usize,
 ) -> Result<TaskLog, String> {
+    run_runtime_command_impl(
+        app,
+        vault_path,
+        runtime_path,
+        python_path,
+        kind,
+        obsidian_profile,
+        skip_downloads,
+        pdf_parser,
+        cloud_parsing_allowed,
+        layout_parsing_api_url,
+        timeout_seconds,
+        retry_count,
+        None,
+    )
+}
+
+fn run_runtime_command_impl(
+    app: AppHandle,
+    vault_path: String,
+    runtime_path: Option<String>,
+    python_path: String,
+    kind: String,
+    obsidian_profile: String,
+    skip_downloads: bool,
+    pdf_parser: String,
+    cloud_parsing_allowed: bool,
+    layout_parsing_api_url: String,
+    timeout_seconds: usize,
+    retry_count: usize,
+    job_id_override: Option<String>,
+) -> Result<TaskLog, String> {
     let vault = PathBuf::from(vault_path);
     require_existing_dir(&vault, "vault")?;
     if kind == "parse_pdfs" {
@@ -5257,6 +5388,7 @@ fn run_runtime_command(
             &layout_parsing_api_url,
             timeout_seconds,
             retry_count,
+            job_id_override,
         )?;
         if logs.is_empty() {
             return synthetic_task_log(
@@ -5277,7 +5409,77 @@ fn run_runtime_command(
         skip_downloads,
         timeout_seconds,
         retry_count,
+        job_id_override,
     )
+}
+
+#[tauri::command]
+fn start_runtime_command_job(
+    app: AppHandle,
+    vault_path: String,
+    runtime_path: Option<String>,
+    python_path: String,
+    kind: String,
+    obsidian_profile: String,
+    skip_downloads: bool,
+    pdf_parser: String,
+    cloud_parsing_allowed: bool,
+    layout_parsing_api_url: String,
+    timeout_seconds: usize,
+    retry_count: usize,
+) -> Result<RuntimeJobEvent, String> {
+    let vault = PathBuf::from(&vault_path);
+    require_existing_dir(&vault, "vault")?;
+    let job_id = new_runtime_job_id(&kind);
+    let started_at = Local::now().to_rfc3339();
+    let command = vec!["desktop:runtime_command".to_string(), kind.clone()];
+    let start_event = runtime_job_start_event(
+        &job_id,
+        &kind,
+        command.clone(),
+        started_at.clone(),
+        retry_count.max(1),
+        "background runtime job queued",
+    );
+    append_runtime_job_state(&vault, &start_event)?;
+    emit_runtime_event(Some(&app), start_event.clone());
+
+    thread::spawn(move || {
+        let started = Instant::now();
+        let result = run_runtime_command_impl(
+            app.clone(),
+            vault_path.clone(),
+            runtime_path,
+            python_path,
+            kind.clone(),
+            obsidian_profile,
+            skip_downloads,
+            pdf_parser,
+            cloud_parsing_allowed,
+            layout_parsing_api_url,
+            timeout_seconds,
+            retry_count,
+            Some(job_id.clone()),
+        );
+        match result {
+            Ok(log) if log.id == job_id => {}
+            other => {
+                let finish_event = runtime_job_finish_event(
+                    job_id,
+                    kind,
+                    command,
+                    started_at,
+                    started,
+                    retry_count.max(1),
+                    other,
+                );
+                emit_runtime_event(Some(&app), finish_event.clone());
+                let _ = append_runtime_job_state(&PathBuf::from(vault_path), &finish_event);
+            }
+        }
+    });
+
+    Ok(start_event)
 }
 
 fn synthetic_task_log(vault: &Path, kind: &str, stdout: &str) -> Result<TaskLog, String> {
@@ -5333,6 +5535,34 @@ fn clear_runtime_job_cancel(job_id: &str) {
     }
 }
 
+fn sanitize_job_kind(kind: &str) -> String {
+    let sanitized = kind
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    if sanitized.is_empty() {
+        "runtime".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn new_runtime_job_id(kind: &str) -> String {
+    let now = Local::now();
+    format!(
+        "{}-{:03}-{}",
+        now.format("%Y%m%d-%H%M%S"),
+        now.timestamp_subsec_millis(),
+        sanitize_job_kind(kind)
+    )
+}
+
 fn emit_runtime_event(app: Option<&AppHandle>, event: RuntimeJobEvent) {
     if let Some(app) = app {
         let _ = app.emit("runtime-job-event", event);
@@ -5351,13 +5581,100 @@ fn append_runtime_job_state(vault: &Path, event: &RuntimeJobEvent) -> Result<(),
 fn list_runtime_jobs(vault_path: String) -> Result<Vec<RuntimeJobEvent>, String> {
     let vault = PathBuf::from(vault_path);
     require_existing_dir(&vault, "vault")?;
-    let mut jobs = read_text(&vault.join("_state").join("desktop-runtime-jobs.jsonl"))
+    let mut by_job = HashMap::<String, RuntimeJobEvent>::new();
+    for event in read_text(&vault.join("_state").join("desktop-runtime-jobs.jsonl"))
         .lines()
         .filter_map(|line| serde_json::from_str::<RuntimeJobEvent>(line).ok())
-        .collect::<Vec<_>>();
+    {
+        by_job.insert(event.job_id.clone(), event);
+    }
+    let mut jobs = by_job.into_values().collect::<Vec<_>>();
     jobs.sort_by(|a, b| b.started_at.cmp(&a.started_at));
     jobs.truncate(40);
     Ok(jobs)
+}
+
+fn runtime_job_start_event(
+    job_id: &str,
+    kind: &str,
+    command: Vec<String>,
+    started_at: String,
+    max_attempts: usize,
+    message: &str,
+) -> RuntimeJobEvent {
+    RuntimeJobEvent {
+        job_id: job_id.to_string(),
+        kind: kind.to_string(),
+        status: "running".to_string(),
+        stream: None,
+        line: None,
+        stage: "queued".to_string(),
+        attempt: 1,
+        max_attempts,
+        command,
+        started_at,
+        ended_at: None,
+        elapsed_ms: 0,
+        exit_code: None,
+        log_path: None,
+        message: Some(message.to_string()),
+    }
+}
+
+fn runtime_job_finish_event(
+    job_id: String,
+    kind: String,
+    command: Vec<String>,
+    started_at: String,
+    started: Instant,
+    max_attempts: usize,
+    result: Result<TaskLog, String>,
+) -> RuntimeJobEvent {
+    let ended_at = Local::now().to_rfc3339();
+    match result {
+        Ok(log) => RuntimeJobEvent {
+            job_id,
+            kind,
+            status: if log.exit_code == 0 {
+                "succeeded".to_string()
+            } else {
+                "failed".to_string()
+            },
+            stream: None,
+            line: None,
+            stage: "finished".to_string(),
+            attempt: max_attempts,
+            max_attempts,
+            command,
+            started_at,
+            ended_at: Some(ended_at),
+            elapsed_ms: started.elapsed().as_millis(),
+            exit_code: Some(log.exit_code),
+            log_path: Some(log.log_path),
+            message: Some(if log.exit_code == 0 {
+                "completed".to_string()
+            } else {
+                "completed with non-zero exit; see child task log".to_string()
+            }),
+        },
+        Err(error) => RuntimeJobEvent {
+            job_id,
+            kind,
+            status: "failed".to_string(),
+            stream: None,
+            line: None,
+            stage: "finished".to_string(),
+            attempt: 1,
+            max_attempts,
+            command,
+            started_at,
+            ended_at: Some(ended_at),
+            elapsed_ms: started.elapsed().as_millis(),
+            exit_code: Some(-1),
+            log_path: None,
+            message: Some(error),
+        },
+    }
 }
 
 fn run_process_job(
@@ -5385,26 +5702,27 @@ fn run_process_job(
 
     for attempt in 1..=max_attempts {
         last_attempt = attempt;
-        emit_runtime_event(
-            app,
-            RuntimeJobEvent {
-                job_id: job_id.clone(),
-                kind: kind.to_string(),
-                status: "running".to_string(),
-                stream: None,
-                line: None,
-                stage: format!("attempt {attempt}/{max_attempts}"),
-                attempt,
-                max_attempts,
-                command: command.clone(),
-                started_at: started_at.clone(),
-                ended_at: None,
-                elapsed_ms: started.elapsed().as_millis(),
-                exit_code: None,
-                log_path: None,
-                message: Some("started".to_string()),
-            },
-        );
+        let started_event = RuntimeJobEvent {
+            job_id: job_id.clone(),
+            kind: kind.to_string(),
+            status: "running".to_string(),
+            stream: None,
+            line: None,
+            stage: format!("attempt {attempt}/{max_attempts}"),
+            attempt,
+            max_attempts,
+            command: command.clone(),
+            started_at: started_at.clone(),
+            ended_at: None,
+            elapsed_ms: started.elapsed().as_millis(),
+            exit_code: None,
+            log_path: None,
+            message: Some("started".to_string()),
+        };
+        emit_runtime_event(app, started_event.clone());
+        if attempt == 1 {
+            let _ = append_runtime_job_state(vault, &started_event);
+        }
 
         let mut child = Command::new(&command[0])
             .args(command.iter().skip(1))
@@ -5613,6 +5931,7 @@ fn run_runtime_task(
     skip_downloads: bool,
     timeout_seconds: usize,
     retry_count: usize,
+    job_id_override: Option<String>,
 ) -> Result<TaskLog, String> {
     let (script, mut args) = command_spec(kind, vault, obsidian_profile, skip_downloads)?;
     let scripts_dir = resolve_scripts_dir(vault, runtime_path)?;
@@ -5623,11 +5942,9 @@ fn run_runtime_task(
             script_path.display()
         ));
     }
-    let started_at = Local::now().to_rfc3339();
     let mut command = vec![python_path.to_string(), to_display(&script_path)];
     command.append(&mut args);
-    let id = format!("{}-{}", Local::now().format("%Y%m%d-%H%M%S"), kind);
-    let _ = started_at;
+    let id = job_id_override.unwrap_or_else(|| new_runtime_job_id(kind));
     run_process_job(app, vault, id, kind, command, timeout_seconds, retry_count)
 }
 
@@ -5651,10 +5968,11 @@ fn run_python_script_log(
     args: &[String],
     timeout_seconds: usize,
     retry_count: usize,
+    job_id_override: Option<String>,
 ) -> Result<TaskLog, String> {
     let mut command = vec![python_path.to_string(), to_display(script_path)];
     command.extend(args.iter().cloned());
-    let id = format!("{}-{}", Local::now().format("%Y%m%d-%H%M%S"), kind);
+    let id = job_id_override.unwrap_or_else(|| new_runtime_job_id(kind));
     run_process_job(app, vault, id, kind, command, timeout_seconds, retry_count)
 }
 
@@ -5669,6 +5987,7 @@ fn parse_pdf_artifacts(
     layout_parsing_api_url: &str,
     timeout_seconds: usize,
     retry_count: usize,
+    job_id_override: Option<String>,
 ) -> Result<(Vec<String>, Vec<TaskLog>), String> {
     let parser = selected_pdf_parser(pdf_parser)?;
     if parser == "layout-api" && !cloud_parsing_allowed {
@@ -5685,6 +6004,7 @@ fn parse_pdf_artifacts(
     let cancelled = cancelled_job_ids(vault);
     let mut parsed_artifacts = Vec::new();
     let mut logs = Vec::new();
+    let mut next_job_id_override = job_id_override;
     for entry in &plan.entries {
         if entry.action != "parse_required" {
             continue;
@@ -5705,7 +6025,11 @@ fn parse_pdf_artifacts(
         let output_dir = artifact
             .parent()
             .ok_or_else(|| "artifact path has no parent".to_string())?;
-        ensure_inside(&source, vault, "PDF parse source must stay inside the vault")?;
+        ensure_inside(
+            &source,
+            vault,
+            "PDF parse source must stay inside the vault",
+        )?;
         ensure_inside(
             output_dir,
             vault,
@@ -5735,6 +6059,7 @@ fn parse_pdf_artifacts(
             &args,
             timeout_seconds,
             retry_count,
+            next_job_id_override.take(),
         )?;
         if log.exit_code != 0 {
             let _ = update_ingest_job_record(
@@ -5900,6 +6225,7 @@ fn run_ingest_pipeline(
         &layout_parsing_api_url,
         timeout_seconds,
         retry_count,
+        None,
     )?;
     let staged_artifacts = stage_text_artifacts(&vault)?;
     let final_plan = plan_ingest(to_display(&vault))?;
@@ -5946,6 +6272,7 @@ fn run_ingest_pipeline(
             skip_downloads,
             timeout_seconds,
             retry_count,
+            None,
         )?;
         if log.exit_code != 0 {
             exit_code = log.exit_code;
@@ -6030,6 +6357,86 @@ fn run_ingest_pipeline(
         exit_code,
         log_path: to_display(&log_path),
     })
+}
+
+#[tauri::command]
+fn start_ingest_pipeline_job(
+    app: AppHandle,
+    vault_path: String,
+    runtime_path: Option<String>,
+    python_path: String,
+    obsidian_profile: String,
+    skip_downloads: bool,
+    pdf_parser: String,
+    cloud_parsing_allowed: bool,
+    layout_parsing_api_url: String,
+    timeout_seconds: usize,
+    retry_count: usize,
+) -> Result<RuntimeJobEvent, String> {
+    let vault = PathBuf::from(&vault_path);
+    require_existing_dir(&vault, "vault")?;
+    let job_id = new_runtime_job_id("ingest_pipeline");
+    let started_at = Local::now().to_rfc3339();
+    let command = vec!["desktop:ingest_pipeline".to_string()];
+    let start_event = runtime_job_start_event(
+        &job_id,
+        "ingest_pipeline",
+        command.clone(),
+        started_at.clone(),
+        retry_count.max(1),
+        "background ingest pipeline queued",
+    );
+    append_runtime_job_state(&vault, &start_event)?;
+    emit_runtime_event(Some(&app), start_event.clone());
+
+    thread::spawn(move || {
+        let started = Instant::now();
+        let result = run_ingest_pipeline(
+            app.clone(),
+            vault_path.clone(),
+            runtime_path,
+            python_path,
+            obsidian_profile,
+            skip_downloads,
+            pdf_parser,
+            cloud_parsing_allowed,
+            layout_parsing_api_url,
+            timeout_seconds,
+            retry_count,
+        )
+        .map(|pipeline| {
+            let stdout = format!(
+                "parsed_artifacts={}\nstaged_artifacts={}\npublished_sources={}\n",
+                pipeline.parsed_artifacts.len(),
+                pipeline.staged_artifacts.len(),
+                pipeline.published_sources.len()
+            );
+            TaskLog {
+                id: pipeline.id,
+                kind: "ingest_pipeline".to_string(),
+                command: command.clone(),
+                started_at: started_at.clone(),
+                ended_at: Local::now().to_rfc3339(),
+                exit_code: pipeline.exit_code,
+                stdout,
+                stderr: String::new(),
+                log_path: pipeline.log_path,
+            }
+        });
+        let finish_event = runtime_job_finish_event(
+            job_id,
+            "ingest_pipeline".to_string(),
+            command,
+            started_at,
+            started,
+            retry_count.max(1),
+            result,
+        );
+        emit_runtime_event(Some(&app), finish_event.clone());
+        let _ = append_runtime_job_state(&PathBuf::from(vault_path), &finish_event);
+    });
+
+    Ok(start_event)
 }
 
 #[cfg(test)]
@@ -6486,8 +6893,8 @@ mod tests {
     #[test]
     fn runtime_command_spec_tracks_current_open_runtime_contract() {
         let vault = test_vault("runtime-spec");
-        let semantic = command_spec("semantic_qa", &vault, "minimal", true)
-            .expect("semantic qa command");
+        let semantic =
+            command_spec("semantic_qa", &vault, "minimal", true).expect("semantic qa command");
         assert_eq!(semantic.0, "wiki_semantic_qa.py");
         assert!(semantic.1.contains(&"--assign-verdicts".to_string()));
         assert!(semantic.1.contains(&"--in-place".to_string()));
@@ -6528,14 +6935,21 @@ mod tests {
             &vault,
             "job-timeout-test".to_string(),
             "timeout_test",
-            vec!["/bin/sh".to_string(), "-c".to_string(), "sleep 2".to_string()],
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "sleep 2".to_string(),
+            ],
             1,
             1,
         )
         .expect("run timeout job");
         assert_eq!(log.exit_code, -1);
         assert!(read_text(&PathBuf::from(&log.log_path)).contains("status: timeout"));
-        assert!(vault.join("_state").join("desktop-runtime-jobs.jsonl").is_file());
+        assert!(vault
+            .join("_state")
+            .join("desktop-runtime-jobs.jsonl")
+            .is_file());
 
         let _ = fs::remove_dir_all(vault);
     }
@@ -6595,6 +7009,35 @@ mod tests {
     }
 
     #[test]
+    fn runtime_job_history_collapses_running_and_final_events() {
+        let vault = test_vault("job-history-collapse");
+        let started_at = Local::now().to_rfc3339();
+        let running = runtime_job_start_event(
+            "job-collapse-test",
+            "lint",
+            vec!["desktop:runtime_command".to_string(), "lint".to_string()],
+            started_at.clone(),
+            2,
+            "queued",
+        );
+        append_runtime_job_state(&vault, &running).expect("append running event");
+        let mut finished = running.clone();
+        finished.status = "succeeded".to_string();
+        finished.ended_at = Some(Local::now().to_rfc3339());
+        finished.exit_code = Some(0);
+        finished.message = Some("completed".to_string());
+        append_runtime_job_state(&vault, &finished).expect("append finished event");
+
+        let history = list_runtime_jobs(to_display(&vault)).expect("list runtime jobs");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].job_id, "job-collapse-test");
+        assert_eq!(history[0].status, "succeeded");
+        assert_eq!(history[0].started_at, started_at);
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
     fn runtime_job_cancel_terminates_running_child() {
         let vault = test_vault("job-cancel");
         let job_id = "job-cancel-test".to_string();
@@ -6608,7 +7051,11 @@ mod tests {
             &vault,
             job_id,
             "cancel_test",
-            vec!["/bin/sh".to_string(), "-c".to_string(), "sleep 5".to_string()],
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "sleep 5".to_string(),
+            ],
             10,
             1,
         )
@@ -6637,7 +7084,20 @@ mod tests {
         .expect("create query proposal");
         assert_eq!(draft.proposal.status, "proposed");
         assert_eq!(draft.evidence_map.len(), 1);
+        assert_eq!(
+            draft.evidence_map[0].claim_text,
+            "DeepSeek optimizes for efficient reasoning."
+        );
+        assert_eq!(draft.evidence_map[0].claim_path, "claims/claims.jsonl");
+        assert_eq!(
+            draft.evidence_map[0].conclusion_type,
+            "evidence-backed conclusion"
+        );
         assert!(draft.answer.contains("## Evidence map"));
+        assert!(draft.answer.contains("## Source index"));
+        assert!(draft.answer.contains("## Concept index"));
+        assert!(draft.answer.contains("## Diff preview"));
+        assert!(draft.answer.contains("## Approval status"));
         assert!(!vault
             .join("reviews")
             .join("query-writeback")
@@ -6804,7 +7264,10 @@ fn generate_entry_note(vault: &Path) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn resolve_vault_entry_note_impl(vault: &Path, create_if_missing: bool) -> Result<VaultEntryNote, String> {
+fn resolve_vault_entry_note_impl(
+    vault: &Path,
+    create_if_missing: bool,
+) -> Result<VaultEntryNote, String> {
     require_existing_dir(vault, "vault")?;
     let workspace_root_selected = is_workspace_root(vault);
     let warning = workspace_root_selected.then(|| {
@@ -6842,14 +7305,9 @@ fn percent_encode_uri_path(value: &str) -> String {
     let mut out = String::new();
     for &byte in value.as_bytes() {
         match byte {
-            b'A'..=b'Z'
-            | b'a'..=b'z'
-            | b'0'..=b'9'
-            | b'-'
-            | b'_'
-            | b'.'
-            | b'~'
-            | b'/' => out.push(char::from(byte)),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                out.push(char::from(byte))
+            }
             other => out.push_str(&format!("%{other:02X}")),
         }
     }
@@ -6885,7 +7343,10 @@ fn open_obsidian_vault(vault_path: String) -> Result<VaultEntryNote, String> {
     let entry = resolve_vault_entry_note_impl(&vault, true)?;
     if cfg!(target_os = "macos") {
         if let Some(entry_path) = &entry.entry_path {
-            let uri = format!("obsidian://open?path={}", percent_encode_uri_path(entry_path));
+            let uri = format!(
+                "obsidian://open?path={}",
+                percent_encode_uri_path(entry_path)
+            );
             let status = Command::new("open")
                 .arg(&uri)
                 .status()
@@ -6944,6 +7405,8 @@ pub fn run() {
             create_diagnostic_bundle,
             cancel_runtime_job,
             list_runtime_jobs,
+            start_ingest_pipeline_job,
+            start_runtime_command_job,
             run_ingest_pipeline,
             run_runtime_command,
             open_path,

@@ -22,6 +22,10 @@ import type {
   WritebackProposal,
 } from "./types";
 
+export function isTauriAvailable(): boolean {
+  return typeof window !== "undefined" && Boolean((window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+}
+
 export function loadAppState(): Promise<DesktopAppState> {
   return invoke("load_app_state");
 }
@@ -204,12 +208,50 @@ export function runIngestPipeline(
   });
 }
 
+export function startIngestPipelineJob(
+  vaultPath: string,
+  settings: RuntimeSettings,
+): Promise<RuntimeJobEvent> {
+  return invoke("start_ingest_pipeline_job", {
+    vaultPath,
+    runtimePath: settings.runtimePath || null,
+    pythonPath: settings.pythonPath,
+    obsidianProfile: settings.obsidianProfile,
+    skipDownloads: settings.skipDownloads,
+    pdfParser: settings.pdfParser,
+    cloudParsingAllowed: settings.cloudParsingAllowed,
+    layoutParsingApiUrl: settings.layoutParsingApiUrl,
+    timeoutSeconds: settings.timeoutSeconds,
+    retryCount: settings.retryCount,
+  });
+}
+
 export function runRuntimeCommand(
   vaultPath: string,
   settings: RuntimeSettings,
   kind: string,
 ): Promise<TaskLog> {
   return invoke("run_runtime_command", {
+    vaultPath,
+    runtimePath: settings.runtimePath || null,
+    pythonPath: settings.pythonPath,
+    kind,
+    obsidianProfile: settings.obsidianProfile,
+    skipDownloads: settings.skipDownloads,
+    pdfParser: settings.pdfParser,
+    cloudParsingAllowed: settings.cloudParsingAllowed,
+    layoutParsingApiUrl: settings.layoutParsingApiUrl,
+    timeoutSeconds: settings.timeoutSeconds,
+    retryCount: settings.retryCount,
+  });
+}
+
+export function startRuntimeCommandJob(
+  vaultPath: string,
+  settings: RuntimeSettings,
+  kind: string,
+): Promise<RuntimeJobEvent> {
+  return invoke("start_runtime_command_job", {
     vaultPath,
     runtimePath: settings.runtimePath || null,
     pythonPath: settings.pythonPath,
