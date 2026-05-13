@@ -856,6 +856,60 @@ textarea {
   white-space: pre-wrap;
 }
 
+.runtime-history {
+  display: grid;
+  gap: 8px;
+  max-height: 210px;
+  overflow: auto;
+}
+
+.runtime-history-item {
+  position: relative;
+  min-height: 76px;
+  border: 1px solid #d8ded9;
+  border-radius: 6px;
+  background: #fbfcfa;
+  padding: 10px 10px 10px 92px;
+}
+
+.runtime-history-item strong,
+.runtime-history-item em,
+.runtime-history-item code {
+  display: block;
+}
+
+.runtime-history-item strong {
+  font-size: 13px;
+}
+
+.runtime-history-item em {
+  margin-top: 4px;
+  color: #64706a;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.runtime-history-item code {
+  margin-top: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #40514a;
+  font-size: 11px;
+}
+
+.history-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.history-actions button {
+  min-height: 26px;
+  padding: 0 7px;
+  font-size: 11px;
+}
+
 .composer-result {
   display: grid;
   gap: 8px;

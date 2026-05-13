@@ -13,6 +13,7 @@ import type {
   ReviewQueueItem,
   RuntimeSettings,
   TaskLog,
+  RuntimeJobEvent,
   TraceabilityWarning,
   VaultEntryNote,
   VaultRestoreResult,
@@ -225,6 +226,10 @@ export function runRuntimeCommand(
 
 export function cancelRuntimeJob(jobId: string): Promise<void> {
   return invoke("cancel_runtime_job", { jobId });
+}
+
+export function listRuntimeJobs(vaultPath: string): Promise<RuntimeJobEvent[]> {
+  return invoke("list_runtime_jobs", { vaultPath });
 }
 
 export function openPath(path: string): Promise<void> {

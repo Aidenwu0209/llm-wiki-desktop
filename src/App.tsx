@@ -36,6 +36,7 @@ import {
   listClaimLedger,
   listEvidencePaths,
   listReviewQueue,
+  listRuntimeJobs,
   listTraceabilityWarnings,
   listVaultSuggestions,
   listWritebackProposals,
@@ -201,6 +202,7 @@ function App() {
   const [queryDraft, setQueryDraft] = useState<QueryWritebackDraft | null>(null);
   const [diagnosticPath, setDiagnosticPath] = useState<string | null>(null);
   const [activeJob, setActiveJob] = useState<RuntimeJobEvent | null>(null);
+  const [runtimeHistory, setRuntimeHistory] = useState<RuntimeJobEvent[]>([]);
   const [liveLogLines, setLiveLogLines] = useState<string[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -284,6 +286,9 @@ function App() {
           [`${next.status} | ${next.message}`, ...current].slice(0, 160),
         );
       }
+      if (next.endedAt) {
+        setRuntimeHistory((current) => [next, ...current.filter((item) => item.jobId !== next.jobId)].slice(0, 40));
+      }
     }).then((dispose) => {
       unlisten = dispose;
     }).catch((err) => setError(String(err)));
@@ -302,6 +307,7 @@ function App() {
       const nextClaims = await listClaimLedger(path);
       const nextEvidence = await listEvidencePaths(path);
       const nextWarnings = await listTraceabilityWarnings(path);
+      const nextRuntimeHistory = await listRuntimeJobs(path);
       const nextReview = await listReviewQueue(path);
       const nextWritebacks = await listWritebackProposals(path);
       const nextStatus = await inspectVault(path);
@@ -311,6 +317,7 @@ function App() {
       setClaims(nextClaims);
       setEvidencePaths(nextEvidence);
       setTraceabilityWarnings(nextWarnings);
+      setRuntimeHistory(nextRuntimeHistory);
       setReviewItems(nextReview);
       setWritebacks(nextWritebacks);
       setDesktopSettings(nextSettings);
@@ -645,6 +652,14 @@ function App() {
     }
   }
 
+  async function handleRetryRuntimeJob(job: RuntimeJobEvent) {
+    if (job.kind === "ingest_pipeline") {
+      await handleIngestPipeline();
+      return;
+    }
+    await handleRuntime(job.kind);
+  }
+
   async function handleWritebackStatus(proposalId: string, status: "proposed" | "approved" | "rejected") {
     if (!vaultPath) return;
     setBusy(`writeback:${proposalId}`);
@@ -876,8 +891,24 @@ function App() {
           <div className="inline-actions">
             <button onClick={handleCancelRuntimeJob} disabled={!activeJob || ["succeeded", "failed", "timeout", "cancelled"].includes(activeJob.status)}><XCircle size={14} />取消当前 job</button>
             <button onClick={() => activeJob?.logPath && openPath(activeJob.logPath)} disabled={!activeJob?.logPath}><TerminalSquare size={14} />打开结果日志</button>
+            <button onClick={() => activeJob && handleRetryRuntimeJob(activeJob)} disabled={!activeJob || !["failed", "timeout", "cancelled"].includes(activeJob.status)}><RotateCcw size={14} />重试同类任务</button>
           </div>
           <pre className="live-log">{liveLogLines.length ? liveLogLines.join("\n") : "Runtime stdout/stderr will stream here while commands run."}</pre>
+          <div className="runtime-history">
+            {runtimeHistory.length === 0 && <p className="empty">暂无持久 runtime job 记录。</p>}
+            {runtimeHistory.slice(0, 8).map((job) => (
+              <div className="runtime-history-item" key={job.jobId}>
+                <span className={classNames("status-chip", job.status)}>{job.status}</span>
+                <strong>{job.kind}</strong>
+                <em>{job.startedAt} · attempt {job.attempt}/{job.maxAttempts} · exit {job.exitCode ?? "running"}</em>
+                <code>{job.logPath || job.message || job.command.join(" ")}</code>
+                <div className="history-actions">
+                  <button type="button" onClick={() => job.logPath && openPath(job.logPath)} disabled={!job.logPath}><TerminalSquare size={12} />log</button>
+                  <button type="button" onClick={() => handleRetryRuntimeJob(job)} disabled={!["failed", "timeout", "cancelled"].includes(job.status)}><RotateCcw size={12} />retry</button>
+                </div>
+              </div>
+            ))}
+          </div>
         </section>
 
         <div className="main-grid">

@@ -112,7 +112,7 @@ struct TaskLog {
     log_path: String,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct RuntimeJobEvent {
     job_id: String,
@@ -5347,6 +5347,19 @@ fn append_runtime_job_state(vault: &Path, event: &RuntimeJobEvent) -> Result<(),
     )
 }
 
+#[tauri::command]
+fn list_runtime_jobs(vault_path: String) -> Result<Vec<RuntimeJobEvent>, String> {
+    let vault = PathBuf::from(vault_path);
+    require_existing_dir(&vault, "vault")?;
+    let mut jobs = read_text(&vault.join("_state").join("desktop-runtime-jobs.jsonl"))
+        .lines()
+        .filter_map(|line| serde_json::from_str::<RuntimeJobEvent>(line).ok())
+        .collect::<Vec<_>>();
+    jobs.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    jobs.truncate(40);
+    Ok(jobs)
+}
+
 fn run_process_job(
     app: Option<&AppHandle>,
     vault: &Path,
@@ -5368,8 +5381,10 @@ fn run_process_job(
     let mut final_exit = -1;
     let mut final_status = "failed".to_string();
     let mut final_message = None;
+    let mut last_attempt = 0usize;
 
     for attempt in 1..=max_attempts {
+        last_attempt = attempt;
         emit_runtime_event(
             app,
             RuntimeJobEvent {
@@ -5562,7 +5577,7 @@ fn run_process_job(
         stream: None,
         line: None,
         stage: "finished".to_string(),
-        attempt: max_attempts,
+        attempt: last_attempt.max(1),
         max_attempts,
         command: command.clone(),
         started_at: started_at.clone(),
@@ -6552,6 +6567,34 @@ mod tests {
     }
 
     #[test]
+    fn runtime_job_history_lists_persisted_results() {
+        let vault = test_vault("job-history");
+        let log = run_process_job(
+            None,
+            &vault,
+            "job-history-test".to_string(),
+            "history_test",
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "echo history-ok".to_string(),
+            ],
+            5,
+            3,
+        )
+        .expect("run history job");
+        assert_eq!(log.exit_code, 0);
+        let history = list_runtime_jobs(to_display(&vault)).expect("list runtime jobs");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].job_id, "job-history-test");
+        assert_eq!(history[0].status, "succeeded");
+        assert_eq!(history[0].attempt, 1);
+        assert_eq!(history[0].max_attempts, 3);
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
     fn runtime_job_cancel_terminates_running_child() {
         let vault = test_vault("job-cancel");
         let job_id = "job-cancel-test".to_string();
@@ -6900,6 +6943,7 @@ pub fn run() {
             apply_writeback_proposal,
             create_diagnostic_bundle,
             cancel_runtime_job,
+            list_runtime_jobs,
             run_ingest_pipeline,
             run_runtime_command,
             open_path,
