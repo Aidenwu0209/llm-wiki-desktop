@@ -60,6 +60,12 @@
 
 ## 开发
 
+环境要求：
+
+- Node.js 与 npm。
+- Rust toolchain。
+- Tauri v2 所需的系统依赖。
+
 ```bash
 npm install
 npm run build
