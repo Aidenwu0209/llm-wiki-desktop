@@ -4,9 +4,11 @@ import { listen } from "@tauri-apps/api/event";
 import {
   AlertTriangle,
   Archive,
+  BarChart3,
   Check,
   CheckCircle2,
   ClipboardList,
+  Copy,
   Database,
   FileInput,
   FolderOpen,
@@ -47,6 +49,7 @@ import {
   openVaultPath,
   planIngest,
   repairObsidianTemplates,
+  revealPath,
   resolveVaultEntryNote,
   runIngestLint,
   saveDesktopSettings,
@@ -60,6 +63,11 @@ import {
   startRuntimeCommandJob,
   restoreLastSelectedVault,
 } from "./tauri";
+import {
+  DEFAULT_DEEPSEEK_RESEARCH_STRATEGY_QUERY,
+  QueryWritebackComposer,
+} from "./components/writeback/QueryWritebackComposer";
+import { TraceabilityActionCards } from "./components/traceability/TraceabilityActionCards";
 import type {
   ClaimLedgerItem,
   DesktopAppState,
@@ -71,12 +79,14 @@ import type {
   ReviewQueueItem,
   RuntimeJobEvent,
   RuntimeSettings,
+  RuntimeJobStatus,
   TaskLog,
   TraceabilityWarning,
   VaultEntryNote,
   VaultFile,
   VaultSuggestion,
   VaultStatus,
+  WritebackApplyStatus,
   WritebackProposal,
 } from "./types";
 
@@ -110,7 +120,61 @@ const pipeline = [
   "Lint",
 ];
 
-const terminalRuntimeStatuses = ["succeeded", "failed", "timeout", "cancelled"];
+const navigationItems = [
+  { id: "dashboard", label: "Dashboard", icon: SquareStack },
+  { id: "sources", label: "Sources", icon: FileInput },
+  { id: "claims", label: "Claims", icon: ClipboardList },
+  { id: "concepts", label: "Concepts", icon: Database },
+  { id: "reviews", label: "Reviews", icon: AlertTriangle },
+  { id: "traceability", label: "Traceability", icon: ShieldCheck },
+  { id: "writeback", label: "Query / Writeback", icon: GitCompare },
+  { id: "activity", label: "Activity", icon: TerminalSquare },
+  { id: "settings", label: "Settings", icon: Settings },
+] as const;
+
+type ShellPage = (typeof navigationItems)[number]["id"];
+
+const pageTitles: Record<ShellPage, { title: string; subtitle: string }> = {
+  dashboard: {
+    title: "Dashboard",
+    subtitle: "Vault state, next actions, and the ingest path users should take next.",
+  },
+  sources: {
+    title: "Sources",
+    subtitle: "Raw evidence, source registry, parsed artifacts, and vault files.",
+  },
+  claims: {
+    title: "Claims",
+    subtitle: "Evidence-backed claim ledger with review and verdict controls.",
+  },
+  concepts: {
+    title: "Concepts",
+    subtitle: "Generated concept pages and their supporting vault context.",
+  },
+  reviews: {
+    title: "Reviews",
+    subtitle: "Science review queue, follow-up actions, and approval boundaries.",
+  },
+  traceability: {
+    title: "Traceability",
+    subtitle: "Broken evidence chains, missing anchors, contract findings, and impact graph.",
+  },
+  writeback: {
+    title: "Query / Writeback",
+    subtitle: "Evidence-backed insight generation with proposal-first writeback.",
+  },
+  activity: {
+    title: "Activity",
+    subtitle: "Runtime jobs, persisted history, logs, cancel, timeout, and retry.",
+  },
+  settings: {
+    title: "Settings",
+    subtitle: "Runtime, parser, Obsidian, and release-oriented desktop settings.",
+  },
+};
+
+const terminalRuntimeStatuses: RuntimeJobStatus[] = ["completed", "succeeded", "failed", "timeout", "timed_out", "cancelled"];
+const retryableRuntimeStatuses: RuntimeJobStatus[] = ["failed", "timeout", "timed_out", "cancelled"];
 
 const initialDesktopSettings: DesktopSettings = {
   runtimePath: "",
@@ -135,6 +199,37 @@ function classNames(...items: Array<string | false | null | undefined>) {
 
 function visiblePath(path: string) {
   return path.replace(/ +(?=\/|$)/g, (match) => "[space]".repeat(match.length));
+}
+
+function isTerminalRuntimeStatus(status?: string | null) {
+  return terminalRuntimeStatuses.includes(status as RuntimeJobStatus);
+}
+
+function isRetryableRuntimeStatus(status?: string | null) {
+  return retryableRuntimeStatuses.includes(status as RuntimeJobStatus);
+}
+
+function runtimeDurationSeconds(job: RuntimeJobEvent) {
+  return Math.round(((job.durationMs || job.elapsedMs) ?? 0) / 1000);
+}
+
+function runtimeRetryCount(job: RuntimeJobEvent) {
+  return job.retryCount || job.maxAttempts || 1;
+}
+
+function runtimeLogPath(job: RuntimeJobEvent) {
+  return job.liveLogPath || job.logPath || "";
+}
+
+function runtimeCommandLabel(job: RuntimeJobEvent) {
+  return job.command.length ? job.command.join(" ") : job.kind;
+}
+
+function runtimeStatusTone(status: string) {
+  if (["completed", "succeeded"].includes(status)) return "succeeded";
+  if (["queued", "running", "retrying"].includes(status)) return "queued";
+  if (["timeout", "timed_out", "failed"].includes(status)) return "failed";
+  return status;
 }
 
 function hasWhitespacePathSegment(path: string) {
@@ -211,13 +306,15 @@ function App() {
   const [writebackTarget, setWritebackTarget] = useState("reviews/query-writeback/research-insight.md");
   const [writebackTitle, setWritebackTitle] = useState("");
   const [writebackContent, setWritebackContent] = useState("");
-  const [queryText, setQueryText] = useState("基于当前 LLM Wiki，请整理 DeepSeek 的研发思路、思考问题的方式、关键决策依据，并预测可能的技术演进方向。请区分 evidence、inference、hypothesis、forecast，并生成可回写到 LLM Wiki 的 proposal。");
+  const [queryText, setQueryText] = useState(DEFAULT_DEEPSEEK_RESEARCH_STRATEGY_QUERY);
   const [queryTarget, setQueryTarget] = useState("reviews/query-writeback/deepseek-research-insights.md");
   const [queryDraft, setQueryDraft] = useState<QueryWritebackDraft | null>(null);
+  const [writebackApplyStatus, setWritebackApplyStatus] = useState<WritebackApplyStatus | null>(null);
   const [diagnosticPath, setDiagnosticPath] = useState<string | null>(null);
   const [activeJob, setActiveJob] = useState<RuntimeJobEvent | null>(null);
   const [runtimeHistory, setRuntimeHistory] = useState<RuntimeJobEvent[]>([]);
   const [liveLogLines, setLiveLogLines] = useState<string[]>([]);
+  const [activePage, setActivePage] = useState<ShellPage>("dashboard");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -239,7 +336,7 @@ function App() {
   const registry = ingestPlan?.registry ?? [];
   const impactEdges = ingestPlan?.impactEdges ?? [];
   const lintFindings = ingestPlan?.lintFindings ?? [];
-  const runtimeRunning = Boolean(activeJob && !activeJob.endedAt && !terminalRuntimeStatuses.includes(activeJob.status));
+  const runtimeRunning = Boolean(activeJob && !activeJob.endedAt && !isTerminalRuntimeStatus(activeJob.status));
   const visibleActions = actions.filter((action) => actionFilter === "all" || action.status === actionFilter);
   const visibleClaims = claims.filter((claim) => {
     if (claimFilter === "all") return true;
@@ -253,6 +350,8 @@ function App() {
   });
   const brokenEvidence = evidencePaths.filter((item) => item.chainStatus !== "ok").length;
   const progressDone = jobs.filter((job) => job.status === "succeeded").length;
+  const activePageCopy = pageTitles[activePage];
+  const pageVisible = (...pages: ShellPage[]) => pages.includes(activePage);
   const vaultFilePath = (path?: string | null) => {
     if (!path) return vaultPath;
     if (path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path)) return path;
@@ -264,6 +363,28 @@ function App() {
       await openVaultPath(vaultPath, path);
     } catch (err) {
       setError(String(err));
+    }
+  };
+  const copyText = async (label: string, text?: string | null) => {
+    if (!text) {
+      setRestoreError(`${label} is not available yet. Refresh the vault or choose a generated vault.`);
+      return;
+    }
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
+      await navigator.clipboard.writeText(text);
+      setRestoreError(`${label} copied to clipboard.`);
+    } catch {
+      setRestoreError(`Clipboard API unavailable. Copy ${label} manually:\n${text}`);
+    }
+  };
+  const revealEntryOrVault = async () => {
+    const target = entryNote?.fallbackPath || entryNote?.entryPath || vaultPath;
+    if (!target) return;
+    try {
+      await revealPath(target);
+    } catch (err) {
+      setRestoreError(`Reveal failed. Open or copy this path manually:\n${target}\n${String(err)}`);
     }
   };
 
@@ -318,7 +439,7 @@ function App() {
       }
       if (next.endedAt) {
         setRuntimeHistory((current) => [next, ...current.filter((item) => item.jobId !== next.jobId)].slice(0, 40));
-        if (["failed", "timeout", "cancelled"].includes(next.status)) {
+        if (isRetryableRuntimeStatus(next.status)) {
           setError(`${next.kind} ${next.status}: ${next.message || "see runtime history"}`);
         }
         if (vaultPath) {
@@ -635,6 +756,7 @@ function App() {
         writebackContent,
       );
       setWritebacks((current) => [proposal, ...current.filter((item) => item.proposalId !== proposal.proposalId)]);
+      setWritebackApplyStatus(null);
       await refresh();
     } catch (err) {
       setError(String(err));
@@ -656,6 +778,7 @@ function App() {
       );
       setQueryDraft(draft);
       setWritebacks((current) => [draft.proposal, ...current.filter((item) => item.proposalId !== draft.proposal.proposalId)]);
+      setWritebackApplyStatus(null);
       await refresh();
     } catch (err) {
       setError(String(err));
@@ -671,7 +794,7 @@ function App() {
     try {
       const entry = await openObsidianVault(vaultPath);
       setEntryNote(entry);
-      if (entry.warning) setRestoreError(entry.warning);
+      setRestoreError(entry.warning ?? null);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -690,6 +813,9 @@ function App() {
   }
 
   async function handleRetryRuntimeJob(job: RuntimeJobEvent) {
+    setLiveLogLines((current) =>
+      [`retry requested | ${job.kind} | from ${job.jobId} (${job.status})`, ...current].slice(0, 160),
+    );
     if (job.kind === "ingest_pipeline") {
       await handleIngestPipeline();
       return;
@@ -717,9 +843,29 @@ function App() {
     setBusy(`apply:${proposalId}`);
     setError(null);
     try {
-      const proposal = await applyWritebackProposal(vaultPath, proposalId);
-      if (desktopSettings.autoRunLintAfterWrites) await runIngestLint(vaultPath);
-      setWritebacks((current) => [proposal, ...current.filter((item) => item.proposalId !== proposalId)]);
+      const result = await applyWritebackProposal(vaultPath, proposalId);
+      const nextStatus: WritebackApplyStatus = {
+        proposalId: result.proposal.proposalId,
+        targetPath: result.proposal.targetPath,
+        appliedAt: result.proposal.appliedAt,
+        dashboardRefreshed: result.dashboardRefreshed,
+        dashboardError: result.dashboardError,
+        lint: { ran: false },
+      };
+      if (desktopSettings.autoRunLintAfterWrites) {
+        try {
+          const findings = await runIngestLint(vaultPath);
+          nextStatus.lint = {
+            ran: true,
+            findingCount: findings.length,
+            blockingCount: findings.filter((finding) => finding.severity === "p0" || finding.severity === "p1").length,
+          };
+        } catch (lintErr) {
+          nextStatus.lint = { ran: true, error: String(lintErr) };
+        }
+      }
+      setWritebackApplyStatus(nextStatus);
+      setWritebacks((current) => [result.proposal, ...current.filter((item) => item.proposalId !== proposalId)]);
       await refresh();
     } catch (err) {
       setError(String(err));
@@ -743,6 +889,22 @@ function App() {
     }
   }
 
+  const vaultDisplayName = vaultPath ? visiblePath(vaultPath).split("/").filter(Boolean).pop() || visiblePath(vaultPath) : "No vault";
+  const contractP0P1 = lintFindings.filter((finding) => finding.severity === "p0" || finding.severity === "p1").length;
+  const openReviewCount = reviewItems.filter((item) => !["approved", "resolved", "ignored", "rejected"].includes(item.status)).length;
+  const navBadgeCount = (page: ShellPage): string | number | null => {
+    if (!vaultPath && page !== "settings") return null;
+    if (page === "sources") return (status?.counts.inbox ?? 0) + (status?.counts.sources ?? 0) || null;
+    if (page === "claims") return status?.counts.claimsNeedingReview || null;
+    if (page === "concepts") return status?.counts.concepts || null;
+    if (page === "reviews") return openReviewCount || null;
+    if (page === "traceability") return traceabilityWarnings.length + brokenEvidence + contractP0P1 || null;
+    if (page === "writeback") return writebacks.length || null;
+    if (page === "activity") return runtimeRunning ? "live" : runtimeHistory.length || null;
+    if (page === "settings") return status && !status.runtimeInstalled ? "!" : null;
+    return null;
+  };
+
   return (
     <main
       className={classNames("app-shell", dragActive && "drag-active")}
@@ -753,12 +915,35 @@ function App() {
       onDragLeave={() => setDragActive(false)}
       onDrop={handleDrop}
     >
-      <aside className="sidebar">
+      <aside className="icon-sidebar" aria-label="Primary navigation">
+        <div className="icon-brand" title="LLM Wiki Desktop">LW</div>
+        <nav className="nav-rail">
+          {navigationItems.map((item) => {
+            const Icon = item.icon;
+            const badge = navBadgeCount(item.id);
+            return (
+              <button
+                key={item.id}
+                className={classNames("nav-button", activePage === item.id && "active")}
+                title={item.label}
+                aria-label={item.label}
+                onClick={() => setActivePage(item.id)}
+              >
+                <Icon size={19} />
+                {badge !== null && <span className="nav-badge">{typeof badge === "number" && badge > 99 ? "99+" : badge}</span>}
+              </button>
+            );
+          })}
+        </nav>
+        <div className={classNames("rail-status", tone)} title={vaultPath || "No vault selected"} />
+      </aside>
+
+      <aside className="sidebar command-sidebar">
         <div className="brand">
           <div className="brand-mark">LW</div>
           <div>
             <h1>LLM Wiki Desktop</h1>
-            <p>open-llm-wiki runtime shell</p>
+            <p>{vaultPath ? "Vault command center" : "Choose or create a vault"}</p>
           </div>
         </div>
 
@@ -768,6 +953,9 @@ function App() {
           <div className="path-field" title={entryNote?.entryPath || "No entry note resolved"}>
             {entryNote?.entryRelativePath ? visiblePath(entryNote.entryRelativePath) : "Entry note pending"}
           </div>
+          {entryNote?.obsidianUri && (
+            <div className="path-field" title={entryNote.obsidianUri}>{entryNote.obsidianUri}</div>
+          )}
           {vaultPath && hasWhitespacePathSegment(vaultPath) && (
             <p className="note warn-text">当前路径包含尾随空格目录段，桌面端会按真实路径保留；手动输入时请使用选择器或最近 vault。</p>
           )}
@@ -784,10 +972,16 @@ function App() {
           <button className="wide" onClick={handleCreateVault} disabled={busy === "create"}><Archive size={16} />创建 vault</button>
           <div className="button-row">
             <button onClick={() => vaultPath && openPath(vaultPath)} disabled={!vaultPath}><FolderOpen size={16} />文件夹</button>
+            <button onClick={revealEntryOrVault} disabled={!vaultPath}><FolderOpen size={16} />Finder</button>
             <button onClick={handleOpenObsidian} disabled={!vaultPath || busy === "obsidian_open"}><SquareStack size={16} />Obsidian</button>
+          </div>
+          <div className="button-row">
+            <button onClick={() => copyText("entry path", entryNote?.fallbackPath || entryNote?.entryPath || vaultPath)} disabled={!vaultPath}><Copy size={16} />复制路径</button>
+            <button onClick={() => copyText("Obsidian URI", entryNote?.obsidianUri)} disabled={!entryNote?.obsidianUri}><Copy size={16} />复制 URI</button>
           </div>
         </section>
 
+        {activePage === "settings" ? (
         <section className="panel">
           <h2>Runtime 设置</h2>
           <input value={desktopSettings.pythonPath} onChange={(event) => setDesktopSettings((current) => ({ ...current, pythonPath: event.target.value }))} placeholder="python3" />
@@ -832,17 +1026,63 @@ function App() {
           </label>
           <button className="wide" onClick={handleSaveSettings} disabled={!vaultPath || busy === "save_settings"}><Check size={16} />保存设置</button>
         </section>
+        ) : (
+        <section className="panel focus-panel">
+          <h2>Next Action</h2>
+          <p className="note">{vaultPath ? "Use the navigation rail to inspect focused workflows without losing vault context." : "Open a recent vault, choose a generated vault, or create a new one to start."}</p>
+          <div className="focus-list">
+            <button onClick={() => setActivePage("dashboard")}>
+              <SquareStack size={15} />
+              <span>Dashboard</span>
+              <em>{status?.dashboardAvailable ? "ready" : "needs refresh"}</em>
+            </button>
+            <button onClick={() => setActivePage("activity")}>
+              <TerminalSquare size={15} />
+              <span>Activity</span>
+              <em>{runtimeRunning ? "running" : `${runtimeHistory.length} history`}</em>
+            </button>
+            <button onClick={() => setActivePage("writeback")}>
+              <GitCompare size={15} />
+              <span>Query / Writeback</span>
+              <em>{writebacks.length} proposals</em>
+            </button>
+            <button onClick={() => setActivePage("traceability")}>
+              <GitCompare size={15} />
+              <span>Traceability</span>
+              <em>{traceabilityWarnings.length + brokenEvidence} warnings</em>
+            </button>
+          </div>
+        </section>
+        )}
       </aside>
 
       <section className="workspace">
         <header className="topbar">
           <div>
-            <h2>任务流控制台</h2>
-            <p>所有 source 发布、QA、review 和 writeback 都通过 runtime-owned state 留痕。</p>
+            <h2>{activePageCopy.title}</h2>
+            <p>{activePageCopy.subtitle}</p>
           </div>
-          <div className={classNames("health", tone)}>
-            {tone === "ok" ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
-            {vaultPath ? (status ? (status.schemaValid ? "Schema valid" : "Schema invalid") : "Inspecting vault") : "Choose vault"}
+          <div className="topbar-status">
+            <div className="status-pill" title={vaultPath || "No vault selected"}>
+              <Database size={15} />
+              <span>{vaultDisplayName}</span>
+            </div>
+            <div className={classNames("health", tone)}>
+              {tone === "ok" ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
+              {vaultPath ? (status ? (status.schemaValid ? "Schema valid" : "Schema invalid") : "Inspecting vault") : "Choose vault"}
+            </div>
+            <div className={classNames("status-pill", status?.runtimeInstalled && "ok")}>
+              <TerminalSquare size={15} />
+              <span>{status?.runtimeInstalled ? "Runtime ready" : "Runtime missing"}</span>
+            </div>
+            <div className={classNames("status-pill", status?.obsidianEnabled && "ok")}>
+              <SquareStack size={15} />
+              <span>{status?.obsidianEnabled ? "Obsidian enabled" : "Obsidian off"}</span>
+            </div>
+            <div className={classNames("status-pill", status?.dashboardAvailable && "ok")}>
+              <BarChart3 size={15} />
+              <span>{status?.dashboardAvailable ? "Dashboard ready" : "Dashboard missing"}</span>
+            </div>
           </div>
         </header>
 
@@ -864,7 +1104,7 @@ function App() {
 
         {vaultPath && (
           <>
-        <section className="metrics">
+        <section className={classNames("metrics view-section", pageVisible("dashboard") && "visible")}>
           <Metric label="Raw inbox" value={status?.counts.inbox ?? 0} />
           <Metric label="Sources" value={status?.counts.sources ?? 0} />
           <Metric label="Concepts" value={status?.counts.concepts ?? 0} />
@@ -886,7 +1126,7 @@ function App() {
           <Metric label="Dashboard" value={status?.dashboardAvailable ? "ready" : "missing"} />
         </section>
 
-        <section className={classNames("drop-zone", dragActive && "active")}>
+        <section className={classNames("drop-zone view-section", dragActive && "active", pageVisible("dashboard", "sources") && "visible")}>
           <div>
             <strong>导入 PDF / Markdown / txt / folder</strong>
             <span>{enqueueAfterImport ? "导入后写入 runtime-owned ingest queue" : "仅进入 raw/inbox，等待手动规划"}</span>
@@ -901,7 +1141,7 @@ function App() {
           </div>
         </section>
 
-        <section className="action-strip">
+        <section className={classNames("action-strip view-section", pageVisible("dashboard") && "visible")}>
           <button onClick={handlePlanIngest} disabled={!vaultPath || busy === "plan_ingest"}><ListChecks size={16} />规划 ingest</button>
           <button onClick={handleIngestLint} disabled={!vaultPath || busy === "ingest_lint"}><ShieldCheck size={16} />合约 lint</button>
           <button onClick={handleIngestPipeline} disabled={!vaultPath || runtimeRunning || busy === "start:ingest_pipeline" || (runnableIngest + parseablePdfs) === 0}><Play size={16} />运行 ingest pipeline</button>
@@ -917,41 +1157,48 @@ function App() {
           })}
         </section>
 
-        <section className="panel activity-panel">
+        <section className={classNames("panel activity-panel view-section", pageVisible("activity", "dashboard") && "visible")}>
           <div className="section-head">
             <h2>Activity Panel</h2>
-            <span>{activeJob ? `${activeJob.status} · ${Math.round(activeJob.elapsedMs / 1000)}s` : "idle"}</span>
+            <span>{activeJob ? `${activeJob.status} · ${runtimeDurationSeconds(activeJob)}s` : "idle"}</span>
           </div>
           <div className="activity-meta">
             <span>Job: {activeJob?.jobId || "none"}</span>
             <span>Stage: {activeJob?.stage || busy || "idle"}</span>
+            <span>Started: {activeJob?.startedAt || "none"}</span>
+            <span>Duration: {activeJob ? `${runtimeDurationSeconds(activeJob)}s` : "0s"}</span>
             <span>Attempt: {activeJob ? `${activeJob.attempt}/${activeJob.maxAttempts}` : `${desktopSettings.retryCount} configured`}</span>
+            <span>Retry count: {activeJob ? runtimeRetryCount(activeJob) : desktopSettings.retryCount}</span>
             <span>Timeout: {desktopSettings.timeoutSeconds}s</span>
+            <span>Live log: {activeJob ? runtimeLogPath(activeJob) || "stream only" : "none"}</span>
+            <span>Command: {activeJob ? runtimeCommandLabel(activeJob) : "none"}</span>
           </div>
           <div className="inline-actions">
-            <button onClick={handleCancelRuntimeJob} disabled={!activeJob || terminalRuntimeStatuses.includes(activeJob.status)}><XCircle size={14} />取消当前 job</button>
-            <button onClick={() => activeJob?.logPath && openPath(activeJob.logPath)} disabled={!activeJob?.logPath}><TerminalSquare size={14} />打开结果日志</button>
-            <button onClick={() => activeJob && handleRetryRuntimeJob(activeJob)} disabled={!activeJob || runtimeRunning || !["failed", "timeout", "cancelled"].includes(activeJob.status)}><RotateCcw size={14} />重试同类任务</button>
+            <button onClick={handleCancelRuntimeJob} disabled={!activeJob || isTerminalRuntimeStatus(activeJob.status)}><XCircle size={14} />取消当前 job</button>
+            <button onClick={() => activeJob && runtimeLogPath(activeJob) && openPath(runtimeLogPath(activeJob))} disabled={!activeJob || !runtimeLogPath(activeJob)}><TerminalSquare size={14} />打开运行日志</button>
+            <button onClick={() => activeJob && handleRetryRuntimeJob(activeJob)} disabled={!activeJob || runtimeRunning || !isRetryableRuntimeStatus(activeJob.status)}><RotateCcw size={14} />重试同类任务</button>
           </div>
           <pre className="live-log">{liveLogLines.length ? liveLogLines.join("\n") : "Runtime stdout/stderr will stream here while commands run."}</pre>
           <div className="runtime-history">
             {runtimeHistory.length === 0 && <p className="empty">暂无持久 runtime job 记录。</p>}
             {runtimeHistory.slice(0, 8).map((job) => (
               <div className="runtime-history-item" key={job.jobId}>
-                <span className={classNames("status-chip", job.status)}>{job.status}</span>
+                <span className={classNames("status-chip", runtimeStatusTone(job.status))}>{job.status}</span>
                 <strong>{job.kind}</strong>
-                <em>{job.startedAt} · attempt {job.attempt}/{job.maxAttempts} · exit {job.exitCode ?? "running"}</em>
-                <code>{job.logPath || job.message || job.command.join(" ")}</code>
+                <em>{job.startedAt} · {runtimeDurationSeconds(job)}s · attempt {job.attempt}/{job.maxAttempts} · retry {runtimeRetryCount(job)} · exit {job.exitCode ?? "running"}</em>
+                <code>{runtimeLogPath(job) || job.message || runtimeCommandLabel(job)}</code>
+                {job.stdoutTail && <code>stdout: {job.stdoutTail}</code>}
+                {job.stderrTail && <code>stderr: {job.stderrTail}</code>}
                 <div className="history-actions">
-                  <button type="button" onClick={() => job.logPath && openPath(job.logPath)} disabled={!job.logPath}><TerminalSquare size={12} />log</button>
-                  <button type="button" onClick={() => handleRetryRuntimeJob(job)} disabled={runtimeRunning || !["failed", "timeout", "cancelled"].includes(job.status)}><RotateCcw size={12} />retry</button>
+                  <button type="button" onClick={() => runtimeLogPath(job) && openPath(runtimeLogPath(job))} disabled={!runtimeLogPath(job)}><TerminalSquare size={12} />log</button>
+                  <button type="button" onClick={() => handleRetryRuntimeJob(job)} disabled={runtimeRunning || !isRetryableRuntimeStatus(job.status)}><RotateCcw size={12} />retry</button>
                 </div>
               </div>
             ))}
           </div>
         </section>
 
-        <div className="main-grid">
+        <div className={classNames("main-grid view-section", pageVisible("sources", "activity") && "visible")}>
           <section className="panel large">
             <div className="section-head">
               <h2>导入结果</h2>
@@ -995,28 +1242,19 @@ function App() {
           </section>
         </div>
 
-        <div className="main-grid">
+        <div className={classNames("main-grid view-section", pageVisible("traceability", "reviews") && "visible")}>
           <section className="panel large">
             <div className="section-head">
               <h2>Traceability warnings</h2>
               <span>{traceabilityWarnings.length} evidence-anchor issues</span>
             </div>
             <div className="impact-list">
-              {traceabilityWarnings.length === 0 && <p className="empty">暂无 evidence-anchor warning。</p>}
-              {traceabilityWarnings.map((warning) => (
-                <div className="work-item" key={warning.warningId}>
-                  <span className={classNames("status-chip", warning.severity)}>{warning.severity}</span>
-                  <strong>{warning.claimId}</strong>
-                  <em>{warning.sourcePath || "source unknown"}</em>
-                  <code>{warning.missingHeading}</code>
-                  <div className="inline-actions">
-                    <button onClick={() => openVaultItem(warning.claimPath)}><ClipboardList size={14} />claim</button>
-                    <button onClick={() => openVaultItem(warning.sourcePath)} disabled={!warning.sourcePath}><FolderOpen size={14} />source</button>
-                    <button onClick={() => openVaultItem(warning.artifactPath)} disabled={!warning.artifactPath}><FileInput size={14} />artifact</button>
-                  </div>
-                  <p className="note">{warning.suggestedAction}</p>
-                </div>
-              ))}
+              <TraceabilityActionCards
+                warnings={traceabilityWarnings}
+                onOpenClaim={(warning) => openVaultItem(warning.claimPath)}
+                onOpenSource={(warning) => openVaultItem(warning.sourcePath)}
+                onOpenArtifact={(warning) => openVaultItem(warning.artifactPath)}
+              />
             </div>
           </section>
 
@@ -1075,79 +1313,32 @@ function App() {
           </section>
         </div>
 
-        <div className="main-grid">
-          <section className="panel large">
-            <div className="section-head">
-              <h2>Query / Insight / Writeback Composer</h2>
-              <GitCompare size={18} />
-            </div>
-            <div className="writeback-form">
-              <textarea value={queryText} onChange={(event) => setQueryText(event.target.value)} placeholder="基于当前 vault 提问；输出必须区分 evidence / inference / hypothesis / forecast。" />
-              <input value={queryTarget} onChange={(event) => setQueryTarget(event.target.value)} placeholder="reviews/query-writeback/deepseek-research-insights.md" />
-              <button onClick={handleCreateQueryWriteback} disabled={!vaultPath || busy === "query_writeback"}><GitCompare size={16} />生成 evidence-backed proposal</button>
-              {queryDraft && (
-                <div className="composer-result">
-                  <strong>Answer</strong>
-                  <pre className="diff-box">{queryDraft.answer}</pre>
-                  <strong>Evidence map</strong>
-                  <div className="impact-list compact">
-                    {queryDraft.evidenceMap.map((item) => (
-                      <button key={item.claimId} onClick={() => openPath(vaultFilePath(item.sourcePath || item.claimPath))}>
-                        <span className="status-chip proposed">{item.conclusionType}</span>
-                        <strong>{item.claimText || item.claimId}</strong>
-                        <em>{item.sourceId || item.sourcePath || "source unknown"} · {item.verdict}/{item.status} · {item.confidence}</em>
-                        <code>{item.quote || item.evidenceHash || "claim text without direct quote"}{item.concepts.length ? ` · ${item.concepts.join(", ")}` : ""}</code>
-                      </button>
-                    ))}
-                  </div>
-                  <strong>Writeback proposal</strong>
-                  <pre className="diff-box">{queryDraft.proposal.diff}</pre>
-                </div>
-              )}
-            </div>
-          </section>
+        <QueryWritebackComposer
+            className={classNames("view-section", pageVisible("writeback") && "visible")}
+            vaultPath={vaultPath}
+            busy={busy}
+            queryText={queryText}
+            queryTarget={queryTarget}
+            queryDraft={queryDraft}
+            writebackTarget={writebackTarget}
+            writebackTitle={writebackTitle}
+            writebackContent={writebackContent}
+            writebacks={writebacks}
+            applyStatus={writebackApplyStatus}
+            onQueryTextChange={setQueryText}
+            onQueryTargetChange={setQueryTarget}
+            onWritebackTargetChange={setWritebackTarget}
+            onWritebackTitleChange={setWritebackTitle}
+            onWritebackContentChange={setWritebackContent}
+            onCreateQueryWriteback={handleCreateQueryWriteback}
+            onCreateWriteback={handleCreateWriteback}
+            onSetWritebackStatus={handleWritebackStatus}
+            onApplyWriteback={handleApplyWriteback}
+            onOpenPath={openPath}
+            resolveVaultPath={vaultFilePath}
+        />
 
-          <section className="panel large">
-            <div className="section-head">
-              <h2>Manual Writeback 安全流程</h2>
-              <GitCompare size={18} />
-            </div>
-            <div className="writeback-form">
-              <input value={writebackTarget} onChange={(event) => setWritebackTarget(event.target.value)} placeholder="reviews/query-writeback/example.md 或 concepts/example.md" />
-              <input value={writebackTitle} onChange={(event) => setWritebackTitle(event.target.value)} placeholder="proposal title" />
-              <textarea value={writebackContent} onChange={(event) => setWritebackContent(event.target.value)} placeholder="proposal 内容；默认写入 reviews/query-writeback/，不静默修改 source/concept。" />
-              <button onClick={handleCreateWriteback} disabled={!vaultPath || busy === "writeback_proposal"}><GitCompare size={16} />生成 review proposal</button>
-            </div>
-          </section>
-
-          <section className="panel large">
-            <div className="section-head">
-              <h2>Writeback proposals</h2>
-              <span>{writebacks.length} proposals</span>
-            </div>
-            <div className="impact-list">
-              {writebacks.length === 0 && <p className="empty">暂无 writeback proposal。</p>}
-              {writebacks.map((proposal) => (
-                <div className="work-item" key={proposal.proposalId}>
-                  <span className={classNames("status-chip", proposal.status)}>{proposal.status}</span>
-                  <strong>{proposal.title}</strong>
-                  <em>{proposal.targetPath} · {proposal.updatedAt}</em>
-                  <code>{proposal.diff.split("\n").slice(0, 2).join(" | ")}</code>
-                  <div className="inline-actions">
-                    <button onClick={() => openPath(vaultFilePath(proposal.targetPath))}><FolderOpen size={14} />target</button>
-                    <button onClick={() => handleWritebackStatus(proposal.proposalId, "approved")} disabled={proposal.status !== "proposed"}><Check size={14} />审批</button>
-                    <button onClick={() => handleWritebackStatus(proposal.proposalId, "rejected")} disabled={proposal.status === "applied"}><XCircle size={14} />拒绝</button>
-                    <button onClick={() => handleApplyWriteback(proposal.proposalId)} disabled={proposal.status !== "approved"}><Play size={14} />应用</button>
-                    <button onClick={() => proposal.logPath && openPath(vaultFilePath(proposal.logPath))} disabled={!proposal.logPath}><TerminalSquare size={14} />日志</button>
-                  </div>
-                  <pre className="diff-box">{proposal.diff}</pre>
-                </div>
-              ))}
-            </div>
-          </section>
-        </div>
-
-        <div className="main-grid">
+        <div className={classNames("main-grid view-section", pageVisible("dashboard", "claims") && "visible")}>
           <section className="panel large">
             <div className="section-head">
               <h2>下一步行动</h2>
@@ -1211,7 +1402,7 @@ function App() {
           </section>
         </div>
 
-        <div className="main-grid">
+        <div className={classNames("main-grid view-section", pageVisible("sources", "concepts") && "visible")}>
           <section className="panel large">
             <div className="section-head">
               <h2>Source Registry</h2>
@@ -1244,7 +1435,7 @@ function App() {
           </section>
         </div>
 
-        <div className="main-grid">
+        <div className={classNames("main-grid view-section", pageVisible("dashboard") && "visible")}>
           <section className="panel large">
             <div className="section-head">
               <h2>Pipeline 状态</h2>
@@ -1281,7 +1472,7 @@ function App() {
           </section>
         </div>
 
-        <div className="main-grid">
+        <div className={classNames("main-grid view-section", pageVisible("activity", "sources") && "visible")}>
           <section className="panel">
             <div className="section-head">
               <h2>任务日志</h2>
@@ -1325,7 +1516,7 @@ function App() {
           </section>
         </div>
 
-        <div className="main-grid">
+        <div className={classNames("main-grid view-section", pageVisible("traceability", "settings") && "visible")}>
           <section className="panel">
             <div className="section-head">
               <h2>Contract lint</h2>
@@ -1372,7 +1563,7 @@ function App() {
           </section>
         </div>
 
-        <section className="panel">
+        <section className={classNames("panel view-section", pageVisible("traceability") && "visible")}>
           <div className="section-head">
             <h2>Impact graph</h2>
             <span>{impactEdges.length} edges</span>
@@ -1427,18 +1618,34 @@ function EmptyVaultState({
   busy: string | null;
 }) {
   const lastVault = appState?.lastSelectedVault || "";
+  const deepseekVault = suggestions.find((item) => item.kind === "deepseek" && item.exists);
   return (
     <section className="empty-vault">
       <div>
-        <h2>选择 vault</h2>
-        <p>打开已有 LLM Wiki vault 后，桌面端会自动 inspect vault、恢复 dashboard，并记住最近使用的位置。</p>
+        <h2>Open or create a vault</h2>
+        <p>LLM Wiki Desktop restores your last vault automatically. Start from a recent vault, open any vault folder, create a new vault, or inspect the DeepSeek demo corpus.</p>
       </div>
       <div className="empty-actions">
-        <button onClick={onChooseVault}><FolderOpen size={16} />选择 vault</button>
-        <button onClick={() => lastVault && onSelectVault(lastVault)} disabled={!lastVault}><RotateCcw size={16} />最近 vault</button>
-        {suggestions.filter((item) => item.kind === "deepseek").slice(0, 1).map((item) => (
-          <button key={item.path} onClick={() => onSelectVault(item.path)}><Database size={16} />打开 DeepSeek vault</button>
-        ))}
+        <button className="empty-action-card" onClick={() => lastVault && onSelectVault(lastVault)} disabled={!lastVault}>
+          <RotateCcw size={20} />
+          <span>Open recent vault</span>
+          <em>{lastVault ? visiblePath(lastVault) : "No recent vault recorded yet"}</em>
+        </button>
+        <button className="empty-action-card" onClick={onChooseVault}>
+          <FolderOpen size={20} />
+          <span>Open vault</span>
+          <em>Select an existing generated LLM Wiki vault folder.</em>
+        </button>
+        <button className="empty-action-card" onClick={onCreateVault} disabled={busy === "create"}>
+          <Archive size={20} />
+          <span>Create vault</span>
+          <em>Uses the path below and the current Obsidian profile setting.</em>
+        </button>
+        <button className="empty-action-card" onClick={() => deepseekVault && onSelectVault(deepseekVault.path)} disabled={!deepseekVault}>
+          <Database size={20} />
+          <span>Open DeepSeek demo vault</span>
+          <em>{deepseekVault ? visiblePath(deepseekVault.path) : "Run discovery or create the demo vault first"}</em>
+        </button>
       </div>
       <div className="suggestion-list">
         {suggestions.map((item) => (

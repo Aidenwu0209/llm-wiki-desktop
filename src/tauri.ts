@@ -19,6 +19,7 @@ import type {
   VaultRestoreResult,
   VaultSuggestion,
   VaultStatus,
+  WritebackApplyResult,
   WritebackProposal,
 } from "./types";
 
@@ -182,7 +183,7 @@ export function setWritebackStatus(
   return invoke("set_writeback_status", { vaultPath, proposalId, status });
 }
 
-export function applyWritebackProposal(vaultPath: string, proposalId: string): Promise<WritebackProposal> {
+export function applyWritebackProposal(vaultPath: string, proposalId: string): Promise<WritebackApplyResult> {
   return invoke("apply_writeback_proposal", { vaultPath, proposalId });
 }
 
@@ -276,6 +277,10 @@ export function listRuntimeJobs(vaultPath: string): Promise<RuntimeJobEvent[]> {
 
 export function openPath(path: string): Promise<void> {
   return invoke("open_path", { path });
+}
+
+export function revealPath(path: string): Promise<void> {
+  return invoke("reveal_path", { path });
 }
 
 export function openVaultPath(vaultPath: string, path: string): Promise<void> {

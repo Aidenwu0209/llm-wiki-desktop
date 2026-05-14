@@ -94,6 +94,8 @@ struct VaultEntryNote {
     vault_path: String,
     entry_path: Option<String>,
     entry_relative_path: Option<String>,
+    obsidian_uri: Option<String>,
+    fallback_path: String,
     reason: String,
     warning: Option<String>,
     is_workspace_root: bool,
@@ -124,12 +126,20 @@ struct RuntimeJobEvent {
     stage: String,
     attempt: usize,
     max_attempts: usize,
+    #[serde(default)]
+    retry_count: usize,
     command: Vec<String>,
     started_at: String,
     ended_at: Option<String>,
     elapsed_ms: u128,
+    #[serde(default)]
+    duration_ms: u128,
     exit_code: Option<i32>,
     log_path: Option<String>,
+    live_log_path: Option<String>,
+    stdout_tail: Option<String>,
+    stderr_tail: Option<String>,
+    retry_of: Option<String>,
     message: Option<String>,
 }
 
@@ -393,12 +403,17 @@ struct ContractFinding {
 struct TraceabilityWarning {
     warning_id: String,
     claim_id: String,
+    claim_text: Option<String>,
     claim_path: String,
+    source_id: Option<String>,
     source_path: Option<String>,
     artifact_path: Option<String>,
     missing_heading: String,
+    missing_anchor: String,
     severity: String,
+    summary: String,
     suggested_action: String,
+    next_action: String,
     finding_id: Option<String>,
 }
 
@@ -532,6 +547,14 @@ struct WritebackProposal {
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
+struct WritebackApplyResult {
+    proposal: WritebackProposal,
+    dashboard_refreshed: bool,
+    dashboard_error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct QueryEvidence {
     claim_id: String,
     claim_path: String,
@@ -555,6 +578,9 @@ struct QueryWritebackDraft {
     evidence_map: Vec<QueryEvidence>,
     insight_candidates: Vec<String>,
     uncertainty_conflicts: Vec<String>,
+    writeback_proposal: String,
+    diff_preview: String,
+    approval_status: String,
     proposal: WritebackProposal,
 }
 
@@ -860,6 +886,16 @@ fn read_json_value(path: &Path) -> Option<serde_json::Value> {
 fn json_string(value: &serde_json::Value, key: &str) -> Option<String> {
     value
         .get(key)
+        .and_then(serde_json::Value::as_str)
+        .filter(|item| !item.is_empty())
+        .map(ToString::to_string)
+}
+
+fn json_string_from_map(
+    map: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Option<String> {
+    map.get(key)
         .and_then(serde_json::Value::as_str)
         .filter(|item| !item.is_empty())
         .map(ToString::to_string)
@@ -2998,6 +3034,55 @@ fn runtime_source_status_for_desktop_entry(
     .to_string()
 }
 
+fn runtime_source_status_for_legacy_row(
+    vault: &Path,
+    map: &serde_json::Map<String, serde_json::Value>,
+    current_status: &str,
+) -> String {
+    if is_valid_runtime_source_status(current_status) {
+        return current_status.to_string();
+    }
+    if matches!(current_status, "ready" | "cached") {
+        if json_string_from_map(map, "source_page").is_some_and(|path| vault.join(path).is_file()) {
+            return "published".to_string();
+        }
+        return "parsed".to_string();
+    }
+    if current_status == "blocked" && json_string_from_map(map, "last_error").is_some() {
+        return "failed".to_string();
+    }
+    "candidate".to_string()
+}
+
+fn normalize_runtime_source_registry_rows(vault: &Path, values: &mut [serde_json::Value]) {
+    let now = Local::now().to_rfc3339();
+    for value in values {
+        let Some(map) = value.as_object_mut() else {
+            continue;
+        };
+        let Some(current_status) = map
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .map(ToString::to_string)
+        else {
+            continue;
+        };
+        if is_valid_runtime_source_status(&current_status) {
+            continue;
+        }
+        let runtime_status = runtime_source_status_for_legacy_row(vault, map, &current_status);
+        set_json_if_missing(map, "desktop_status", current_status);
+        map.insert(
+            "status".to_string(),
+            serde_json::Value::String(runtime_status),
+        );
+        map.insert(
+            "desktop_updated_at".to_string(),
+            serde_json::Value::String(now.clone()),
+        );
+    }
+}
+
 fn merge_runtime_source_registry(
     vault: &Path,
     registry: &[DesktopRegistryEntry],
@@ -3007,6 +3092,7 @@ fn merge_runtime_source_registry(
         .lines()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
         .collect::<Vec<_>>();
+    normalize_runtime_source_registry_rows(vault, &mut values);
     let mut index_by_key = HashMap::new();
     for (index, value) in values.iter().enumerate() {
         for key in [
@@ -4518,6 +4604,35 @@ fn missing_anchor_hint(finding: &ContractFinding) -> String {
     finding.title.clone()
 }
 
+fn traceability_action_text(
+    vault: &Path,
+    finding: &ContractFinding,
+    source_path: Option<&str>,
+    claim_text: Option<&str>,
+) -> String {
+    let context = format!(
+        "{} {} {} {}",
+        vault
+            .file_name()
+            .and_then(OsStr::to_str)
+            .unwrap_or_default()
+            .to_ascii_lowercase(),
+        source_path.unwrap_or_default().to_ascii_lowercase(),
+        claim_text.unwrap_or_default().to_ascii_lowercase(),
+        finding.detail.to_ascii_lowercase()
+    );
+    if context.contains("deepseek") {
+        return "DeepSeek evidence chain is broken: open the claim, source, and artifact; repair or regenerate the missing anchor; rerun traceability/lint before trusting the insight or query writeback.".to_string();
+    }
+    if finding.kind == "claim_unknown_source" {
+        return "Open the claim ledger and source registry, then connect this claim to a generated source page before review.".to_string();
+    }
+    if finding.kind == "claim_missing_evidence" {
+        return "Open the claim and artifact, restore the evidence quote/hash, then rerun claim extraction or lint.".to_string();
+    }
+    "Open the claim and source page, repair the cited heading/anchor, then rerun lint after regenerating source pages.".to_string()
+}
+
 #[tauri::command]
 fn list_traceability_warnings(vault_path: String) -> Result<Vec<TraceabilityWarning>, String> {
     let vault = PathBuf::from(vault_path);
@@ -4535,23 +4650,45 @@ fn list_traceability_warnings(vault_path: String) -> Result<Vec<TraceabilityWarn
             || finding.kind == "claim_unknown_source"
     }) {
         let evidence = evidence_by_claim.get(&finding.object_id);
+        let claim_id = if finding.object_type == "claim" {
+            finding.object_id.clone()
+        } else {
+            evidence
+                .map(|item| item.claim_id.clone())
+                .unwrap_or_else(|| finding.object_id.clone())
+        };
+        let claim_text = evidence.map(|item| item.claim_text.clone());
+        let source_id = evidence.and_then(|item| item.source_id.clone());
+        let source_path = evidence
+            .and_then(|item| item.source_page.clone())
+            .or_else(|| finding.path.clone());
+        let artifact_path = evidence.and_then(|item| item.artifact_path.clone());
+        let missing_anchor = missing_anchor_hint(finding);
+        let next_action = traceability_action_text(
+            &vault,
+            finding,
+            source_path.as_deref(),
+            claim_text.as_deref(),
+        );
+        let summary = format!(
+            "Claim {claim_id} cannot be traced to {} because {}.",
+            source_path.as_deref().unwrap_or("a generated source page"),
+            missing_anchor
+        );
         warnings.push(TraceabilityWarning {
             warning_id: format!("trace-{}", finding.finding_id),
-            claim_id: if finding.object_type == "claim" {
-                finding.object_id.clone()
-            } else {
-                evidence
-                    .map(|item| item.claim_id.clone())
-                    .unwrap_or_else(|| finding.object_id.clone())
-            },
+            claim_id,
+            claim_text,
             claim_path: "claims/claims.jsonl".to_string(),
-            source_path: evidence
-                .and_then(|item| item.source_page.clone())
-                .or_else(|| finding.path.clone()),
-            artifact_path: evidence.and_then(|item| item.artifact_path.clone()),
-            missing_heading: missing_anchor_hint(finding),
+            source_id,
+            source_path,
+            artifact_path,
+            missing_heading: missing_anchor.clone(),
+            missing_anchor,
             severity: finding.severity.clone(),
-            suggested_action: "Open the claim and source page, repair the cited heading/anchor or rerun lint after regenerating source pages.".to_string(),
+            summary,
+            suggested_action: next_action.clone(),
+            next_action,
             finding_id: Some(finding.finding_id.clone()),
         });
     }
@@ -5171,12 +5308,19 @@ fn create_query_writeback_proposal(
         },
         answer.clone(),
     )?;
+    let writeback_proposal = format!(
+        "Target: {}\nProposal ID: {}\nStatus: {}\nApproval gate: human approval required before apply",
+        proposal.target_path, proposal.proposal_id, proposal.status
+    );
     Ok(QueryWritebackDraft {
         query,
         answer,
         evidence_map: evidence,
         insight_candidates,
         uncertainty_conflicts,
+        writeback_proposal,
+        diff_preview: proposal.diff.clone(),
+        approval_status: proposal.status.clone(),
         proposal,
     })
 }
@@ -5293,7 +5437,7 @@ fn set_writeback_status(
 fn apply_writeback_proposal(
     vault_path: String,
     proposal_id: String,
-) -> Result<WritebackProposal, String> {
+) -> Result<WritebackApplyResult, String> {
     let vault = PathBuf::from(vault_path);
     require_existing_dir(&vault, "vault")?;
     let mut proposal = load_writeback_proposal(&vault, &proposal_id)?;
@@ -5330,8 +5474,12 @@ fn apply_writeback_proposal(
             "log_path": proposal.log_path,
         }),
     )?;
-    let _ = plan_ingest(to_display(&vault));
-    Ok(proposal)
+    let dashboard_error = plan_ingest(to_display(&vault)).err();
+    Ok(WritebackApplyResult {
+        proposal,
+        dashboard_refreshed: dashboard_error.is_none(),
+        dashboard_error,
+    })
 }
 
 #[tauri::command]
@@ -5534,6 +5682,7 @@ fn start_runtime_command_job(
     let started_at = Local::now().to_rfc3339();
     let command = vec!["desktop:runtime_command".to_string(), kind.clone()];
     let max_attempts = runtime_job_max_attempts_for_kind(&kind, retry_count);
+    let live_log_path = Some(to_display(&runtime_task_log_path(&vault, &job_id)));
     let start_event = runtime_job_start_event(
         &job_id,
         &kind,
@@ -5541,6 +5690,8 @@ fn start_runtime_command_job(
         started_at.clone(),
         max_attempts,
         "background runtime job queued",
+        live_log_path,
+        None,
     );
     append_runtime_job_state(&vault, &start_event)?;
     emit_runtime_event(Some(&app), start_event.clone());
@@ -5670,6 +5821,42 @@ fn emit_runtime_event(app: Option<&AppHandle>, event: RuntimeJobEvent) {
     }
 }
 
+fn runtime_task_log_path(vault: &Path, id: &str) -> PathBuf {
+    vault
+        .join("log-archive")
+        .join("desktop")
+        .join(format!("{id}.log"))
+}
+
+fn append_text(path: &Path, text: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+    }
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| format!("failed to open {}: {e}", path.display()))?;
+    file.write_all(text.as_bytes())
+        .map_err(|e| format!("failed to append {}: {e}", path.display()))
+}
+
+fn text_tail(value: &str, max_chars: usize) -> Option<String> {
+    if value.is_empty() {
+        return None;
+    }
+    let mut tail = value.chars().rev().take(max_chars).collect::<Vec<_>>();
+    let truncated = tail.len() == max_chars && value.chars().count() > max_chars;
+    tail.reverse();
+    let rendered = tail.into_iter().collect::<String>();
+    Some(if truncated {
+        format!("...{rendered}")
+    } else {
+        rendered
+    })
+}
+
 fn append_runtime_job_state(vault: &Path, event: &RuntimeJobEvent) -> Result<(), String> {
     append_jsonl_value(
         &vault.join("_state").join("desktop-runtime-jobs.jsonl"),
@@ -5702,22 +5889,30 @@ fn runtime_job_start_event(
     started_at: String,
     max_attempts: usize,
     message: &str,
+    live_log_path: Option<String>,
+    retry_of: Option<String>,
 ) -> RuntimeJobEvent {
     RuntimeJobEvent {
         job_id: job_id.to_string(),
         kind: kind.to_string(),
-        status: "running".to_string(),
+        status: "queued".to_string(),
         stream: None,
         line: None,
         stage: "queued".to_string(),
         attempt: 1,
         max_attempts,
+        retry_count: max_attempts,
         command,
         started_at,
         ended_at: None,
         elapsed_ms: 0,
+        duration_ms: 0,
         exit_code: None,
         log_path: None,
+        live_log_path,
+        stdout_tail: None,
+        stderr_tail: None,
+        retry_of,
         message: Some(message.to_string()),
     }
 }
@@ -5732,6 +5927,7 @@ fn runtime_job_finish_event(
     result: Result<TaskLog, String>,
 ) -> RuntimeJobEvent {
     let ended_at = Local::now().to_rfc3339();
+    let elapsed_ms = started.elapsed().as_millis();
     match result {
         Ok(log) => RuntimeJobEvent {
             job_id,
@@ -5746,12 +5942,18 @@ fn runtime_job_finish_event(
             stage: "finished".to_string(),
             attempt: max_attempts,
             max_attempts,
+            retry_count: max_attempts,
             command,
             started_at,
             ended_at: Some(ended_at),
-            elapsed_ms: started.elapsed().as_millis(),
+            elapsed_ms,
+            duration_ms: elapsed_ms,
             exit_code: Some(log.exit_code),
-            log_path: Some(log.log_path),
+            log_path: Some(log.log_path.clone()),
+            live_log_path: Some(log.log_path),
+            stdout_tail: text_tail(&log.stdout, 1200),
+            stderr_tail: text_tail(&log.stderr, 1200),
+            retry_of: None,
             message: Some(if log.exit_code == 0 {
                 "completed".to_string()
             } else {
@@ -5767,12 +5969,18 @@ fn runtime_job_finish_event(
             stage: "finished".to_string(),
             attempt: 1,
             max_attempts,
+            retry_count: max_attempts,
             command,
             started_at,
             ended_at: Some(ended_at),
-            elapsed_ms: started.elapsed().as_millis(),
+            elapsed_ms,
+            duration_ms: elapsed_ms,
             exit_code: Some(-1),
             log_path: None,
+            live_log_path: None,
+            stdout_tail: None,
+            stderr_tail: None,
+            retry_of: None,
             message: Some(error),
         },
     }
@@ -5828,6 +6036,16 @@ fn run_process_job(
     let timeout = Duration::from_secs(timeout_seconds.max(1) as u64);
     let started_at = Local::now().to_rfc3339();
     let started = Instant::now();
+    let log_path = runtime_task_log_path(vault, &job_id);
+    let _ = ensure_inside(&log_path, vault, "task log must stay inside the vault")?;
+    let live_log_path = Some(to_display(&log_path));
+    write_text(
+        &log_path,
+        &format!(
+            "# Runtime Task Log\n\nkind: {kind}\njob_id: {job_id}\nstarted_at: {started_at}\nstatus: running\ncommand: {}\ntimeout_seconds: {timeout_seconds}\nretry_count: {retry_count}\n\n## live events\n\n",
+            command.join(" ")
+        ),
+    )?;
     let mut stdout_all = String::new();
     let mut stderr_all = String::new();
     let mut final_exit = -1;
@@ -5846,12 +6064,18 @@ fn run_process_job(
             stage: format!("attempt {attempt}/{max_attempts}"),
             attempt,
             max_attempts,
+            retry_count: max_attempts,
             command: command.clone(),
             started_at: started_at.clone(),
             ended_at: None,
             elapsed_ms: started.elapsed().as_millis(),
+            duration_ms: started.elapsed().as_millis(),
             exit_code: None,
             log_path: None,
+            live_log_path: live_log_path.clone(),
+            stdout_tail: None,
+            stderr_tail: None,
+            retry_of: None,
             message: Some("started".to_string()),
         };
         emit_runtime_event(app, started_event.clone());
@@ -5891,6 +6115,7 @@ fn run_process_job(
         drop(tx);
 
         let attempt_started = Instant::now();
+        let mut last_heartbeat = Instant::now();
         let attempt_exit: i32;
         let mut timed_out = false;
         let mut cancelled = false;
@@ -5904,6 +6129,8 @@ fn run_process_job(
                     stderr_all.push_str(&line);
                     stderr_all.push('\n');
                 }
+                let _ = append_text(&log_path, &format!("[{stream}] {line}\n"));
+                let elapsed_ms = started.elapsed().as_millis();
                 emit_runtime_event(
                     app,
                     RuntimeJobEvent {
@@ -5915,15 +6142,52 @@ fn run_process_job(
                         stage: format!("attempt {attempt}/{max_attempts}"),
                         attempt,
                         max_attempts,
+                        retry_count: max_attempts,
                         command: command.clone(),
                         started_at: started_at.clone(),
                         ended_at: None,
-                        elapsed_ms: started.elapsed().as_millis(),
+                        elapsed_ms,
+                        duration_ms: elapsed_ms,
                         exit_code: None,
                         log_path: None,
+                        live_log_path: live_log_path.clone(),
+                        stdout_tail: text_tail(&stdout_all, 1200),
+                        stderr_tail: text_tail(&stderr_all, 1200),
+                        retry_of: None,
                         message: None,
                     },
                 );
+            }
+
+            if last_heartbeat.elapsed() >= Duration::from_secs(2) {
+                let elapsed_ms = started.elapsed().as_millis();
+                emit_runtime_event(
+                    app,
+                    RuntimeJobEvent {
+                        job_id: job_id.clone(),
+                        kind: kind.to_string(),
+                        status: "running".to_string(),
+                        stream: None,
+                        line: None,
+                        stage: format!("attempt {attempt}/{max_attempts}"),
+                        attempt,
+                        max_attempts,
+                        retry_count: max_attempts,
+                        command: command.clone(),
+                        started_at: started_at.clone(),
+                        ended_at: None,
+                        elapsed_ms,
+                        duration_ms: elapsed_ms,
+                        exit_code: None,
+                        log_path: None,
+                        live_log_path: live_log_path.clone(),
+                        stdout_tail: text_tail(&stdout_all, 1200),
+                        stderr_tail: text_tail(&stderr_all, 1200),
+                        retry_of: None,
+                        message: Some(format!("running for {}s", started.elapsed().as_secs())),
+                    },
+                );
+                last_heartbeat = Instant::now();
             }
 
             if runtime_job_cancelled(&job_id) {
@@ -5965,6 +6229,7 @@ fn run_process_job(
                 stderr_all.push_str(&line);
                 stderr_all.push('\n');
             }
+            let _ = append_text(&log_path, &format!("[{stream}] {line}\n"));
         }
 
         final_exit = attempt_exit;
@@ -5986,6 +6251,7 @@ fn run_process_job(
         }
 
         if attempt < max_attempts {
+            let elapsed_ms = started.elapsed().as_millis();
             emit_runtime_event(
                 app,
                 RuntimeJobEvent {
@@ -5997,12 +6263,18 @@ fn run_process_job(
                     stage: format!("retry after attempt {attempt}"),
                     attempt,
                     max_attempts,
+                    retry_count: max_attempts,
                     command: command.clone(),
                     started_at: started_at.clone(),
                     ended_at: None,
-                    elapsed_ms: started.elapsed().as_millis(),
+                    elapsed_ms,
+                    duration_ms: elapsed_ms,
                     exit_code: Some(final_exit),
                     log_path: None,
+                    live_log_path: live_log_path.clone(),
+                    stdout_tail: text_tail(&stdout_all, 1200),
+                    stderr_tail: text_tail(&stderr_all, 1200),
+                    retry_of: None,
                     message: final_message.clone(),
                 },
             );
@@ -6011,10 +6283,6 @@ fn run_process_job(
 
     let ended_at = Local::now().to_rfc3339();
     let id = job_id;
-    let log_path = vault
-        .join("log-archive")
-        .join("desktop")
-        .join(format!("{id}.log"));
     let rendered = format!(
         "# Runtime Task Log\n\nkind: {kind}\njob_id: {id}\nstarted_at: {started_at}\nended_at: {ended_at}\nstatus: {final_status}\nexit_code: {final_exit}\ncommand: {}\ntimeout_seconds: {timeout_seconds}\nretry_count: {retry_count}\n\n## stdout\n\n{}\n\n## stderr\n\n{}\n",
         command.join(" "),
@@ -6032,12 +6300,18 @@ fn run_process_job(
         stage: "finished".to_string(),
         attempt: last_attempt.max(1),
         max_attempts,
+        retry_count: max_attempts,
         command: command.clone(),
         started_at: started_at.clone(),
         ended_at: Some(ended_at.clone()),
         elapsed_ms: started.elapsed().as_millis(),
+        duration_ms: started.elapsed().as_millis(),
         exit_code: Some(final_exit),
         log_path: Some(to_display(&log_path)),
+        live_log_path: live_log_path.clone(),
+        stdout_tail: text_tail(&stdout_all, 1200),
+        stderr_tail: text_tail(&stderr_all, 1200),
+        retry_of: None,
         message: final_message,
     };
     emit_runtime_event(app, final_event.clone());
@@ -6531,6 +6805,8 @@ fn start_ingest_pipeline_job(
         started_at.clone(),
         retry_count.max(1),
         "background ingest pipeline queued",
+        None,
+        None,
     );
     append_runtime_job_state(&vault, &start_event)?;
     emit_runtime_event(Some(&app), start_event.clone());
@@ -6953,6 +7229,36 @@ mod tests {
     }
 
     #[test]
+    fn traceability_warnings_are_action_card_ready() {
+        let vault = test_vault("deepseek-traceability");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        write_text(
+            &vault.join("_state").join("lint-findings.jsonl"),
+            "{\"finding_id\":\"f1\",\"severity\":\"p1\",\"kind\":\"evidence_anchor_missing\",\"object_type\":\"claim\",\"object_id\":\"c1\",\"title\":\"Missing evidence anchor\",\"detail\":\"missing heading anchor: Efficient Reasoning\",\"status\":\"open\",\"path\":\"sources/LLM-0001.md\"}\n",
+        )
+        .expect("write finding");
+
+        let warnings =
+            list_traceability_warnings(to_display(&vault)).expect("list traceability warnings");
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].claim_id, "c1");
+        assert_eq!(
+            warnings[0].source_path.as_deref(),
+            Some("sources/LLM-0001.md")
+        );
+        assert_eq!(
+            warnings[0].missing_anchor,
+            "missing heading anchor: Efficient Reasoning"
+        );
+        assert!(warnings[0].summary.contains("Claim c1 cannot be traced"));
+        assert!(warnings[0]
+            .next_action
+            .contains("DeepSeek evidence chain is broken"));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
     fn writeback_requires_approval_and_logs_apply() {
         let vault = test_vault("writeback");
         create_minimal_vault(&vault).expect("create minimal vault");
@@ -6981,7 +7287,8 @@ mod tests {
         assert_eq!(approved.status, "approved");
         let applied = apply_writeback_proposal(to_display(&vault), proposal.proposal_id)
             .expect("apply proposal");
-        assert_eq!(applied.status, "applied");
+        assert_eq!(applied.proposal.status, "applied");
+        assert!(applied.dashboard_refreshed);
         assert!(read_text(&concept).contains("New text with cited evidence."));
         assert!(read_text(&vault.join("_state").join("writeback-log.jsonl")).contains("applied"));
 
@@ -7026,7 +7333,8 @@ mod tests {
         assert_eq!(approved.status, "approved");
         let applied = apply_writeback_proposal(to_display(&vault), proposal.proposal_id)
             .expect("write review proposal artifact");
-        assert_eq!(applied.status, "applied");
+        assert_eq!(applied.proposal.status, "applied");
+        assert!(applied.dashboard_refreshed);
         let artifact = vault
             .join("reviews")
             .join("query-writeback")
@@ -7059,6 +7367,11 @@ mod tests {
         create_minimal_vault(&vault).expect("create minimal vault");
         let entry = resolve_vault_entry_note_impl(&vault, true).expect("resolve entry");
         assert_eq!(entry.entry_relative_path.as_deref(), Some("index.md"));
+        assert!(entry
+            .obsidian_uri
+            .as_deref()
+            .is_some_and(|uri| uri.contains("file=index.md")));
+        assert_eq!(entry.fallback_path, to_display(&vault.join("index.md")));
 
         let workspace = test_vault("workspace-root");
         fs::create_dir_all(workspace.join("deepseek_paper")).expect("deepseek dir");
@@ -7068,6 +7381,11 @@ mod tests {
         let warning = resolve_vault_entry_note_impl(&workspace, true).expect("workspace entry");
         assert!(warning.is_workspace_root);
         assert!(warning.warning.is_some());
+        assert!(warning.entry_path.is_none());
+        assert!(warning.obsidian_uri.is_none());
+        let opened = open_obsidian_vault(to_display(&workspace)).expect("workspace open warning");
+        assert!(opened.is_workspace_root);
+        assert!(opened.warning.is_some());
 
         let _ = fs::remove_dir_all(vault);
         let _ = fs::remove_dir_all(workspace);
@@ -7150,6 +7468,27 @@ mod tests {
         create_minimal_vault(&vault).expect("create minimal vault");
         let entry = registry_entry("ready", Some("sources/LLM-0001.md".to_string()));
         merge_runtime_source_registry(&vault, &[entry]).expect("merge registry");
+        let rows = registry_rows(&vault);
+        assert_eq!(json_string(&rows[0], "status").as_deref(), Some("parsed"));
+        assert_eq!(
+            json_string(&rows[0], "desktop_status").as_deref(),
+            Some("ready")
+        );
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn runtime_source_registry_normalizes_orphan_legacy_ready_rows() {
+        let vault = test_vault("registry-ready-orphan");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        write_text(
+            &vault.join("_state").join("source-registry.jsonl"),
+            "{\"source_uuid\":\"sha256:legacy\",\"source_sha256\":\"legacy\",\"source_path\":\"raw/legacy.pdf\",\"status\":\"ready\"}\n",
+        )
+        .expect("write legacy row");
+
+        merge_runtime_source_registry(&vault, &[]).expect("normalize registry");
         let rows = registry_rows(&vault);
         assert_eq!(json_string(&rows[0], "status").as_deref(), Some("parsed"));
         assert_eq!(
@@ -7339,6 +7678,14 @@ mod tests {
         assert_eq!(history[0].status, "succeeded");
         assert_eq!(history[0].attempt, 1);
         assert_eq!(history[0].max_attempts, 3);
+        assert_eq!(history[0].retry_count, 3);
+        assert_eq!(history[0].duration_ms, history[0].elapsed_ms);
+        assert_eq!(history[0].live_log_path, history[0].log_path);
+        assert!(history[0]
+            .stdout_tail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("history-ok"));
 
         let _ = fs::remove_dir_all(vault);
     }
@@ -7354,7 +7701,10 @@ mod tests {
             started_at.clone(),
             2,
             "queued",
+            None,
+            None,
         );
+        assert_eq!(running.status, "queued");
         append_runtime_job_state(&vault, &running).expect("append running event");
         let mut finished = running.clone();
         finished.status = "succeeded".to_string();
@@ -7433,6 +7783,9 @@ mod tests {
         assert!(draft.answer.contains("## Concept index"));
         assert!(draft.answer.contains("## Diff preview"));
         assert!(draft.answer.contains("## Approval status"));
+        assert!(draft.writeback_proposal.contains("human approval required"));
+        assert_eq!(draft.approval_status, "proposed");
+        assert_eq!(draft.diff_preview, draft.proposal.diff);
         assert!(!vault
             .join("reviews")
             .join("query-writeback")
@@ -7609,22 +7962,31 @@ fn resolve_vault_entry_note_impl(
         "This looks like the LLM-Wiki workspace root, not a generated vault. Choose a child vault under vaults/ to avoid opening the wrong Obsidian workspace.".to_string()
     });
     let mut reason = "matched existing entry note".to_string();
-    let entry = vault_entry_candidates(vault)
-        .into_iter()
-        .find(|path| path.is_file())
-        .or_else(|| {
-            if create_if_missing && !workspace_root_selected {
-                reason = "generated LLM Wiki Home.md entry note".to_string();
-                generate_entry_note(vault).ok()
-            } else {
-                reason = "no entry note found".to_string();
-                None
-            }
-        });
+    let entry = if workspace_root_selected {
+        reason = "workspace root selected; generated vault required".to_string();
+        None
+    } else {
+        vault_entry_candidates(vault)
+            .into_iter()
+            .find(|path| path.is_file())
+            .or_else(|| {
+                if create_if_missing {
+                    reason = "generated LLM Wiki Home.md entry note".to_string();
+                    generate_entry_note(vault).ok()
+                } else {
+                    reason = "no entry note found".to_string();
+                    None
+                }
+            })
+    };
+    let obsidian_uri = entry.as_ref().map(|path| obsidian_file_uri(vault, path));
+    let fallback_path = entry.as_ref().map_or(vault, |path| path.as_path());
     Ok(VaultEntryNote {
         vault_path: to_display(vault),
         entry_relative_path: entry.as_ref().map(|path| rel_path(vault, path)),
         entry_path: entry.as_ref().map(|path| to_display(path)),
+        obsidian_uri,
+        fallback_path: to_display(fallback_path),
         reason,
         warning,
         is_workspace_root: workspace_root_selected,
@@ -7768,7 +8130,7 @@ fn register_obsidian_vault(vault: &Path) -> Result<(), String> {
     write_text(&path, &(rendered + "\n"))
 }
 
-fn open_obsidian_file(vault: &Path, file: &Path) -> Result<(), String> {
+fn try_open_obsidian_file(vault: &Path, file: &Path) -> Result<(), String> {
     if cfg!(target_os = "macos") {
         register_obsidian_vault(vault)?;
         let _ = Command::new("open")
@@ -7786,6 +8148,17 @@ fn open_obsidian_file(vault: &Path, file: &Path) -> Result<(), String> {
         if status.success() {
             return Ok(());
         }
+        return Err(format!(
+            "Obsidian URI launch failed for {}",
+            obsidian_file_uri(vault, file)
+        ));
+    }
+    Err("Obsidian URI launch is only available on macOS".to_string())
+}
+
+fn open_obsidian_file(vault: &Path, file: &Path) -> Result<(), String> {
+    if try_open_obsidian_file(vault, file).is_ok() {
+        return Ok(());
     }
     open_path(to_display(file))
 }
@@ -7810,6 +8183,28 @@ fn open_path(path: String) -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("failed to open {}: {e}", target.display()))?;
     Ok(())
+}
+
+#[tauri::command]
+fn reveal_path(path: String) -> Result<(), String> {
+    let target = PathBuf::from(path);
+    if cfg!(target_os = "macos") {
+        Command::new("open")
+            .arg("-R")
+            .arg(&target)
+            .spawn()
+            .map_err(|e| format!("failed to reveal {}: {e}", target.display()))?;
+        return Ok(());
+    }
+    let folder = if target.is_dir() {
+        target
+    } else {
+        target
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| target.clone())
+    };
+    open_path(to_display(&folder))
 }
 
 fn resolve_vault_item_path(vault: &Path, path: &str) -> Result<PathBuf, String> {
@@ -7848,11 +8243,19 @@ fn open_vault_path(vault_path: String, path: String) -> Result<(), String> {
 fn open_obsidian_vault(vault_path: String) -> Result<VaultEntryNote, String> {
     let vault = PathBuf::from(vault_path);
     require_existing_dir(&vault, "vault")?;
-    let entry = resolve_vault_entry_note_impl(&vault, true)?;
+    let mut entry = resolve_vault_entry_note_impl(&vault, true)?;
+    if entry.is_workspace_root {
+        return Ok(entry);
+    }
     if cfg!(target_os = "macos") {
         if let Some(entry_path) = &entry.entry_path {
-            if open_obsidian_file(&vault, &PathBuf::from(entry_path)).is_ok() {
-                return Ok(entry);
+            match try_open_obsidian_file(&vault, &PathBuf::from(entry_path)) {
+                Ok(()) => return Ok(entry),
+                Err(err) => {
+                    entry.warning = Some(format!(
+                        "{err}. Use copy URI/path or reveal in Finder if Obsidian did not focus the entry note."
+                    ));
+                }
             }
         } else {
             let status = Command::new("open")
@@ -7864,9 +8267,19 @@ fn open_obsidian_vault(vault_path: String) -> Result<VaultEntryNote, String> {
             if status.success() {
                 return Ok(entry);
             }
+            entry.warning = Some(
+                "Obsidian did not accept the vault open request. Use reveal/open folder or copy the vault path.".to_string(),
+            );
         }
     }
-    open_path(to_display(&vault))?;
+    if let Err(err) = open_path(to_display(&vault)) {
+        let previous = entry.warning.unwrap_or_default();
+        entry.warning = Some(format!(
+            "{} Folder fallback also failed: {err}. Copy this path manually: {}",
+            previous.trim(),
+            entry.fallback_path
+        ));
+    }
     Ok(entry)
 }
 
@@ -7910,6 +8323,7 @@ pub fn run() {
             run_ingest_pipeline,
             run_runtime_command,
             open_path,
+            reveal_path,
             open_vault_path,
             resolve_vault_entry_note,
             open_obsidian_vault

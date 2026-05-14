@@ -64,6 +64,8 @@ export type VaultEntryNote = {
   vaultPath: string;
   entryPath?: string | null;
   entryRelativePath?: string | null;
+  obsidianUri?: string | null;
+  fallbackPath: string;
   reason: string;
   warning?: string | null;
   isWorkspaceRoot: boolean;
@@ -93,21 +95,38 @@ export type TaskLog = {
   logPath: string;
 };
 
+export type RuntimeJobStatus =
+  | "queued"
+  | "running"
+  | "retrying"
+  | "completed"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "timeout"
+  | "timed_out";
+
 export type RuntimeJobEvent = {
   jobId: string;
   kind: string;
-  status: string;
+  status: RuntimeJobStatus | string;
   stream?: "stdout" | "stderr" | string | null;
   line?: string | null;
   stage: string;
   attempt: number;
   maxAttempts: number;
+  retryCount: number;
   command: string[];
   startedAt: string;
   endedAt?: string | null;
   elapsedMs: number;
+  durationMs: number;
   exitCode?: number | null;
   logPath?: string | null;
+  liveLogPath?: string | null;
+  stdoutTail?: string | null;
+  stderrTail?: string | null;
+  retryOf?: string | null;
   message?: string | null;
 };
 
@@ -314,12 +333,17 @@ export type ContractFinding = {
 export type TraceabilityWarning = {
   warningId: string;
   claimId: string;
+  claimText?: string | null;
   claimPath: string;
+  sourceId?: string | null;
   sourcePath?: string | null;
   artifactPath?: string | null;
   missingHeading: string;
+  missingAnchor: string;
   severity: "p0" | "p1" | "p2" | "p3" | string;
+  summary: string;
   suggestedAction: string;
+  nextAction: string;
   findingId?: string | null;
 };
 
@@ -386,6 +410,26 @@ export type WritebackProposal = {
   logPath?: string | null;
 };
 
+export type WritebackApplyResult = {
+  proposal: WritebackProposal;
+  dashboardRefreshed: boolean;
+  dashboardError?: string | null;
+};
+
+export type WritebackApplyStatus = {
+  proposalId: string;
+  targetPath: string;
+  appliedAt?: string | null;
+  dashboardRefreshed: boolean;
+  dashboardError?: string | null;
+  lint: {
+    ran: boolean;
+    findingCount?: number;
+    blockingCount?: number;
+    error?: string | null;
+  };
+};
+
 export type QueryEvidence = {
   claimId: string;
   claimPath: string;
@@ -407,6 +451,9 @@ export type QueryWritebackDraft = {
   evidenceMap: QueryEvidence[];
   insightCandidates: string[];
   uncertaintyConflicts: string[];
+  writebackProposal: string;
+  diffPreview: string;
+  approvalStatus: string;
   proposal: WritebackProposal;
 };
 

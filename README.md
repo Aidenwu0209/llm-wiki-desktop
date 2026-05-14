@@ -58,7 +58,9 @@
 - Impact graph：`desktop-impact-graph.jsonl` 记录 source -> artifact -> chunks 的基础影响边，后续 runtime 可扩展到 claims/concepts。
 - Obsidian templates：最小 vault 会写入 `templates/source.md` 和 `templates/concept.md`，固定 source/concept 页面结构和 frontmatter。
 
-## 开发
+## 普通用户启动
+
+本仓库当前以本地源码方式启动桌面端，适合内部试用、DeepSeek corpus 验证和 release candidate 检查。启动前需要 macOS、Node.js/npm、Rust/Cargo 和 Xcode Command Line Tools。
 
 环境要求：
 
@@ -67,16 +69,118 @@
 - Tauri v2 所需的系统依赖。
 
 ```bash
+cd /path/to/llm-wiki-desktop
 npm install
-npm run build
-npm run tauri dev
+npm run start
 ```
 
-Rust 侧检查：
+等同的脚本入口：
 
 ```bash
-cargo check --manifest-path src-tauri/Cargo.toml
+./scripts/dev-start.sh
 ```
+
+首次打开后，按这个顺序使用：
+
+1. 选择或创建一个 `open-llm-wiki` vault。
+2. 如果 vault 内还没有 runtime，在 UI 中选择本地 `open-llm-wiki` 仓库路径。
+3. 导入 PDF、Markdown 或 txt 到 `raw/inbox/`。
+4. 先查看 ingest plan 和 action panel，再运行 ingest pipeline。
+5. 需要浏览知识库时，从桌面端打开 Obsidian vault，而不是直接打开原始论文目录。
+6. 需要 query writeback 时，先生成 proposal 并检查 diff。没有人工批准时不要 apply 到 `concepts/`。
+
+默认路径是本地优先。除非用户明确选择并批准，桌面端不应使用 cloud OCR、hosted parser 或外部 LLM/API 路径。
+
+## 开发者启动
+
+推荐使用 lockfile 安装依赖：
+
+```bash
+npm ci
+npm run desktop:dev
+```
+
+常用开发命令：
+
+```bash
+npm run dev:web
+npm run typecheck
+npm test
+npm run build
+```
+
+脚本约定：
+
+| Command | Purpose |
+| --- | --- |
+| `npm run start` | 启动完整 Tauri 桌面端。 |
+| `npm run desktop:dev` | 启动 Tauri dev shell，内部会按 `tauri.conf.json` 拉起 Vite。 |
+| `npm run dev:web` | 只启动 Vite Web 视图，用于快速 UI 调试，不代表完整桌面能力。 |
+| `npm test` | 运行 TypeScript typecheck 和 Rust tests。 |
+| `npm run build` | 运行 typecheck 并生成前端 `dist/`。 |
+| `npm run build:app` | 运行 Tauri 本地应用打包。 |
+| `./scripts/test.sh` | shell 入口，等同于 `npm test`。 |
+| `./scripts/build-app.sh` | shell 入口，等同于 `npm run build:app`。 |
+
+Rust 侧单独检查：
+
+```bash
+cargo test --manifest-path src-tauri/Cargo.toml
+```
+
+## macOS 本地打包
+
+本地打包用于验证 `.app` 和 `.dmg` 是否能在当前 Mac 上启动，不等同于签名、notarization 或公开分发。
+
+```bash
+npm ci
+npm run build:app
+```
+
+打包完成后检查产物：
+
+```bash
+open "src-tauri/target/release/bundle/macos/LLM Wiki Desktop.app"
+open src-tauri/target/release/bundle/dmg
+```
+
+如果只是验证 release candidate，不要把 notarization 失败和本地启动失败混在一起。公开分发前还需要单独处理 Developer ID signing、hardened runtime、notarization、stapling 和完整图标资产。
+
+## Tauri 配置状态
+
+当前 `src-tauri/tauri.conf.json` 的 release 相关配置：
+
+- `productName`: `LLM Wiki Desktop`
+- window title: `LLM Wiki Desktop`
+- `identifier`: `com.aidenwu.llmwiki.desktop`
+- `bundle.active`: `true`
+- `bundle.targets`: `all`
+- `bundle.icon`: `src-tauri/icons/icon.png`
+
+这些字段与 package/Cargo 命名保持一致。当前图标资产只有一个 32x32 PNG，足够暴露占位图问题，但不适合作为正式 macOS 分发图标集。正式分发前应补齐 Tauri icon set，再单独做签名和 notarization 检查。
+
+## Release checklist
+
+本 checklist 面向本地 release candidate，不包含 CI/CD。
+
+```bash
+npm ci
+npm run build
+cargo test --manifest-path src-tauri/Cargo.toml
+npm run build:app
+```
+
+手动验收：
+
+1. 打开 `src-tauri/target/release/bundle/macos/LLM Wiki Desktop.app`。
+2. 打开一个已有 vault，并确认 runtime path、dashboard/status、review queue 能被识别。
+3. 创建一个新 vault，并确认 `templates/`、`raw/inbox/`、`_state/` 初始化正常。
+4. 从桌面端打开 Obsidian，确认打开的是生成后的 vault，不是原始 PDF 文件夹。
+5. 导入一个小样本文件，运行 ingest plan，确认 action panel 给出下一步。
+6. 运行 query writeback，确认先生成 `reviews/query-writeback/` proposal 和 diff。
+7. 未获得明确人工批准时，确认 writeback 没有静默写入 `concepts/` 或 `sources/`。
+8. 如批准并 apply 了 proposal，再运行 lint/eval 或对应 runtime validation。
+9. 记录本地 app 路径、vault 路径、Obsidian entry file、writeback proposal 路径和验证命令结果。
 
 ## Runtime 设置
 

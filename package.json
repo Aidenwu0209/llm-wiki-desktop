@@ -5,8 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:web": "vite",
+    "desktop:dev": "tauri dev",
+    "start": "npm run desktop:dev",
     "typecheck": "tsc --build --pretty",
+    "test": "npm run typecheck && npm run test:rust",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
     "build": "npm run typecheck && vite build",
+    "build:app": "tauri build",
     "preview": "vite preview",
     "tauri": "tauri"
   },
