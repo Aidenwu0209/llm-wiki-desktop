@@ -278,6 +278,10 @@ export function openPath(path: string): Promise<void> {
   return invoke("open_path", { path });
 }
 
+export function openVaultPath(vaultPath: string, path: string): Promise<void> {
+  return invoke("open_vault_path", { vaultPath, path });
+}
+
 export function resolveVaultEntryNote(vaultPath: string): Promise<VaultEntryNote> {
   return invoke("resolve_vault_entry_note", { vaultPath });
 }

@@ -44,6 +44,7 @@ import {
   loadDesktopSettings,
   openObsidianVault,
   openPath,
+  openVaultPath,
   planIngest,
   repairObsidianTemplates,
   resolveVaultEntryNote,
@@ -90,6 +91,8 @@ const runtimeActions = [
   { id: "science_review", label: "Science review", icon: AlertTriangle },
   { id: "concept_revision_preview", label: "Concept preview", icon: Database },
   { id: "concept_revision_apply", label: "Concept apply", icon: Wrench },
+  { id: "cancel_probe", label: "Cancel probe", icon: XCircle },
+  { id: "timeout_probe", label: "Timeout probe 2s", icon: TerminalSquare },
 ];
 
 const pipeline = [
@@ -128,6 +131,14 @@ const initialDesktopSettings: DesktopSettings = {
 
 function classNames(...items: Array<string | false | null | undefined>) {
   return items.filter(Boolean).join(" ");
+}
+
+function visiblePath(path: string) {
+  return path.replace(/ +(?=\/|$)/g, (match) => "[space]".repeat(match.length));
+}
+
+function hasWhitespacePathSegment(path: string) {
+  return / +(?=\/|$)/.test(path);
 }
 
 function statusTone(status: VaultStatus | null) {
@@ -246,6 +257,14 @@ function App() {
     if (!path) return vaultPath;
     if (path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path)) return path;
     return `${vaultPath}/${path}`;
+  };
+  const openVaultItem = async (path?: string | null) => {
+    if (!vaultPath || !path) return;
+    try {
+      await openVaultPath(vaultPath, path);
+    } catch (err) {
+      setError(String(err));
+    }
   };
 
   useEffect(() => {
@@ -376,7 +395,7 @@ function App() {
     setBusy("create");
     setError(null);
     try {
-      const next = await createVault(newVaultPath.trim(), rt, enableObsidian);
+      const next = await createVault(newVaultPath, rt, enableObsidian);
       await saveDesktopSettings(next.path, desktopSettings);
       setVaultPath(next.path);
       setNewVaultPath("");
@@ -745,10 +764,13 @@ function App() {
 
         <section className="panel">
           <h2>Vault 管理</h2>
-          <div className="path-field" title={vaultPath || "No vault selected"}>{vaultPath || "No vault selected"}</div>
+          <div className="path-field" title={vaultPath || "No vault selected"}>{vaultPath ? visiblePath(vaultPath) : "No vault selected"}</div>
           <div className="path-field" title={entryNote?.entryPath || "No entry note resolved"}>
-            {entryNote?.entryRelativePath || "Entry note pending"}
+            {entryNote?.entryRelativePath ? visiblePath(entryNote.entryRelativePath) : "Entry note pending"}
           </div>
+          {vaultPath && hasWhitespacePathSegment(vaultPath) && (
+            <p className="note warn-text">当前路径包含尾随空格目录段，桌面端会按真实路径保留；手动输入时请使用选择器或最近 vault。</p>
+          )}
           {entryNote?.warning && <p className="note warn-text">{entryNote.warning}</p>}
           <div className="button-row">
             <button onClick={chooseVault}><FolderOpen size={16} />打开</button>
@@ -855,7 +877,7 @@ function App() {
           <Metric label="Published" value={planned?.published ?? 0} />
           <Metric label="Blocked" value={planned?.blocked ?? 0} emphasis={(planned?.blocked ?? 0) > 0} />
           <Metric label="Evidence breaks" value={brokenEvidence} emphasis={brokenEvidence > 0} />
-          <Metric label="Lint P1/P0" value={lintFindings.filter((finding) => finding.severity === "p0" || finding.severity === "p1").length} emphasis={lintFindings.some((finding) => finding.severity === "p0" || finding.severity === "p1")} />
+          <Metric label="Desktop contract P1/P0" value={lintFindings.filter((finding) => finding.severity === "p0" || finding.severity === "p1").length} emphasis={lintFindings.some((finding) => finding.severity === "p0" || finding.severity === "p1")} />
           <Metric label="Queue" value={`${progressDone}/${jobs.length}`} />
           <Metric label="Runtime" value={status?.runtimeInstalled ? "installed" : "missing"} />
           <Metric label="Runtime version" value={status?.runtimeVersion || "unknown"} />
@@ -988,9 +1010,9 @@ function App() {
                   <em>{warning.sourcePath || "source unknown"}</em>
                   <code>{warning.missingHeading}</code>
                   <div className="inline-actions">
-                    <button onClick={() => openPath(vaultFilePath(warning.claimPath))}><ClipboardList size={14} />claim</button>
-                    <button onClick={() => warning.sourcePath && openPath(vaultFilePath(warning.sourcePath))} disabled={!warning.sourcePath}><FolderOpen size={14} />source</button>
-                    <button onClick={() => warning.artifactPath && openPath(vaultFilePath(warning.artifactPath))} disabled={!warning.artifactPath}><FileInput size={14} />artifact</button>
+                    <button onClick={() => openVaultItem(warning.claimPath)}><ClipboardList size={14} />claim</button>
+                    <button onClick={() => openVaultItem(warning.sourcePath)} disabled={!warning.sourcePath}><FolderOpen size={14} />source</button>
+                    <button onClick={() => openVaultItem(warning.artifactPath)} disabled={!warning.artifactPath}><FileInput size={14} />artifact</button>
                   </div>
                   <p className="note">{warning.suggestedAction}</p>
                 </div>
@@ -1424,7 +1446,7 @@ function EmptyVaultState({
             <span className={classNames("status-chip", item.exists ? "ready" : "failed")}>{item.kind}</span>
             <strong>{item.label}</strong>
             <em>{item.exists ? "available" : "missing"}</em>
-            <code>{item.path}</code>
+            <code>{visiblePath(item.path)}</code>
           </button>
         ))}
       </div>

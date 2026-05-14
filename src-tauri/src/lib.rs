@@ -2,11 +2,12 @@ use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
+use std::env;
 use std::ffi::OsStr;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{mpsc, Mutex, OnceLock};
 use std::thread;
@@ -666,6 +667,46 @@ fn to_display(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
 
+fn path_whitespace_suggestion(path: &Path) -> Option<PathBuf> {
+    let components = path.components().collect::<Vec<_>>();
+    let mut built = PathBuf::new();
+    for (index, component) in components.iter().enumerate() {
+        match component {
+            Component::Prefix(_) | Component::RootDir | Component::CurDir => {
+                built.push(component.as_os_str());
+            }
+            Component::ParentDir => {
+                built.push(component.as_os_str());
+            }
+            Component::Normal(name) => {
+                let next = built.join(name);
+                if next.exists() {
+                    built = next;
+                    continue;
+                }
+                if !built.is_dir() {
+                    return None;
+                }
+                let requested = name.to_string_lossy();
+                let requested_trimmed = requested.trim_end();
+                for entry in fs::read_dir(&built).ok()?.flatten() {
+                    let actual_name = entry.file_name();
+                    let actual = actual_name.to_string_lossy();
+                    if actual != requested && actual.trim_end() == requested_trimmed {
+                        let mut suggestion = entry.path();
+                        for rest in components.iter().skip(index + 1) {
+                            suggestion.push(rest.as_os_str());
+                        }
+                        return Some(suggestion);
+                    }
+                }
+                return None;
+            }
+        }
+    }
+    None
+}
+
 fn workspace_root() -> PathBuf {
     if let Ok(path) = std::env::var("LLM_WIKI_WORKSPACE") {
         let candidate = PathBuf::from(path);
@@ -723,7 +764,19 @@ fn require_existing_dir(path: &Path, label: &str) -> Result<(), String> {
     if path.is_dir() {
         Ok(())
     } else {
-        Err(format!("{label} is not a directory: {}", path.display()))
+        let hint = path_whitespace_suggestion(path)
+            .filter(|candidate| candidate.is_dir())
+            .map(|candidate| {
+                format!(
+                    ". Did you mean this path with significant whitespace: {}",
+                    candidate.display()
+                )
+            })
+            .unwrap_or_default();
+        Err(format!(
+            "{label} is not a directory: {}{hint}",
+            path.display()
+        ))
     }
 }
 
@@ -2905,6 +2958,46 @@ fn set_json_if_missing(
     }
 }
 
+fn is_valid_runtime_source_status(status: &str) -> bool {
+    matches!(
+        status,
+        "candidate"
+            | "queued"
+            | "parsed"
+            | "chunked"
+            | "drafted"
+            | "qa_passed"
+            | "published"
+            | "stale"
+            | "failed"
+            | "archived"
+    )
+}
+
+fn runtime_source_status_for_desktop_entry(
+    vault: &Path,
+    entry: &DesktopRegistryEntry,
+    current_status: Option<&str>,
+) -> String {
+    let source_page_exists = entry
+        .source_page
+        .as_ref()
+        .is_some_and(|path| vault.join(path).is_file());
+    if entry.status == "published" || source_page_exists {
+        return "published".to_string();
+    }
+    if let Some(status) = current_status.filter(|status| is_valid_runtime_source_status(status)) {
+        return status.to_string();
+    }
+    match entry.status.as_str() {
+        "ready" | "cached" => "parsed",
+        "blocked" if entry.last_error.is_some() => "failed",
+        "published" => "published",
+        _ => "candidate",
+    }
+    .to_string()
+}
+
 fn merge_runtime_source_registry(
     vault: &Path,
     registry: &[DesktopRegistryEntry],
@@ -2974,6 +3067,12 @@ fn merge_runtime_source_registry(
             *row = serde_json::json!({});
         }
         if let Some(map) = row.as_object_mut() {
+            let current_status = map
+                .get("status")
+                .and_then(serde_json::Value::as_str)
+                .map(ToString::to_string);
+            let runtime_status =
+                runtime_source_status_for_desktop_entry(vault, entry, current_status.as_deref());
             map.insert(
                 "source_uuid".to_string(),
                 serde_json::Value::String(entry.source_uuid.clone()),
@@ -2985,6 +3084,7 @@ fn merge_runtime_source_registry(
                 "source_sha256".to_string(),
                 serde_json::Value::String(entry.source_sha256.clone()),
             );
+            set_json_if_missing(map, "raw_hash", entry.source_sha256.clone());
             map.insert(
                 "source_path".to_string(),
                 serde_json::Value::String(entry.source_path.clone()),
@@ -3036,7 +3136,7 @@ fn merge_runtime_source_registry(
             }
             map.insert(
                 "status".to_string(),
-                serde_json::Value::String(entry.status.clone()),
+                serde_json::Value::String(runtime_status),
             );
             map.insert(
                 "desktop_status".to_string(),
@@ -5433,12 +5533,13 @@ fn start_runtime_command_job(
     let job_id = new_runtime_job_id(&kind);
     let started_at = Local::now().to_rfc3339();
     let command = vec!["desktop:runtime_command".to_string(), kind.clone()];
+    let max_attempts = runtime_job_max_attempts_for_kind(&kind, retry_count);
     let start_event = runtime_job_start_event(
         &job_id,
         &kind,
         command.clone(),
         started_at.clone(),
-        retry_count.max(1),
+        max_attempts,
         "background runtime job queued",
     );
     append_runtime_job_state(&vault, &start_event)?;
@@ -5470,7 +5571,7 @@ fn start_runtime_command_job(
                     command,
                     started_at,
                     started,
-                    retry_count.max(1),
+                    max_attempts,
                     other,
                 );
                 emit_runtime_event(Some(&app), finish_event.clone());
@@ -5674,6 +5775,40 @@ fn runtime_job_finish_event(
             log_path: None,
             message: Some(error),
         },
+    }
+}
+
+fn shell_command(script: &str) -> Vec<String> {
+    if cfg!(target_os = "windows") {
+        vec!["cmd".to_string(), "/C".to_string(), script.to_string()]
+    } else {
+        vec!["/bin/sh".to_string(), "-c".to_string(), script.to_string()]
+    }
+}
+
+fn runtime_probe_command(kind: &str) -> Option<(Vec<String>, usize, usize)> {
+    match kind {
+        "cancel_probe" => Some((
+            shell_command(
+                "echo cancel-probe-start; i=1; while [ $i -le 30 ]; do echo cancel-probe-tick-$i; i=$((i+1)); sleep 1; done; echo cancel-probe-finished",
+            ),
+            45,
+            1,
+        )),
+        "timeout_probe" => Some((
+            shell_command("echo timeout-probe-start; sleep 8; echo timeout-probe-finished"),
+            2,
+            1,
+        )),
+        _ => None,
+    }
+}
+
+fn runtime_job_max_attempts_for_kind(kind: &str, retry_count: usize) -> usize {
+    if runtime_probe_command(kind).is_some() {
+        1
+    } else {
+        retry_count.max(1)
     }
 }
 
@@ -5933,6 +6068,17 @@ fn run_runtime_task(
     retry_count: usize,
     job_id_override: Option<String>,
 ) -> Result<TaskLog, String> {
+    if let Some((command, probe_timeout, probe_retry)) = runtime_probe_command(kind) {
+        let id = job_id_override.unwrap_or_else(|| new_runtime_job_id(kind));
+        if kind == "cancel_probe" {
+            let cancel_id = id.clone();
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(900));
+                let _ = cancel_runtime_job(cancel_id);
+            });
+        }
+        return run_process_job(app, vault, id, kind, command, probe_timeout, probe_retry);
+    }
     let (script, mut args) = command_spec(kind, vault, obsidian_profile, skip_downloads)?;
     let scripts_dir = resolve_scripts_dir(vault, runtime_path)?;
     let script_path = scripts_dir.join(script);
@@ -6928,6 +7074,195 @@ mod tests {
     }
 
     #[test]
+    fn missing_path_reports_trailing_space_suggestion() {
+        let root = test_vault("space-root");
+        let actual = root.join("LLM-Wiki ");
+        fs::create_dir_all(actual.join("vaults").join("deepseek")).expect("create spaced path");
+        let requested = root.join("LLM-Wiki").join("vaults").join("deepseek");
+        let suggestion = path_whitespace_suggestion(&requested).expect("suggest spaced path");
+        assert_eq!(suggestion, actual.join("vaults").join("deepseek"));
+        let error = require_existing_dir(&requested, "vault").expect_err("missing path");
+        assert!(error.contains("significant whitespace"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    fn registry_entry(status: &str, source_page: Option<String>) -> DesktopRegistryEntry {
+        DesktopRegistryEntry {
+            source_uuid: "sha256:abc".to_string(),
+            source_id: Some("LLM-0001".to_string()),
+            duplicate_of: None,
+            raw_path: "raw/paper_markdown/combined.md".to_string(),
+            canonical_path: "raw/paper_markdown/combined.md".to_string(),
+            source_path: "raw/paper_markdown/combined.md".to_string(),
+            source_sha256: "abc".to_string(),
+            mime: "text/markdown".to_string(),
+            artifact_path: Some("raw/paper_markdown/combined.md".to_string()),
+            artifact_sha256: Some("def".to_string()),
+            parser: Some("local-text".to_string()),
+            parser_version: Some("test".to_string()),
+            status: status.to_string(),
+            source_page,
+            last_error: None,
+            created_at: None,
+            updated_at: Some(Local::now().to_rfc3339()),
+            published_at: None,
+        }
+    }
+
+    #[test]
+    fn runtime_source_registry_normalizes_desktop_ready_status() {
+        let vault = test_vault("registry-ready-normalize");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        fs::create_dir_all(vault.join("raw").join("paper_markdown")).expect("raw dir");
+        write_text(
+            &vault.join("raw").join("paper_markdown").join("combined.md"),
+            "# Paper\n",
+        )
+        .expect("write artifact");
+        write_text(&vault.join("sources").join("LLM-0001.md"), "# Source\n")
+            .expect("write source page");
+        write_text(
+            &vault.join("_state").join("source-registry.jsonl"),
+            "{\"source_uuid\":\"sha256:abc\",\"source_id\":\"LLM-0001\",\"raw_hash\":\"abc\",\"raw_path\":\"raw/paper_markdown/combined.md\",\"status\":\"ready\"}\n",
+        )
+        .expect("write legacy row");
+
+        let entry = registry_entry("ready", Some("sources/LLM-0001.md".to_string()));
+        merge_runtime_source_registry(&vault, &[entry]).expect("merge registry");
+        let rows = registry_rows(&vault);
+        assert_eq!(
+            json_string(&rows[0], "status").as_deref(),
+            Some("published")
+        );
+        assert_eq!(
+            json_string(&rows[0], "desktop_status").as_deref(),
+            Some("ready")
+        );
+        assert_eq!(json_string(&rows[0], "raw_hash").as_deref(), Some("abc"));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn runtime_source_registry_maps_ready_without_page_to_parsed() {
+        let vault = test_vault("registry-ready-parsed");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        let entry = registry_entry("ready", Some("sources/LLM-0001.md".to_string()));
+        merge_runtime_source_registry(&vault, &[entry]).expect("merge registry");
+        let rows = registry_rows(&vault);
+        assert_eq!(json_string(&rows[0], "status").as_deref(), Some("parsed"));
+        assert_eq!(
+            json_string(&rows[0], "desktop_status").as_deref(),
+            Some("ready")
+        );
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn obsidian_uri_targets_vault_file_not_parent_workspace_path() {
+        let workspace = test_vault("workspace-uri");
+        let vault = workspace.join("vaults").join("deepseek-vault");
+        fs::create_dir_all(vault.join("reviews").join("query-writeback")).expect("vault dirs");
+        let entry = vault
+            .join("reviews")
+            .join("query-writeback")
+            .join("deepseek research.md");
+        write_text(&entry, "# Insight\n").expect("entry");
+        let uri = obsidian_file_uri(&vault, &entry);
+        assert!(uri.contains("vault=deepseek-vault"));
+        assert!(uri.contains("file=reviews%2Fquery-writeback%2Fdeepseek%20research.md"));
+        assert!(!uri.contains(&percent_encode_query_value(&to_display(&workspace))));
+
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn obsidian_registration_prefers_nested_generated_vault() {
+        let workspace = test_vault("obsidian-config");
+        let vault = workspace.join("vaults").join("deepseek-vault");
+        fs::create_dir_all(&vault).expect("vault dir");
+        let mut config = serde_json::json!({
+            "vaults": {
+                "parent": {
+                    "path": to_display(&workspace),
+                    "open": true,
+                    "ts": 1
+                }
+            }
+        });
+        let vault_id = upsert_obsidian_vault_config(&mut config, &vault, 2);
+        let vaults = config
+            .get("vaults")
+            .and_then(serde_json::Value::as_object)
+            .expect("vaults object");
+        assert_eq!(
+            vaults
+                .get("parent")
+                .and_then(|value| value.get("open"))
+                .and_then(serde_json::Value::as_bool),
+            Some(false)
+        );
+        let registered = vaults.get(&vault_id).expect("registered vault");
+        let vault_path = to_display(&vault.canonicalize().expect("canonical vault"));
+        assert_eq!(
+            json_string(registered, "path").as_deref(),
+            Some(vault_path.as_str())
+        );
+        assert_eq!(
+            registered.get("open").and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn vault_item_resolution_rejects_escape_paths() {
+        let vault = test_vault("vault-item");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        write_text(&vault.join("claims").join("claims.jsonl"), "").expect("claims");
+        assert!(resolve_vault_item_path(&vault, "claims/claims.jsonl").is_ok());
+        assert!(resolve_vault_item_path(&vault, "../outside.md").is_err());
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn runtime_probe_commands_are_deterministic() {
+        let cancel = runtime_probe_command("cancel_probe").expect("cancel probe");
+        assert_eq!(cancel.1, 45);
+        assert_eq!(cancel.2, 1);
+        let timeout = runtime_probe_command("timeout_probe").expect("timeout probe");
+        assert_eq!(timeout.1, 2);
+        assert_eq!(timeout.2, 1);
+        assert!(runtime_probe_command("lint").is_none());
+    }
+
+    #[test]
+    fn cancel_probe_uses_cancel_path_without_manual_timing() {
+        let vault = test_vault("cancel-probe");
+        let log = run_runtime_task(
+            None,
+            &vault,
+            None,
+            "python3",
+            "cancel_probe",
+            "minimal",
+            true,
+            30,
+            1,
+            Some("cancel-probe-test".to_string()),
+        )
+        .expect("run cancel probe");
+        assert_eq!(log.exit_code, -1);
+        assert!(read_text(&PathBuf::from(&log.log_path)).contains("status: cancelled"));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
     fn runtime_job_times_out_and_writes_result_log() {
         let vault = test_vault("job-timeout");
         let log = run_process_job(
@@ -7301,17 +7636,158 @@ fn resolve_vault_entry_note(vault_path: String) -> Result<VaultEntryNote, String
     resolve_vault_entry_note_impl(&PathBuf::from(vault_path), true)
 }
 
-fn percent_encode_uri_path(value: &str) -> String {
+fn percent_encode_query_value(value: &str) -> String {
     let mut out = String::new();
     for &byte in value.as_bytes() {
         match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
                 out.push(char::from(byte))
             }
             other => out.push_str(&format!("%{other:02X}")),
         }
     }
     out
+}
+
+fn obsidian_file_uri(vault: &Path, file: &Path) -> String {
+    let vault_name = vault
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or_default();
+    let file_rel = rel_path(vault, file);
+    format!(
+        "obsidian://open?vault={}&file={}",
+        percent_encode_query_value(vault_name),
+        percent_encode_query_value(&file_rel)
+    )
+}
+
+fn obsidian_config_path() -> Option<PathBuf> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    env::var_os("HOME").map(|home| {
+        PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("obsidian")
+            .join("obsidian.json")
+    })
+}
+
+fn obsidian_vault_id(vault: &Path) -> String {
+    let resolved = vault.canonicalize().unwrap_or_else(|_| vault.to_path_buf());
+    let mut hasher = Sha256::new();
+    hasher.update(resolved.to_string_lossy().as_bytes());
+    format!("{:x}", hasher.finalize())[..16].to_string()
+}
+
+fn paths_conflict_for_obsidian(existing: &Path, selected: &Path) -> bool {
+    let existing_resolved = existing
+        .canonicalize()
+        .unwrap_or_else(|_| existing.to_path_buf());
+    let selected_resolved = selected
+        .canonicalize()
+        .unwrap_or_else(|_| selected.to_path_buf());
+    existing_resolved != selected_resolved
+        && (selected_resolved.starts_with(&existing_resolved)
+            || existing_resolved.starts_with(&selected_resolved))
+}
+
+fn upsert_obsidian_vault_config(
+    config: &mut serde_json::Value,
+    vault: &Path,
+    timestamp_ms: i64,
+) -> String {
+    if !config.is_object() {
+        *config = serde_json::json!({});
+    }
+    let resolved = vault.canonicalize().unwrap_or_else(|_| vault.to_path_buf());
+    let selected_path = to_display(&resolved);
+    let root = config.as_object_mut().expect("object after reset");
+    let vaults = root
+        .entry("vaults".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    if !vaults.is_object() {
+        *vaults = serde_json::json!({});
+    }
+    let vaults_map = vaults.as_object_mut().expect("object after reset");
+    let mut existing_id = None;
+    for (id, value) in vaults_map.iter_mut() {
+        let existing_path = json_string(value, "path").unwrap_or_default();
+        if existing_path == selected_path {
+            existing_id = Some(id.clone());
+        } else if !existing_path.is_empty()
+            && paths_conflict_for_obsidian(Path::new(&existing_path), &resolved)
+        {
+            set_json_bool(value, "open", false);
+        }
+    }
+
+    let mut vault_id = existing_id.unwrap_or_else(|| obsidian_vault_id(&resolved));
+    let mut suffix = 1usize;
+    while vaults_map
+        .get(&vault_id)
+        .and_then(|value| json_string(value, "path"))
+        .is_some_and(|path| path != selected_path)
+    {
+        vault_id = format!("{}{:x}", obsidian_vault_id(&resolved), suffix);
+        suffix += 1;
+    }
+
+    let entry = vaults_map
+        .entry(vault_id.clone())
+        .or_insert_with(|| serde_json::json!({}));
+    if !entry.is_object() {
+        *entry = serde_json::json!({});
+    }
+    if let Some(map) = entry.as_object_mut() {
+        map.insert("path".to_string(), serde_json::Value::String(selected_path));
+        map.insert("open".to_string(), serde_json::Value::Bool(true));
+        map.insert(
+            "ts".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(timestamp_ms)),
+        );
+    }
+    vault_id
+}
+
+fn register_obsidian_vault(vault: &Path) -> Result<(), String> {
+    let Some(path) = obsidian_config_path() else {
+        return Ok(());
+    };
+    let mut config = if path.is_file() {
+        serde_json::from_str::<serde_json::Value>(&read_text(&path))
+            .unwrap_or_else(|_| serde_json::json!({}))
+    } else {
+        serde_json::json!({})
+    };
+    upsert_obsidian_vault_config(&mut config, vault, Local::now().timestamp_millis());
+    let rendered = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("failed to render Obsidian vault registry: {e}"))?;
+    write_text(&path, &(rendered + "\n"))
+}
+
+fn open_obsidian_file(vault: &Path, file: &Path) -> Result<(), String> {
+    if cfg!(target_os = "macos") {
+        register_obsidian_vault(vault)?;
+        let _ = Command::new("open")
+            .arg("-a")
+            .arg("Obsidian")
+            .arg(vault)
+            .status();
+        let uri = obsidian_file_uri(vault, file);
+        let status = Command::new("open")
+            .arg("-a")
+            .arg("Obsidian")
+            .arg(&uri)
+            .status()
+            .map_err(|e| format!("failed to launch Obsidian entry note: {e}"))?;
+        if status.success() {
+            return Ok(());
+        }
+    }
+    open_path(to_display(file))
 }
 
 #[tauri::command]
@@ -7336,6 +7812,38 @@ fn open_path(path: String) -> Result<(), String> {
     Ok(())
 }
 
+fn resolve_vault_item_path(vault: &Path, path: &str) -> Result<PathBuf, String> {
+    require_existing_dir(vault, "vault")?;
+    let requested = PathBuf::from(path);
+    let candidate = if requested.is_absolute() {
+        requested
+    } else {
+        vault.join(requested)
+    };
+    let resolved = ensure_inside(&candidate, vault, "vault item must stay inside the vault")?;
+    if resolved.exists() {
+        Ok(resolved)
+    } else {
+        Err(format!("vault item does not exist: {}", resolved.display()))
+    }
+}
+
+#[tauri::command]
+fn open_vault_path(vault_path: String, path: String) -> Result<(), String> {
+    let vault = PathBuf::from(vault_path);
+    let target = resolve_vault_item_path(&vault, &path)?;
+    let extension = target
+        .extension()
+        .and_then(OsStr::to_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if matches!(extension.as_str(), "md" | "markdown") {
+        open_obsidian_file(&vault, &target)
+    } else {
+        open_path(to_display(&target))
+    }
+}
+
 #[tauri::command]
 fn open_obsidian_vault(vault_path: String) -> Result<VaultEntryNote, String> {
     let vault = PathBuf::from(vault_path);
@@ -7343,15 +7851,7 @@ fn open_obsidian_vault(vault_path: String) -> Result<VaultEntryNote, String> {
     let entry = resolve_vault_entry_note_impl(&vault, true)?;
     if cfg!(target_os = "macos") {
         if let Some(entry_path) = &entry.entry_path {
-            let uri = format!(
-                "obsidian://open?path={}",
-                percent_encode_uri_path(entry_path)
-            );
-            let status = Command::new("open")
-                .arg(&uri)
-                .status()
-                .map_err(|e| format!("failed to launch Obsidian entry note: {e}"))?;
-            if status.success() {
+            if open_obsidian_file(&vault, &PathBuf::from(entry_path)).is_ok() {
                 return Ok(entry);
             }
         } else {
@@ -7410,6 +7910,7 @@ pub fn run() {
             run_ingest_pipeline,
             run_runtime_command,
             open_path,
+            open_vault_path,
             resolve_vault_entry_note,
             open_obsidian_vault
         ])

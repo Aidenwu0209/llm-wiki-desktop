@@ -6,7 +6,7 @@
 
 - 创建或打开 open-llm-wiki vault。
 - 将 PDF / Markdown / txt 导入到 `raw/inbox/`，并按 SHA-256 跳过重复文件。
-- 生成桌面端 ingest plan：扫描 `raw/inbox/` 与 `raw/*_markdown/combined.md`，按 SHA-256 标记 `ready`、`stageable`、`blocked`、`cached`、`published`，并写入 `_state/desktop-ingest-plan.json`。
+- 生成桌面端 ingest plan：扫描 `raw/inbox/` 与 `raw/*_markdown/combined.md`，按 SHA-256 标记 desktop-only 的 `ready`、`stageable`、`blocked`、`cached`、`published`，并写入 `_state/desktop-ingest-plan.json`。
 - 对 Markdown / txt 输入执行本地 staging，生成 `raw/<source>_markdown/combined.md`、`manifest.json` 和 `chunks.jsonl`，再交给 open-llm-wiki runtime。
 - 对 PDF 输入优先调用 runtime `pdf_to_markdown.py --parser auto` 本地解析；只有用户显式选择 `layout-api` 且允许云解析时，才允许外部 parser 路径。
 - 一键运行串行 ingest pipeline：PDF parse -> source discovery -> corpus ingest -> claims -> normalize -> semantic QA -> contradictions -> science review -> concept revision -> lint -> dashboard refresh。
@@ -54,6 +54,7 @@
 - Claim actions：`claims/claims.jsonl` 中的 `needs_review`、`stale`、`contradicted` 会进入行动面板，避免 concept synthesis 静默吸收未验证内容。
 - Per-source queue：`desktop-ingest-jobs.jsonl` 为每个输入提供 `queued`、`blocked`、`succeeded` 等任务视图。
 - Artifact contract：`desktop-artifacts.jsonl` 汇总 manifest、chunks、parser、anchors 和 limitations；runtime `local-text` parser manifest 会显示为 parser-owned artifact。
+- Runtime source registry compatibility：桌面端会把 desktop-only 状态保存在 `desktop_status`，写入 runtime-owned `_state/source-registry.jsonl` 时只使用 open-llm-wiki 允许的 `candidate`、`parsed`、`published` 等状态，避免 `ready` 进入 runtime lint schema。
 - Impact graph：`desktop-impact-graph.jsonl` 记录 source -> artifact -> chunks 的基础影响边，后续 runtime 可扩展到 claims/concepts。
 - Obsidian templates：最小 vault 会写入 `templates/source.md` 和 `templates/concept.md`，固定 source/concept 页面结构和 frontmatter。
 
