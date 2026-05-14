@@ -146,7 +146,7 @@ npm run build:app
 打包完成后检查产物：
 
 ```bash
-open "src-tauri/target/release/bundle/macos/LLM Wiki Desktop.app"
+open "src-tauri/target/release/bundle/macos/LLM Wiki.app"
 open src-tauri/target/release/bundle/dmg
 ```
 
@@ -163,14 +163,14 @@ Release mode boundary:
 
 当前 `src-tauri/tauri.conf.json` 的 release 相关配置：
 
-- `productName`: `LLM Wiki Desktop`
-- window title: `LLM Wiki Desktop`
+- `productName`: `LLM Wiki`
+- window title: `LLM Wiki`
 - `identifier`: `com.aidenwu.llmwiki.desktop`
 - `bundle.active`: `true`
 - `bundle.targets`: `["app", "dmg"]`
-- `bundle.icon`: `src-tauri/icons/icon.png`
+- `bundle.icon`: `src-tauri/icons/icon.png`, `src-tauri/icons/icon.icns`, `src-tauri/icons/icon.ico`
 
-这些字段与 package/Cargo 命名保持一致。当前图标资产只有一个 32x32 PNG，足够暴露占位图问题，但不适合作为正式 macOS 分发图标集。正式分发前应补齐 Tauri icon set，再单独做签名和 notarization 检查。
+这些字段与 package/Cargo 命名保持一致。当前图标资产包含 SVG master、1024/512/256/128/64/32 PNG、macOS `.icns` 和 Windows `.ico`。公开分发前仍需单独做签名和 notarization 检查。
 
 ## Release checklist
 
@@ -185,15 +185,24 @@ npm run build:app
 
 手动验收：
 
-1. 打开 `src-tauri/target/release/bundle/macos/LLM Wiki Desktop.app`。
-2. 打开一个已有 vault，并确认 runtime path、dashboard/status、review queue 能被识别。
-3. 创建一个新 vault，并确认 `templates/`、`raw/inbox/`、`_state/` 初始化正常。
-4. 从桌面端打开 Obsidian，确认打开的是生成后的 vault，不是原始 PDF 文件夹。
-5. 导入一个小样本文件，运行 ingest plan，确认 action panel 给出下一步。
-6. 运行 query writeback，确认先生成 `reviews/query-writeback/` proposal 和 diff。
-7. 未获得明确人工批准时，确认 writeback 没有静默写入 `concepts/` 或 `sources/`。
-8. 如批准并 apply 了 proposal，再运行 lint/eval 或对应 runtime validation。
-9. 记录本地 app 路径、vault 路径、Obsidian entry file、writeback proposal 路径和验证命令结果。
+1. 打开 `src-tauri/target/release/bundle/macos/LLM Wiki.app`。
+2. 在 Welcome 页验证 `New Project`、`Open Project`、recent projects 和 DeepSeek demo 入口。
+3. 创建一个新 project，并确认 template、AI output language、parent directory 写入 desktop settings。
+4. 打开一个已有 vault，并确认 runtime path、dashboard/status、review queue 能被识别。
+5. 从桌面端打开 Obsidian，确认打开的是生成后的 vault，不是原始 PDF 文件夹。
+6. 导入一个小样本文件，在 Raw Sources 页确认 Refresh / Import / Folder / details drawer 可用。
+7. 打开 Chat / Search，搜索 source/claim，并生成 proposal-first query writeback。
+8. 打开 Graph，确认 source / claim / concept / review / proposal / warning 关系可用于追踪 evidence。
+9. 未获得明确人工批准时，确认 writeback 没有静默写入 `concepts/` 或 `sources/`。
+10. 如批准并 apply 了 proposal，再运行 lint/eval 或对应 runtime validation。
+11. 记录本地 app 路径、vault 路径、Obsidian entry file、writeback proposal 路径和验证命令结果。
+
+## Known limitations
+
+- 本仓库仍是源码级 release candidate；正式分发还需要 Developer ID signing、hardened runtime、notarization 和 clean-profile install smoke test。
+- `Chat / Search` 当前以 vault-local evidence index 和 proposal handoff 为主，不是无证据通用 RAG。
+- `Graph` 当前是 evidence navigation graph，优先可追踪性和断点定位，不追求复杂社区发现或布局算法。
+- 外部模型 provider 只保存 provider/model/context/reasoning 配置，不在 UI 明文保存或展示 API key。
 
 ## Runtime 设置
 

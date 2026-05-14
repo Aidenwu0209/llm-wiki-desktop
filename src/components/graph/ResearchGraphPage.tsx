@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Copy, ExternalLink, FolderOpen, GitCompare, Network, Search, ShieldAlert } from "lucide-react";
+import { Copy, ExternalLink, FolderOpen, GitCompare, Network, Search, ShieldAlert, SquareStack } from "lucide-react";
+import type { UiLanguage } from "../../i18n";
 import type {
   ClaimLedgerItem,
   DesktopRegistryEntry,
@@ -11,6 +12,13 @@ import type {
 } from "../../types";
 
 type ResearchNodeType = "source" | "claim" | "concept" | "review" | "proposal" | "warning";
+type ResearchEdgeType =
+  | "source_claim"
+  | "claim_concept"
+  | "claim_review"
+  | "proposal_target"
+  | "warning_claim"
+  | "warning_source";
 
 type ResearchGraphNode = {
   id: string;
@@ -28,7 +36,7 @@ type ResearchGraphEdge = {
   id: string;
   from: string;
   to: string;
-  type: string;
+  type: ResearchEdgeType;
   label: string;
   status?: string | null;
 };
@@ -48,6 +56,7 @@ type ResearchGraph = {
 
 type ResearchGraphPageProps = {
   className?: string;
+  language?: UiLanguage;
   vaultPath: string;
   status: VaultStatus | null;
   registry: DesktopRegistryEntry[];
@@ -59,6 +68,7 @@ type ResearchGraphPageProps = {
   onOpenPath: (path: string) => void;
   onRevealPath: (path: string) => void;
   onCopyText: (label: string, text?: string | null) => void;
+  onOpenObsidian: () => void;
   resolveVaultPath: (path?: string | null) => string;
 };
 
@@ -72,15 +82,144 @@ const nodeTypes: Array<ResearchNodeType | "all"> = [
   "warning",
 ];
 
-const nodeTypeLabels: Record<ResearchNodeType | "all", string> = {
-  all: "All",
-  source: "Sources",
-  claim: "Claims",
-  concept: "Concepts",
-  review: "Reviews",
-  proposal: "Proposals",
-  warning: "Warnings",
-};
+const edgeTypes: Array<ResearchEdgeType | "all"> = [
+  "all",
+  "source_claim",
+  "claim_concept",
+  "claim_review",
+  "proposal_target",
+  "warning_claim",
+  "warning_source",
+];
+
+const graphCopy = {
+  zh: {
+    summaryStats: {
+      sources: "Sources / papers",
+      sourceBackedClaims: "有 source 支撑的 claims",
+      keyConcepts: "关键 concepts",
+      reviewNodes: "Review 节点",
+      traceabilityBreaks: "证据断点",
+      writebackInsights: "Writeback 洞察",
+    },
+    researchSummary: "DeepSeek 研究图谱摘要",
+    vaultSummary: "该图谱连接当前 vault 中的 sources、claims、concepts、reviews、traceability warnings 和 writeback proposals。",
+    noVaultSummary: "打开 generated vault 后即可构建研究图谱。",
+    keyConcepts: "关键 concepts",
+    noneYet: "暂未生成",
+    evidenceBreaks: "Evidence breaks",
+    noneSurfaced: "暂无",
+    searchPlaceholder: "搜索 nodes、paths、claims、concepts、proposal targets 和 warning 文本",
+    nodeType: "节点类型",
+    edgeType: "边类型",
+    relationshipMap: "关系图",
+    nodeDetails: "节点详情",
+    noGraphNodes: "还没有 graph nodes。",
+    open: "打开",
+    reveal: "显示",
+    copy: "复制",
+    relatedEdges: "关联边",
+    noRelatedEdges: "该节点暂无关联边。",
+    nodeList: "节点列表",
+    edgeList: "边列表",
+    noNodesMatch: "没有节点匹配当前筛选。",
+    noEdgesMatch: "没有边匹配当前筛选。",
+    evidenceBreakLocator: "证据断点定位",
+    noTraceabilityWarnings: "暂无 traceability warnings。",
+    conceptSourceLocator: "Concept 来源定位",
+    noConceptRelationships: "暂无 concept 关系。",
+    relationships: "relationships",
+    writebackInsightTargets: "Writeback 洞察目标",
+    noWritebacks: "暂无 query writeback proposals。",
+    graphContract: "Graph contract",
+    sourceToClaim: "source -> claim：source registry、claim ledger、evidence paths",
+    claimToConcept: "claim -> concept：claim concept tags 和 evidence concepts",
+    claimToReview: "claim -> review：review queue 和 needs-review claims",
+    proposalToTarget: "proposal -> target：query writeback target page",
+    warningToClaim: "warning -> claim/source：traceability warnings",
+    nodeTypes: {
+      all: "全部",
+      source: "Sources",
+      claim: "Claims",
+      concept: "Concepts",
+      review: "Reviews",
+      proposal: "Proposals",
+      warning: "Warnings",
+    } satisfies Record<ResearchNodeType | "all", string>,
+    edgeTypes: {
+      all: "全部边",
+      source_claim: "Source -> Claim",
+      claim_concept: "Claim -> Concept",
+      claim_review: "Claim -> Review",
+      proposal_target: "Proposal -> Target",
+      warning_claim: "Warning -> Claim",
+      warning_source: "Warning -> Source",
+    } satisfies Record<ResearchEdgeType | "all", string>,
+  },
+  en: {
+    summaryStats: {
+      sources: "Sources / papers",
+      sourceBackedClaims: "Source-backed claims",
+      keyConcepts: "Key concepts",
+      reviewNodes: "Review nodes",
+      traceabilityBreaks: "Traceability breaks",
+      writebackInsights: "Writeback insights",
+    },
+    researchSummary: "DeepSeek research graph summary",
+    vaultSummary: "This graph links generated sources, claims, concepts, reviews, traceability warnings, and writeback proposals from the selected vault.",
+    noVaultSummary: "Open a generated vault to build the research graph.",
+    keyConcepts: "Key concepts",
+    noneYet: "none yet",
+    evidenceBreaks: "Evidence breaks",
+    noneSurfaced: "none surfaced",
+    searchPlaceholder: "Search nodes, paths, claims, concepts, proposal targets, and warning text",
+    nodeType: "Node type",
+    edgeType: "Edge type",
+    relationshipMap: "Relationship map",
+    nodeDetails: "Node details",
+    noGraphNodes: "No graph nodes yet.",
+    open: "open",
+    reveal: "reveal",
+    copy: "copy",
+    relatedEdges: "Related edges",
+    noRelatedEdges: "No edges connected to this node.",
+    nodeList: "Node list",
+    edgeList: "Edge list",
+    noNodesMatch: "No nodes match this filter.",
+    noEdgesMatch: "No edges match this filter.",
+    evidenceBreakLocator: "Evidence break locator",
+    noTraceabilityWarnings: "No traceability warnings surfaced.",
+    conceptSourceLocator: "Concept source locator",
+    noConceptRelationships: "No concept relationships yet.",
+    relationships: "relationships",
+    writebackInsightTargets: "Writeback insight targets",
+    noWritebacks: "No query writeback proposals yet.",
+    graphContract: "Graph contract",
+    sourceToClaim: "source -> claim: source registry, claim ledger, evidence paths",
+    claimToConcept: "claim -> concept: claim concept tags and evidence concepts",
+    claimToReview: "claim -> review: review queue and needs-review claims",
+    proposalToTarget: "proposal -> target: query writeback target page",
+    warningToClaim: "warning -> claim/source: traceability warnings",
+    nodeTypes: {
+      all: "All",
+      source: "Sources",
+      claim: "Claims",
+      concept: "Concepts",
+      review: "Reviews",
+      proposal: "Proposals",
+      warning: "Warnings",
+    } satisfies Record<ResearchNodeType | "all", string>,
+    edgeTypes: {
+      all: "All edges",
+      source_claim: "Source -> Claim",
+      claim_concept: "Claim -> Concept",
+      claim_review: "Claim -> Review",
+      proposal_target: "Proposal -> Target",
+      warning_claim: "Warning -> Claim",
+      warning_source: "Warning -> Source",
+    } satisfies Record<ResearchEdgeType | "all", string>,
+  },
+} as const;
 
 const typeOrder: Record<ResearchNodeType, number> = {
   warning: 0,
@@ -99,6 +238,16 @@ const typeColors: Record<ResearchNodeType, string> = {
   proposal: "#6d5f2a",
   warning: "#a43131",
 };
+
+function classNames(...items: Array<string | false | null | undefined>) {
+  return items.filter(Boolean).join(" ");
+}
+
+function compact(value?: string | null, max = 96) {
+  const normalized = (value || "").replace(/\s+/g, " ").trim();
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, max - 1)}...`;
+}
 
 function key(value?: string | null) {
   return encodeURIComponent((value || "unknown").trim().toLowerCase());
@@ -495,6 +644,48 @@ function nodeStatusClass(node: ResearchGraphNode) {
   return node.status || node.type;
 }
 
+function edgeStatusClass(edge: ResearchGraphEdge) {
+  if (edge.type.startsWith("warning_")) return "warning";
+  if (edge.status === "broken" || edge.status === "p0" || edge.status === "p1") return "broken";
+  if (edge.status === "needs_review" || edge.type === "claim_review") return "review";
+  if (edge.status === "approved" || edge.status === "applied" || edge.status === "supported") return "ok";
+  return edge.type;
+}
+
+function nodeSearchText(node: ResearchGraphNode) {
+  return [
+    node.id,
+    node.type,
+    node.label,
+    node.subtitle,
+    node.body,
+    node.path,
+    node.status,
+    node.severity,
+    ...Object.entries(node.metrics || {}).flatMap(([key, value]) => [key, String(value)]),
+  ].join("\n").toLowerCase();
+}
+
+function edgeSearchText(
+  edge: ResearchGraphEdge,
+  nodeById: Map<string, ResearchGraphNode>,
+) {
+  const from = nodeById.get(edge.from);
+  const to = nodeById.get(edge.to);
+  return [
+    edge.id,
+    edge.type,
+    edge.label,
+    edge.status,
+    from?.label,
+    from?.subtitle,
+    from?.path,
+    to?.label,
+    to?.subtitle,
+    to?.path,
+  ].join("\n").toLowerCase();
+}
+
 function graphPositions(nodes: ResearchGraphNode[]) {
   const grouped = nodes.reduce<Record<number, ResearchGraphNode[]>>((acc, node) => {
     const column = typeOrder[node.type];
@@ -514,8 +705,28 @@ function graphPositions(nodes: ResearchGraphNode[]) {
   return positions;
 }
 
+function graphSummaryText(graph: ResearchGraph, language: UiLanguage) {
+  const concepts = graph.summary.keyConcepts.map((node) => node.label).join(", ") || (language === "zh" ? "暂未生成 concept hub" : "no concept hubs yet");
+  const reviewPressure = graph.summary.reviewNodes + graph.summary.traceabilityBreaks;
+  if (language === "zh") {
+    return [
+      `${graph.summary.sourcesPapers} 个 source 节点支撑 ${graph.summary.sourceBackedClaims} 条 source-to-claim 证据链。`,
+      `Top concept hubs：${concepts}。`,
+      `${reviewPressure} 个 review 或 traceability 节点需要处理后，才能把生成洞察视为稳定内容。`,
+      `${graph.summary.writebackInsights} 个 writeback proposal 在批准前保持 proposal-first。`,
+    ];
+  }
+  return [
+    `${graph.summary.sourcesPapers} source nodes feed ${graph.summary.sourceBackedClaims} source-to-claim evidence links.`,
+    `Top concept hubs: ${concepts}.`,
+    `${reviewPressure} review or traceability nodes require attention before treating generated insights as stable.`,
+    `${graph.summary.writebackInsights} writeback proposal nodes remain proposal-first until approved.`,
+  ];
+}
+
 export function ResearchGraphPage({
   className,
+  language = "zh",
   vaultPath,
   status,
   registry,
@@ -527,31 +738,56 @@ export function ResearchGraphPage({
   onOpenPath,
   onRevealPath,
   onCopyText,
+  onOpenObsidian,
   resolveVaultPath,
 }: ResearchGraphPageProps) {
+  const text = graphCopy[language];
   const [typeFilter, setTypeFilter] = useState<ResearchNodeType | "all">("all");
+  const [edgeFilter, setEdgeFilter] = useState<ResearchEdgeType | "all">("all");
+  const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const graph = useMemo(
     () => buildResearchGraph({ status, registry, claims, evidencePaths, reviewItems, writebacks, traceabilityWarnings }),
     [claims, evidencePaths, registry, reviewItems, status, traceabilityWarnings, writebacks],
   );
-  const filteredNodes = graph.nodes.filter((node) => typeFilter === "all" || node.type === typeFilter);
-  const filteredIds = new Set(filteredNodes.map((node) => node.id));
-  const visibleEdges = typeFilter === "all"
-    ? graph.edges
-    : graph.edges.filter((edge) => filteredIds.has(edge.from) || filteredIds.has(edge.to));
-  const contextIds = new Set<string>();
-  for (const edge of visibleEdges) {
-    contextIds.add(edge.from);
-    contextIds.add(edge.to);
+  const nodeById = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph.nodes]);
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredNodeIds = new Set<string>();
+  const typeMatchedNodes = graph.nodes.filter((node) => typeFilter === "all" || node.type === typeFilter);
+
+  for (const node of typeMatchedNodes) {
+    if (!normalizedQuery || nodeSearchText(node).includes(normalizedQuery)) {
+      filteredNodeIds.add(node.id);
+    }
   }
-  for (const node of filteredNodes) contextIds.add(node.id);
-  const visualNodes = graph.nodes.filter((node) => contextIds.has(node.id)).slice(0, 80);
+
+  const visibleEdges = graph.edges.filter((edge) => {
+    if (edgeFilter !== "all" && edge.type !== edgeFilter) return false;
+    const fromNode = nodeById.get(edge.from);
+    const toNode = nodeById.get(edge.to);
+    const typeMatch = typeFilter === "all" || fromNode?.type === typeFilter || toNode?.type === typeFilter;
+    if (!typeMatch) return false;
+    if (!normalizedQuery) return true;
+    return (
+      filteredNodeIds.has(edge.from)
+      || filteredNodeIds.has(edge.to)
+      || edgeSearchText(edge, nodeById).includes(normalizedQuery)
+    );
+  });
+
+  for (const edge of visibleEdges) {
+    filteredNodeIds.add(edge.from);
+    filteredNodeIds.add(edge.to);
+  }
+
+  const filteredNodes = graph.nodes.filter((node) => filteredNodeIds.has(node.id));
+  const visualNodes = filteredNodes.slice(0, 96);
   const visualNodeIds = new Set(visualNodes.map((node) => node.id));
   const visualEdges = visibleEdges.filter((edge) => visualNodeIds.has(edge.from) && visualNodeIds.has(edge.to)).slice(0, 120);
   const positions = graphPositions(visualNodes);
   const selected = graph.nodes.find((node) => node.id === selectedId) || filteredNodes[0] || graph.nodes[0] || null;
   const relatedEdges = selected ? graph.edges.filter((edge) => edge.from === selected.id || edge.to === selected.id) : [];
+  const summary = graphSummaryText(graph, language);
 
   useEffect(() => {
     if (!selectedId || !graph.nodes.some((node) => node.id === selectedId)) {
@@ -565,72 +801,108 @@ export function ResearchGraphPage({
   const revealNodePath = (node: ResearchGraphNode) => {
     if (node.path) onRevealPath(resolveVaultPath(node.path));
   };
+  const endpointLabel = (id: string) => nodeById.get(id)?.label || id;
 
   return (
     <section className={["research-graph-page", className].filter(Boolean).join(" ")}>
       <div className="graph-summary-bar">
         <div>
-          <span>Sources / papers</span>
+          <span>{text.summaryStats.sources}</span>
           <strong>{graph.summary.sourcesPapers}</strong>
         </div>
         <div>
-          <span>Source-backed claims</span>
+          <span>{text.summaryStats.sourceBackedClaims}</span>
           <strong>{graph.summary.sourceBackedClaims}</strong>
         </div>
         <div>
-          <span>Key concepts</span>
+          <span>{text.summaryStats.keyConcepts}</span>
           <strong>{graph.summary.keyConcepts.length}</strong>
         </div>
         <div>
-          <span>Review nodes</span>
+          <span>{text.summaryStats.reviewNodes}</span>
           <strong>{graph.summary.reviewNodes}</strong>
         </div>
         <div>
-          <span>Traceability breaks</span>
+          <span>{text.summaryStats.traceabilityBreaks}</span>
           <strong>{graph.summary.traceabilityBreaks}</strong>
         </div>
         <div>
-          <span>Writeback insights</span>
+          <span>{text.summaryStats.writebackInsights}</span>
           <strong>{graph.summary.writebackInsights}</strong>
         </div>
       </div>
 
       <div className="graph-insight-strip">
         <div>
-          <strong>DeepSeek research graph summary</strong>
+          <strong>{text.researchSummary}</strong>
           <p>
-            {vaultPath ? "This graph links generated sources, claims, concepts, reviews, traceability warnings, and writeback proposals from the selected vault." : "Open a generated vault to build the research graph."}
+            {vaultPath ? text.vaultSummary : text.noVaultSummary}
           </p>
+          <ul>
+            {summary.map((item) => <li key={item}>{item}</li>)}
+          </ul>
         </div>
         <div>
-          <span>Key concepts</span>
-          <em>{graph.summary.keyConcepts.map((node) => node.label).join(", ") || "none yet"}</em>
+          <span>{text.keyConcepts}</span>
+          <em>{graph.summary.keyConcepts.map((node) => node.label).join(", ") || text.noneYet}</em>
         </div>
         <div>
-          <span>Evidence breaks</span>
-          <em>{traceabilityWarnings.slice(0, 3).map((warning) => warning.claimId).join(", ") || "none surfaced"}</em>
+          <span>{text.evidenceBreaks}</span>
+          <em>{traceabilityWarnings.slice(0, 3).map((warning) => warning.claimId).join(", ") || text.noneSurfaced}</em>
         </div>
       </div>
 
-      <div className="graph-filter-row">
-        {nodeTypes.map((type) => (
-          <button
-            key={type}
-            className={typeFilter === type ? "active" : ""}
-            onClick={() => setTypeFilter(type)}
-          >
-            {nodeTypeLabels[type]}
-          </button>
-        ))}
+      <div className="graph-control-panel">
+        <label className="graph-search-box">
+          <Search size={15} />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={text.searchPlaceholder}
+          />
+        </label>
+        <div className="graph-filter-group">
+          <span>{text.nodeType}</span>
+          <div className="graph-filter-row">
+            {nodeTypes.map((type) => (
+              <button
+                key={type}
+                className={typeFilter === type ? "active" : ""}
+                onClick={() => setTypeFilter(type)}
+              >
+                {text.nodeTypes[type]}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="graph-filter-group">
+          <span>{text.edgeType}</span>
+          <div className="graph-filter-row">
+            {edgeTypes.map((type) => (
+              <button
+                key={type}
+                className={edgeFilter === type ? "active" : ""}
+                onClick={() => setEdgeFilter(type)}
+              >
+                {text.edgeTypes[type]}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       <div className="graph-workspace">
         <section className="panel graph-panel">
           <div className="section-head">
-            <h2>Relationship map</h2>
+            <h2>{text.relationshipMap}</h2>
             <span>{visualNodes.length} nodes · {visualEdges.length} edges</span>
           </div>
           <svg className="research-graph-svg" viewBox="0 0 860 360" role="img" aria-label="Research relationship graph">
+            <defs>
+              <marker id="graph-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" />
+              </marker>
+            </defs>
             {visualEdges.map((edge) => {
               const from = positions.get(edge.from);
               const to = positions.get(edge.to);
@@ -643,7 +915,8 @@ export function ResearchGraphPage({
                   y1={from.y}
                   x2={to.x}
                   y2={to.y}
-                  className={active ? "active" : ""}
+                  markerEnd="url(#graph-arrow)"
+                  className={classNames(edgeStatusClass(edge), active && "active")}
                 />
               );
             })}
@@ -652,7 +925,11 @@ export function ResearchGraphPage({
               if (!position) return null;
               const active = selected?.id === node.id;
               return (
-                <g key={node.id} className={active ? "active" : ""} onClick={() => setSelectedId(node.id)}>
+                <g
+                  key={node.id}
+                  className={classNames(node.type, active && "active")}
+                  onClick={() => setSelectedId(node.id)}
+                >
                   <circle cx={position.x} cy={position.y} r={active ? 13 : 10} fill={typeColors[node.type]} />
                   <text x={position.x + 15} y={position.y + 4}>{node.label.slice(0, 32)}</text>
                 </g>
@@ -668,7 +945,7 @@ export function ResearchGraphPage({
 
         <section className="panel graph-panel">
           <div className="section-head">
-            <h2>Node details</h2>
+            <h2>{text.nodeDetails}</h2>
             {selected && <span>{selected.type}</span>}
           </div>
           {selected ? (
@@ -686,23 +963,24 @@ export function ResearchGraphPage({
                 </div>
               )}
               <div className="inline-actions">
-                <button onClick={() => openNodePath(selected)} disabled={!selected.path}><FolderOpen size={14} />open</button>
-                <button onClick={() => revealNodePath(selected)} disabled={!selected.path}><ExternalLink size={14} />reveal</button>
-                <button onClick={() => onCopyText("graph node path", selected.path || selected.id)}><Copy size={14} />copy</button>
+                <button onClick={() => openNodePath(selected)} disabled={!selected.path}><FolderOpen size={14} />{text.open}</button>
+                <button onClick={() => revealNodePath(selected)} disabled={!selected.path}><ExternalLink size={14} />{text.reveal}</button>
+                <button onClick={() => onCopyText("graph node path", selected.path || selected.id)}><Copy size={14} />{text.copy}</button>
+                <button onClick={onOpenObsidian} disabled={!vaultPath}><SquareStack size={14} />Obsidian</button>
               </div>
               <div className="graph-related">
-                <strong>Related edges</strong>
-                {relatedEdges.length === 0 && <p className="empty">No edges connected to this node.</p>}
+                <strong>{text.relatedEdges}</strong>
+                {relatedEdges.length === 0 && <p className="empty">{text.noRelatedEdges}</p>}
                 {relatedEdges.map((edge) => (
                   <button key={edge.id} onClick={() => setSelectedId(edge.from === selected.id ? edge.to : edge.from)}>
-                    <span>{edge.label}</span>
-                    <em>{edge.from === selected.id ? edge.to : edge.from}</em>
+                    <span>{text.edgeTypes[edge.type]} · {edge.label}</span>
+                    <em>{endpointLabel(edge.from)} {"->"} {endpointLabel(edge.to)}</em>
                   </button>
                 ))}
               </div>
             </div>
           ) : (
-            <p className="empty">No graph nodes yet.</p>
+            <p className="empty">{text.noGraphNodes}</p>
           )}
         </section>
       </div>
@@ -710,15 +988,15 @@ export function ResearchGraphPage({
       <div className="graph-list-grid">
         <section className="panel">
           <div className="section-head">
-            <h2>Node list</h2>
-            <span>{filteredNodes.length} nodes</span>
+            <h2>{text.nodeList}</h2>
+            <span>{filteredNodes.length}/{graph.nodes.length} nodes</span>
           </div>
           <div className="graph-list">
-            {filteredNodes.length === 0 && <p className="empty">No nodes match this filter.</p>}
+            {filteredNodes.length === 0 && <p className="empty">{text.noNodesMatch}</p>}
             {filteredNodes.map((node) => (
               <button key={node.id} onClick={() => setSelectedId(node.id)}>
                 <span className={`status-chip ${nodeStatusClass(node)}`}>{node.type}</span>
-                <strong>{node.label}</strong>
+                <strong>{compact(node.label, 120)}</strong>
                 <em>{node.subtitle || node.status || node.id}</em>
                 <code>{node.path || node.id}</code>
               </button>
@@ -728,16 +1006,16 @@ export function ResearchGraphPage({
 
         <section className="panel">
           <div className="section-head">
-            <h2>Edge list</h2>
-            <span>{visibleEdges.length} edges</span>
+            <h2>{text.edgeList}</h2>
+            <span>{visibleEdges.length}/{graph.edges.length} edges</span>
           </div>
           <div className="graph-list">
-            {visibleEdges.length === 0 && <p className="empty">No edges match this filter.</p>}
+            {visibleEdges.length === 0 && <p className="empty">{text.noEdgesMatch}</p>}
             {visibleEdges.map((edge) => (
               <button key={edge.id} onClick={() => setSelectedId(edge.to)}>
-                <span className="status-chip stageable">{edge.type}</span>
+                <span className={classNames("status-chip", edgeStatusClass(edge))}>{text.edgeTypes[edge.type]}</span>
                 <strong>{edge.label}</strong>
-                <em>{edge.from} {"->"} {edge.to}</em>
+                <em>{endpointLabel(edge.from)} {"->"} {endpointLabel(edge.to)}</em>
                 <code>{edge.status || "linked"}</code>
               </button>
             ))}
@@ -746,11 +1024,11 @@ export function ResearchGraphPage({
 
         <section className="panel">
           <div className="section-head">
-            <h2>Evidence break locator</h2>
+            <h2>{text.evidenceBreakLocator}</h2>
             <ShieldAlert size={18} />
           </div>
           <div className="graph-list">
-            {traceabilityWarnings.length === 0 && <p className="empty">No traceability warnings surfaced.</p>}
+            {traceabilityWarnings.length === 0 && <p className="empty">{text.noTraceabilityWarnings}</p>}
             {traceabilityWarnings.map((warning) => (
               <button key={warning.warningId} onClick={() => setSelectedId(warningNodeId(warning.warningId))}>
                 <span className={`status-chip ${warning.severity}`}>{warning.severity}</span>
@@ -764,17 +1042,17 @@ export function ResearchGraphPage({
 
         <section className="panel">
           <div className="section-head">
-            <h2>Concept source locator</h2>
+            <h2>{text.conceptSourceLocator}</h2>
             <Search size={18} />
           </div>
           <div className="graph-list">
-            {graph.summary.keyConcepts.length === 0 && <p className="empty">No concept relationships yet.</p>}
+            {graph.summary.keyConcepts.length === 0 && <p className="empty">{text.noConceptRelationships}</p>}
             {graph.summary.keyConcepts.map((concept) => (
               <button key={concept.id} onClick={() => setSelectedId(concept.id)}>
                 <span className="status-chip concept">concept</span>
                 <strong>{concept.label}</strong>
                 <em>{concept.subtitle || concept.path || "concept tag"}</em>
-                <code>{graph.edges.filter((edge) => edge.to === concept.id || edge.from === concept.id).length} relationships</code>
+                <code>{graph.edges.filter((edge) => edge.to === concept.id || edge.from === concept.id).length} {text.relationships}</code>
               </button>
             ))}
           </div>
@@ -782,11 +1060,11 @@ export function ResearchGraphPage({
 
         <section className="panel">
           <div className="section-head">
-            <h2>Writeback insight targets</h2>
+            <h2>{text.writebackInsightTargets}</h2>
             <GitCompare size={18} />
           </div>
           <div className="graph-list">
-            {writebacks.length === 0 && <p className="empty">No query writeback proposals yet.</p>}
+            {writebacks.length === 0 && <p className="empty">{text.noWritebacks}</p>}
             {writebacks.map((proposal) => (
               <button key={proposal.proposalId} onClick={() => setSelectedId(proposalNodeId(proposal.proposalId))}>
                 <span className={`status-chip ${proposal.status}`}>{proposal.status}</span>
@@ -800,15 +1078,15 @@ export function ResearchGraphPage({
 
         <section className="panel">
           <div className="section-head">
-            <h2>Graph contract</h2>
+            <h2>{text.graphContract}</h2>
             <Network size={18} />
           </div>
           <div className="graph-contract">
-            <p>source {"->"} claim: source registry, claim ledger, evidence paths</p>
-            <p>claim {"->"} concept: claim concept tags and evidence concepts</p>
-            <p>claim {"->"} review: review queue and needs-review claims</p>
-            <p>proposal {"->"} target: query writeback target page</p>
-            <p>warning {"->"} claim/source: traceability warnings</p>
+            <p>{text.sourceToClaim}</p>
+            <p>{text.claimToConcept}</p>
+            <p>{text.claimToReview}</p>
+            <p>{text.proposalToTarget}</p>
+            <p>{text.warningToClaim}</p>
           </div>
         </section>
       </div>

@@ -18,12 +18,20 @@ import type {
   VaultStatus,
   WritebackProposal,
 } from "../../types";
+import type { UiLanguage } from "../../i18n";
 
 const DEFAULT_DEEPSEEK_QUESTIONS = [
   "DeepSeek 的研发思路是什么？",
   "DeepSeek 如何做技术取舍？",
   "DeepSeek 可能如何演进？",
   "哪些洞察值得写回 wiki？",
+];
+
+const DEFAULT_DEEPSEEK_QUESTIONS_EN = [
+  "What is DeepSeek's research strategy?",
+  "How does DeepSeek make technical tradeoffs?",
+  "How might DeepSeek evolve next?",
+  "Which insights are worth writing back to the wiki?",
 ];
 
 const HISTORY_KEY = "llm-wiki-desktop.chat-search.history";
@@ -48,8 +56,32 @@ type SearchResult = {
   priority: number;
 };
 
+type HistoryEvidenceRef = {
+  id: string;
+  type: SearchKind;
+  title: string;
+  path: string;
+  evidence?: string | null;
+  relation?: string | null;
+  status?: string | null;
+};
+
+type QueryHistoryItem = {
+  id: string;
+  question: string;
+  searchText: string;
+  targetPath: string;
+  evidence: HistoryEvidenceRef[];
+  proposal?: {
+    targetPath: string;
+    status: string;
+  };
+  createdAt: string;
+};
+
 type ChatSearchPageProps = {
   className?: string;
+  language?: UiLanguage;
   vaultPath: string;
   status: VaultStatus | null;
   claims: ClaimLedgerItem[];
@@ -66,6 +98,77 @@ type ChatSearchPageProps = {
   onCopyText?: (label: string, text?: string | null) => void | Promise<void>;
 };
 
+const chatCopy = {
+  zh: {
+    title: "聊天 / 搜索",
+    loaded: (shown: number, total: number) => `${shown}/${total} 个已加载对象`,
+    inputPlaceholder: "提问或搜索 DeepSeek 研究证据",
+    target: "写回目标",
+    searchEvidence: "搜索证据",
+    draftAnswer: "生成回答草稿",
+    createProposal: "创建 proposal",
+    boundaryTitle: "Proposal-first 边界",
+    boundaryBody: "本页面不会直接写入 source 或 concept。创建 query writeback 仍会先进入 proposal approval gate。",
+    history: "Query 历史",
+    emptyHistory: "生成回答草稿或创建 proposal 后，会保存带 evidence 的 query history。",
+    results: "结果",
+    shown: "显示",
+    searchPlaceholder: "搜索 source pages、claims、concepts、reviews 和 writeback proposals",
+    noVault: "打开或刷新 generated vault 后即可搜索 wiki 对象。",
+    noMatch: "没有匹配的 vault 对象。",
+    answer: "回答 / 结果",
+    answerKinds: "evidence · inference · hypothesis · forecast",
+    selected: "选中结果",
+    noSnippet: "没有 snippet。",
+    selectResult: "选择一个结果，检查路径、证据关系和动作。",
+    copyDraft: "复制草稿",
+    draftPlaceholder: "先选择问题或执行搜索，再生成回答草稿。输出保持本地草稿，直到转换为 writeback proposal。",
+    evidenceMap: "证据图",
+    references: "references",
+    currentEvidence: "当前回答证据",
+    selectedCount: "已选择",
+    evidenceEmpty: "搜索结果会填充 evidence map。",
+    noEvidenceQuote: "没有加载 evidence quote。",
+    writebackProposals: "Writeback proposals",
+    noProposals: "没有加载 query writeback proposals。",
+    actions: { open: "打开", reveal: "显示", path: "路径", evidence: "证据", copy: "复制", obsidian: "Obsidian" },
+  },
+  en: {
+    title: "Chat / Search",
+    loaded: (shown: number, total: number) => `${shown}/${total} loaded objects`,
+    inputPlaceholder: "Ask or search DeepSeek research evidence",
+    target: "Writeback target",
+    searchEvidence: "search evidence",
+    draftAnswer: "draft answer",
+    createProposal: "create proposal",
+    boundaryTitle: "Proposal-first boundary",
+    boundaryBody: "No source or concept page is written from this page. Creating a query writeback still routes through the proposal approval gate before any apply.",
+    history: "Query history",
+    emptyHistory: "Draft an answer or create a proposal to save evidence-aware query history.",
+    results: "Results",
+    shown: "shown",
+    searchPlaceholder: "Search source pages, claims, concepts, reviews, and writeback proposals",
+    noVault: "Open or refresh a generated vault to search loaded wiki objects.",
+    noMatch: "No matching vault objects.",
+    answer: "Answer / Result",
+    answerKinds: "evidence · inference · hypothesis · forecast",
+    selected: "Selected result",
+    noSnippet: "No snippet available.",
+    selectResult: "Select a result to inspect its path, evidence relation, and actions.",
+    copyDraft: "copy draft",
+    draftPlaceholder: "Draft an answer after choosing a question or running a search. The output remains a local draft until converted into a writeback proposal.",
+    evidenceMap: "Evidence Map",
+    references: "references",
+    currentEvidence: "Current answer evidence",
+    selectedCount: "selected",
+    evidenceEmpty: "Search results will populate the evidence map.",
+    noEvidenceQuote: "No evidence quote loaded.",
+    writebackProposals: "Writeback proposals",
+    noProposals: "No query writeback proposals loaded.",
+    actions: { open: "open", reveal: "reveal", path: "path", evidence: "evidence", copy: "copy", obsidian: "Obsidian" },
+  },
+} as const;
+
 function classNames(...items: Array<string | false | null | undefined>) {
   return items.filter(Boolean).join(" ");
 }
@@ -81,16 +184,69 @@ function relation(label: string, value?: string | number | boolean | null) {
   return `${label}: ${String(value)}`;
 }
 
-function loadHistory() {
+function normalizeHistoryEvidence(value: unknown): HistoryEvidenceRef[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+    .map((item) => ({
+      id: String(item.id || item.path || item.title || ""),
+      type: String(item.type || "evidence") as SearchKind,
+      title: String(item.title || item.path || "Evidence"),
+      path: String(item.path || ""),
+      evidence: typeof item.evidence === "string" ? item.evidence : null,
+      relation: typeof item.relation === "string" ? item.relation : null,
+      status: typeof item.status === "string" ? item.status : null,
+    }))
+    .filter((item) => item.id && item.path)
+    .slice(0, 8);
+}
+
+function loadHistory(): QueryHistoryItem[] {
   try {
     const parsed = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
-    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string").slice(0, 8) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item, index): QueryHistoryItem | null => {
+        if (typeof item === "string") {
+          return {
+            id: `legacy-${index}-${item}`,
+            question: item,
+            searchText: item,
+            targetPath: "",
+            evidence: [],
+            createdAt: "",
+          };
+        }
+        if (typeof item !== "object" || item === null) return null;
+        const record = item as Record<string, unknown>;
+        const question = typeof record.question === "string" ? record.question : "";
+        if (!question.trim()) return null;
+        const proposalRecord = typeof record.proposal === "object" && record.proposal !== null
+          ? record.proposal as Record<string, unknown>
+          : null;
+        return {
+          id: typeof record.id === "string" ? record.id : `history-${index}-${question}`,
+          question,
+          searchText: typeof record.searchText === "string" ? record.searchText : question,
+          targetPath: typeof record.targetPath === "string" ? record.targetPath : "",
+          evidence: normalizeHistoryEvidence(record.evidence),
+          proposal: proposalRecord
+            ? {
+              targetPath: String(proposalRecord.targetPath || ""),
+              status: String(proposalRecord.status || "proposal_requested"),
+            }
+            : undefined,
+          createdAt: typeof record.createdAt === "string" ? record.createdAt : "",
+        };
+      })
+      .filter((item): item is QueryHistoryItem => Boolean(item))
+      .slice(0, 8);
   } catch {
     return [];
   }
 }
 
-function saveHistory(history: string[]) {
+function saveHistory(history: QueryHistoryItem[]) {
   try {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, 8)));
   } catch {
@@ -123,12 +279,50 @@ function scoreResult(result: SearchResult, query: string) {
   return score;
 }
 
+function filterSearchResults(index: SearchResult[], typeFilter: SearchFilter, searchText: string) {
+  const typed = typeFilter === "all" ? index : index.filter((item) => item.type === typeFilter);
+  const ranked = typed
+    .map((item) => ({ item, score: scoreResult(item, searchText) }))
+    .filter(({ score }) => !searchText.trim() || score > 0)
+    .sort((a, b) => b.score - a.score || b.item.priority - a.item.priority)
+    .map(({ item }) => item);
+
+  if (ranked.length || !searchText.trim()) return ranked.slice(0, 40);
+  return typed.sort((a, b) => b.priority - a.priority).slice(0, 16);
+}
+
 function isMarkdownPath(path: string) {
   return /\.(md|markdown)$/i.test(path);
 }
 
 function unique(items: Array<string | null>) {
   return Array.from(new Set(items.filter((item): item is string => Boolean(item))));
+}
+
+function pickAnswerEvidence(results: SearchResult[], selected?: SearchResult | null) {
+  const evidenceTypes: SearchKind[] = ["claim", "evidence", "source", "concept", "review", "writeback", "traceability"];
+  const ordered = selected && evidenceTypes.includes(selected.type) ? [selected, ...results] : results;
+  const seen = new Set<string>();
+  return ordered
+    .filter((item) => evidenceTypes.includes(item.type))
+    .filter((item) => {
+      if (seen.has(item.id)) return false;
+      seen.add(item.id);
+      return true;
+    })
+    .slice(0, 8);
+}
+
+function toHistoryEvidence(items: SearchResult[]): HistoryEvidenceRef[] {
+  return items.slice(0, 8).map((item) => ({
+    id: item.id,
+    type: item.type,
+    title: item.title,
+    path: item.path,
+    evidence: item.evidence,
+    relation: item.relations.find((entry) => entry.startsWith("claim:") || entry.startsWith("source")) ?? null,
+    status: item.status || item.severity || null,
+  }));
 }
 
 function buildEvidenceIndex(evidencePaths: EvidencePathItem[]) {
@@ -407,6 +601,7 @@ function buildAnswerDraft(question: string, targetPath: string, evidence: Search
 
 export function ChatSearchPage({
   className,
+  language = "zh",
   vaultPath,
   status,
   claims,
@@ -422,57 +617,106 @@ export function ChatSearchPage({
   onRevealPath,
   onCopyText,
 }: ChatSearchPageProps) {
+  const text = chatCopy[language];
+  const defaultQuestions = language === "zh" ? DEFAULT_DEEPSEEK_QUESTIONS : DEFAULT_DEEPSEEK_QUESTIONS_EN;
   const [searchText, setSearchText] = useState("");
   const [typeFilter, setTypeFilter] = useState<SearchFilter>("all");
   const [question, setQuestion] = useState(DEFAULT_DEEPSEEK_QUESTIONS[0]);
   const [targetPath, setTargetPath] = useState("reviews/query-writeback/deepseek-research-insights.md");
   const [answerDraft, setAnswerDraft] = useState("");
-  const [history, setHistory] = useState<string[]>(loadHistory);
+  const [selectedResultId, setSelectedResultId] = useState<string | null>(null);
+  const [history, setHistory] = useState<QueryHistoryItem[]>(loadHistory);
   const index = useMemo(
     () => buildSearchIndex({ status, claims, evidencePaths, reviewItems, writebacks, traceabilityWarnings }),
     [claims, evidencePaths, reviewItems, status, traceabilityWarnings, writebacks],
   );
 
-  const filteredResults = useMemo(() => {
-    const typed = typeFilter === "all" ? index : index.filter((item) => item.type === typeFilter);
-    const ranked = typed
-      .map((item) => ({ item, score: scoreResult(item, searchText) }))
-      .filter(({ score }) => !searchText.trim() || score > 0)
-      .sort((a, b) => b.score - a.score || b.item.priority - a.item.priority)
-      .map(({ item }) => item);
-
-    if (ranked.length || !searchText.trim()) return ranked.slice(0, 40);
-    return typed.sort((a, b) => b.priority - a.priority).slice(0, 16);
-  }, [index, searchText, typeFilter]);
-
-  const answerEvidence = filteredResults
-    .filter((item) => ["claim", "evidence", "source", "concept", "review", "writeback", "traceability"].includes(item.type))
-    .slice(0, 8);
+  const filteredResults = useMemo(() => filterSearchResults(index, typeFilter, searchText), [index, searchText, typeFilter]);
+  const selectedResult = useMemo(
+    () => filteredResults.find((item) => item.id === selectedResultId) ?? filteredResults[0] ?? null,
+    [filteredResults, selectedResultId],
+  );
+  const answerEvidence = useMemo(() => pickAnswerEvidence(filteredResults, selectedResult), [filteredResults, selectedResult]);
+  const writebackRefs = useMemo(() => index.filter((item) => item.type === "writeback").slice(0, 8), [index]);
   const hasVaultEvidence = index.length > 0;
 
-  const rememberQuery = (value: string) => {
+  const rememberQuery = (
+    value: string,
+    options?: {
+      searchText?: string;
+      targetPath?: string;
+      evidence?: SearchResult[];
+      proposal?: QueryHistoryItem["proposal"];
+    },
+  ) => {
     const trimmed = value.trim();
-    if (!trimmed) return;
-    const next = [trimmed, ...history.filter((item) => item !== trimmed)].slice(0, 8);
+    if (!trimmed) return null;
+    const entry: QueryHistoryItem = {
+      id: `${Date.now()}-${trimmed}`,
+      question: trimmed,
+      searchText: (options?.searchText || searchText || trimmed).trim(),
+      targetPath: options?.targetPath ?? targetPath,
+      evidence: toHistoryEvidence(options?.evidence ?? answerEvidence),
+      proposal: options?.proposal,
+      createdAt: new Date().toISOString(),
+    };
+    const next = [
+      entry,
+      ...history.filter((item) => item.question !== entry.question || item.targetPath !== entry.targetPath),
+    ].slice(0, 8);
     setHistory(next);
     saveHistory(next);
+    return entry;
   };
 
-  const chooseQuestion = (question: string) => {
-    setQuestion(question);
-    setSearchText(question);
-    rememberQuery(question);
+  const chooseQuestion = (nextQuestion: string) => {
+    setQuestion(nextQuestion);
+    setSearchText(nextQuestion);
+    setSelectedResultId(null);
+  };
+
+  const chooseHistory = (item: QueryHistoryItem) => {
+    setQuestion(item.question);
+    setSearchText(item.searchText || item.question);
+    setTargetPath(item.targetPath || "reviews/query-writeback/deepseek-research-insights.md");
+    setSelectedResultId(item.evidence[0]?.id ?? null);
   };
 
   const generateDraft = () => {
-    rememberQuery(question);
-    if (!searchText.trim()) setSearchText(question);
-    setAnswerDraft(buildAnswerDraft(question, targetPath, answerEvidence));
+    const draftSearchText = searchText.trim() || question;
+    const draftResults = filterSearchResults(index, typeFilter, draftSearchText);
+    const draftSelected = draftResults.find((item) => item.id === selectedResultId) ?? draftResults[0] ?? null;
+    const draftEvidence = pickAnswerEvidence(draftResults, draftSelected);
+    setSearchText(draftSearchText);
+    setSelectedResultId(draftSelected?.id ?? null);
+    setAnswerDraft(buildAnswerDraft(question, targetPath, draftEvidence));
+    rememberQuery(question, { searchText: draftSearchText, evidence: draftEvidence });
   };
 
   const createProposal = () => {
-    rememberQuery(question);
-    onCreateProposal(question, targetPath);
+    const proposalTarget = targetPath.trim() || "reviews/query-writeback/deepseek-research-insights.md";
+    const proposalSearchText = searchText.trim() || question;
+    const proposalResults = filterSearchResults(index, typeFilter, proposalSearchText);
+    const proposalSelected = proposalResults.find((item) => item.id === selectedResultId) ?? proposalResults[0] ?? null;
+    const proposalEvidence = pickAnswerEvidence(proposalResults, proposalSelected);
+    setSearchText(proposalSearchText);
+    setTargetPath(proposalTarget);
+    setSelectedResultId(proposalSelected?.id ?? null);
+    setAnswerDraft(buildAnswerDraft(question, proposalTarget, proposalEvidence));
+    rememberQuery(question, {
+      searchText: proposalSearchText,
+      targetPath: proposalTarget,
+      evidence: proposalEvidence,
+      proposal: { targetPath: proposalTarget, status: "proposal_requested" },
+    });
+    onCreateProposal(question, proposalTarget);
+  };
+
+  const searchFromQuestion = () => {
+    const query = question.trim();
+    if (!query) return;
+    setSearchText(query);
+    setSelectedResultId(null);
   };
 
   const openResult = (result: SearchResult) => {
@@ -494,10 +738,77 @@ export function ChatSearchPage({
 
   return (
     <div className={classNames("chat-search-page chat-search-workbench", className)}>
-      <section className="panel large search-panel">
+      <section className="panel large chat-search-top">
         <div className="section-head">
-          <h2>Vault Search</h2>
-          <span>{filteredResults.length}/{index.length} loaded objects</span>
+          <h2>{text.title}</h2>
+          <span>{text.loaded(filteredResults.length, index.length)}</span>
+        </div>
+        <div className="chat-search-top-grid">
+          <label className="top-question-input">
+            <Search size={16} />
+            <textarea
+              value={question}
+              onChange={(event) => setQuestion(event.target.value)}
+              placeholder={text.inputPlaceholder}
+            />
+          </label>
+          <label className="top-target-input">
+            <span>{text.target}</span>
+            <input
+              value={targetPath}
+              onChange={(event) => setTargetPath(event.target.value)}
+              placeholder="reviews/query-writeback/deepseek-research-insights.md"
+            />
+          </label>
+          <div className="top-action-grid">
+            <button type="button" onClick={searchFromQuestion} disabled={!question.trim()}>
+              <Search size={14} />{text.searchEvidence}
+            </button>
+            <button type="button" onClick={generateDraft} disabled={!vaultPath || !question.trim()}>
+              <Lightbulb size={14} />{text.draftAnswer}
+            </button>
+            <button type="button" onClick={createProposal} disabled={!vaultPath || !question.trim() || busy === "query_writeback"}>
+              <GitCompare size={14} />{text.createProposal}
+            </button>
+          </div>
+        </div>
+        <div className="question-chips">
+          {defaultQuestions.map((item) => (
+            <button key={item} type="button" onClick={() => chooseQuestion(item)}>
+              {item}
+            </button>
+          ))}
+        </div>
+        <div className="proposal-boundary chat-search-boundary">
+          <strong>{text.boundaryTitle}</strong>
+          <span>{text.boundaryBody}</span>
+        </div>
+      </section>
+
+      <div className="chat-search-columns">
+        <section className="panel large search-history-panel">
+          <div className="section-head">
+            <h2><History size={16} /> {text.history}</h2>
+            <span>{history.length}</span>
+          </div>
+          <div className="history-list rich-history-list">
+            {history.length === 0 && <p className="empty">{text.emptyHistory}</p>}
+            {history.map((item) => (
+              <button key={item.id} type="button" onClick={() => chooseHistory(item)}>
+                <History size={14} />
+                <span>{item.question}</span>
+                <em>
+                  {item.evidence.length} evidence
+                  {item.proposal ? ` · ${item.proposal.status}` : ""}
+                </em>
+                {item.targetPath && <code>{item.targetPath}</code>}
+              </button>
+            ))}
+          </div>
+
+        <div className="section-head">
+          <h2>{text.results}</h2>
+          <span>{filteredResults.length} {text.shown}</span>
         </div>
         <div className="search-toolbar">
           <label>
@@ -505,7 +816,7 @@ export function ChatSearchPage({
             <input
               value={searchText}
               onChange={(event) => setSearchText(event.target.value)}
-              placeholder="Search source pages, claims, concepts, reviews, and writeback proposals"
+              placeholder={text.searchPlaceholder}
             />
           </label>
           <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value as SearchFilter)}>
@@ -513,6 +824,7 @@ export function ChatSearchPage({
             <option value="source">sources</option>
             <option value="claim">claims</option>
             <option value="concept">concepts</option>
+            <option value="draft">drafts</option>
             <option value="review">reviews</option>
             <option value="writeback">writebacks</option>
             <option value="evidence">evidence paths</option>
@@ -521,25 +833,22 @@ export function ChatSearchPage({
             <option value="inbox">inbox</option>
           </select>
         </div>
-        <div className="question-chips">
-          {DEFAULT_DEEPSEEK_QUESTIONS.map((question) => (
-            <button key={question} type="button" onClick={() => chooseQuestion(question)}>
-              {question}
-            </button>
-          ))}
-        </div>
         <div className="search-results">
-          {!hasVaultEvidence && <p className="empty">Open or refresh a generated vault to search loaded wiki objects.</p>}
-          {hasVaultEvidence && filteredResults.length === 0 && <p className="empty">No matching vault objects.</p>}
+          {!hasVaultEvidence && <p className="empty">{text.noVault}</p>}
+          {hasVaultEvidence && filteredResults.length === 0 && <p className="empty">{text.noMatch}</p>}
           {filteredResults.map((result) => (
-            <article className="search-result-card" key={result.id}>
+            <article
+              className={classNames("search-result-card", selectedResult?.id === result.id && "selected")}
+              key={result.id}
+              onClick={() => setSelectedResultId(result.id)}
+            >
               <span className={classNames("status-chip", result.severity || result.status || result.type)}>
                 {result.severity || result.status || result.type}
               </span>
               <div className="search-result-body">
                 <strong>{result.title}</strong>
                 <em>{result.type} · {result.path}</em>
-                <p>{result.snippet || "No snippet available."}</p>
+                <p>{result.snippet || text.noSnippet}</p>
                 {result.evidence && <code>{result.evidence}</code>}
                 <div className="relation-list">
                   {result.relations.slice(0, 8).map((item) => (
@@ -547,13 +856,13 @@ export function ChatSearchPage({
                   ))}
                 </div>
                 <div className="inline-actions">
-                  <button type="button" onClick={() => openResult(result)}><FolderOpen size={14} />open</button>
+                  <button type="button" onClick={() => openResult(result)}><FolderOpen size={14} />{text.actions.open}</button>
                   <button type="button" onClick={() => onOpenVaultItem?.(result.path)} disabled={!onOpenVaultItem || !isMarkdownPath(result.path)}>
-                    <SquareStack size={14} />Obsidian
+                    <SquareStack size={14} />{text.actions.obsidian}
                   </button>
-                  <button type="button" onClick={() => onRevealPath?.(resolveVaultPath(result.path))} disabled={!onRevealPath}><FileSearch size={14} />reveal</button>
-                  <button type="button" onClick={() => onCopyText?.("path", result.path)} disabled={!onCopyText}><ClipboardCopy size={14} />path</button>
-                  <button type="button" onClick={() => copyResult(result)} disabled={!onCopyText}><ClipboardCopy size={14} />evidence</button>
+                  <button type="button" onClick={() => onRevealPath?.(resolveVaultPath(result.path))} disabled={!onRevealPath}><FileSearch size={14} />{text.actions.reveal}</button>
+                  <button type="button" onClick={() => onCopyText?.("path", result.path)} disabled={!onCopyText}><ClipboardCopy size={14} />{text.actions.path}</button>
+                  <button type="button" onClick={() => copyResult(result)} disabled={!onCopyText}><ClipboardCopy size={14} />{text.actions.evidence}</button>
                 </div>
               </div>
             </article>
@@ -561,47 +870,70 @@ export function ChatSearchPage({
         </div>
       </section>
 
-      <section className="panel large research-chat-panel">
+      <section className="panel large research-chat-panel answer-workspace-panel">
         <div className="section-head">
-          <h2>Research Chat</h2>
-          <span>evidence-first draft</span>
-        </div>
-        <div className="writeback-form">
-          <textarea
-            value={question}
-            onChange={(event) => setQuestion(event.target.value)}
-            placeholder="Ask a DeepSeek research question. The draft below separates evidence, inference, hypothesis, and forecast."
-          />
-          <input
-            value={targetPath}
-            onChange={(event) => setTargetPath(event.target.value)}
-            placeholder="reviews/query-writeback/deepseek-research-insights.md"
-          />
-          <div className="inline-actions">
-            <button type="button" onClick={generateDraft} disabled={!vaultPath || !question.trim()}>
-              <Lightbulb size={14} />draft answer
-            </button>
-            <button type="button" onClick={createProposal} disabled={!vaultPath || !question.trim() || busy === "query_writeback"}>
-              <GitCompare size={14} />create proposal
-            </button>
-            <button type="button" onClick={() => onCopyText?.("answer draft", answerDraft)} disabled={!answerDraft || !onCopyText}>
-              <ClipboardCopy size={14} />copy draft
-            </button>
-          </div>
+          <h2>{text.answer}</h2>
+          <span>{text.answerKinds}</span>
         </div>
 
-        <div className="proposal-boundary">
-          <strong>Proposal-first boundary</strong>
-          <span>No source or concept page is written from this chat page. The proposal button uses the existing query writeback flow and still requires explicit approval before apply.</span>
+        <div className="selected-result-panel">
+          <div className="section-head compact">
+            <h3>{text.selected}</h3>
+            <span>{selectedResult?.type || "none"}</span>
+          </div>
+          {selectedResult ? (
+            <div className="selected-result-detail">
+              <strong>{selectedResult.title}</strong>
+              <em>{selectedResult.path}</em>
+              <p>{selectedResult.snippet || text.noSnippet}</p>
+              {selectedResult.evidence && <code>{selectedResult.evidence}</code>}
+              <div className="relation-list">
+                {selectedResult.relations.slice(0, 10).map((item) => (
+                  <span key={`selected-${selectedResult.id}-${item}`}>{item}</span>
+                ))}
+              </div>
+              <div className="inline-actions">
+                <button type="button" onClick={() => openResult(selectedResult)}><FolderOpen size={14} />{text.actions.open}</button>
+                <button type="button" onClick={() => onRevealPath?.(resolveVaultPath(selectedResult.path))} disabled={!onRevealPath}><FileSearch size={14} />{text.actions.reveal}</button>
+                <button type="button" onClick={() => onCopyText?.("path", selectedResult.path)} disabled={!onCopyText}><ClipboardCopy size={14} />{text.actions.path}</button>
+                <button type="button" onClick={() => copyResult(selectedResult)} disabled={!onCopyText}><ClipboardCopy size={14} />{text.actions.evidence}</button>
+              </div>
+            </div>
+          ) : (
+            <p className="empty">{text.selectResult}</p>
+          )}
+        </div>
+
+        <div className="answer-action-row">
+          <button type="button" onClick={generateDraft} disabled={!vaultPath || !question.trim()}>
+            <Lightbulb size={14} />{text.draftAnswer}
+          </button>
+          <button type="button" onClick={createProposal} disabled={!vaultPath || !question.trim() || busy === "query_writeback"}>
+            <GitCompare size={14} />{text.createProposal}
+          </button>
+          <button type="button" onClick={() => onCopyText?.("answer draft", answerDraft)} disabled={!answerDraft || !onCopyText}>
+            <ClipboardCopy size={14} />{text.copyDraft}
+          </button>
+        </div>
+
+        <pre className="chat-answer-draft">
+          {answerDraft || text.draftPlaceholder}
+        </pre>
+      </section>
+
+      <section className="panel large evidence-reference-panel">
+        <div className="section-head">
+          <h2>{text.evidenceMap}</h2>
+          <span>{answerEvidence.length} {text.references}</span>
         </div>
 
         <div className="answer-evidence-map">
           <div className="section-head compact">
-            <h3>Evidence map</h3>
-            <span>{answerEvidence.length} selected</span>
+            <h3>{text.currentEvidence}</h3>
+            <span>{answerEvidence.length} {text.selectedCount}</span>
           </div>
           <div className="evidence-pill-grid">
-            {answerEvidence.length === 0 && <p className="empty">Search results will populate the evidence map.</p>}
+            {answerEvidence.length === 0 && <p className="empty">{text.evidenceEmpty}</p>}
             {answerEvidence.map((item, index) => (
               <button key={`evidence-map-${item.id}`} type="button" onClick={() => openResult(item)}>
                 <span>E{index + 1}</span>
@@ -612,25 +944,48 @@ export function ChatSearchPage({
           </div>
         </div>
 
-        <pre className="chat-answer-draft">
-          {answerDraft || "Draft an answer after choosing a question or running a search. The output will remain a local draft until converted into a writeback proposal."}
-        </pre>
+        <div className="reference-list">
+          {answerEvidence.map((item, index) => (
+            <article key={`reference-${item.id}`}>
+              <span>E{index + 1}</span>
+              <strong>{item.title}</strong>
+              <em>{item.type} · {item.path}</em>
+              <p>{item.evidence || item.snippet || text.noEvidenceQuote}</p>
+              <div className="inline-actions">
+                <button type="button" onClick={() => openResult(item)}><FolderOpen size={14} />{text.actions.open}</button>
+                <button type="button" onClick={() => onRevealPath?.(resolveVaultPath(item.path))} disabled={!onRevealPath}><FileSearch size={14} />{text.actions.reveal}</button>
+                <button type="button" onClick={() => copyResult(item)} disabled={!onCopyText}><ClipboardCopy size={14} />{text.actions.copy}</button>
+              </div>
+            </article>
+          ))}
+        </div>
 
-        <div className="recent-query-panel">
+        <div className="recent-query-panel proposal-reference-panel">
           <div className="section-head compact">
-            <h3><History size={15} /> Recent queries</h3>
-            <span>{history.length}</span>
+            <h3><GitCompare size={15} /> {text.writebackProposals}</h3>
+            <span>{writebackRefs.length}</span>
           </div>
-          <div className="question-chips compact">
-            {history.length === 0 && <p className="empty">No recent research queries yet.</p>}
-            {history.map((question) => (
-              <button key={question} type="button" onClick={() => chooseQuestion(question)}>
-                {question}
+          <div className="proposal-ref-list">
+            {writebackRefs.length === 0 && <p className="empty">{text.noProposals}</p>}
+            {writebackRefs.map((proposal) => (
+              <button
+                key={`proposal-ref-${proposal.id}`}
+                type="button"
+                onClick={() => {
+                  setTypeFilter("all");
+                  setSearchText("");
+                  setSelectedResultId(proposal.id);
+                }}
+              >
+                <GitCompare size={14} />
+                <span>{proposal.title}</span>
+                <em>{proposal.status || "proposal"} · {proposal.path}</em>
               </button>
             ))}
           </div>
         </div>
       </section>
+      </div>
     </div>
   );
 }

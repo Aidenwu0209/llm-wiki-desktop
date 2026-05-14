@@ -14,6 +14,7 @@ import {
   FolderOpen,
   GitCompare,
   ListChecks,
+  Languages,
   MessageSquare,
   Network,
   PanelRightOpen,
@@ -56,6 +57,7 @@ import {
   resolveVaultEntryNote,
   runIngestLint,
   saveDesktopSettings,
+  saveInterfaceLanguage,
   saveLastSelectedVault,
   setClaimVerdict,
   setDashboardActionStatus,
@@ -68,9 +70,11 @@ import {
 } from "./tauri";
 import {
   DEFAULT_DEEPSEEK_RESEARCH_STRATEGY_QUERY,
+  DEFAULT_DEEPSEEK_RESEARCH_STRATEGY_QUERY_EN,
   QueryWritebackComposer,
 } from "./components/writeback/QueryWritebackComposer";
 import { ChatSearchPage } from "./components/search/ChatSearchPage";
+import { RawSourcesWorkspace } from "./components/sources/RawSourcesWorkspace";
 import { ResearchGraphPage } from "./components/graph/ResearchGraphPage";
 import { TraceabilityActionCards } from "./components/traceability/TraceabilityActionCards";
 import { ActivityMiniPanel } from "./components/layout/ActivityMiniPanel";
@@ -78,8 +82,9 @@ import { DeepSeekVaultHome } from "./components/layout/DeepSeekVaultHome";
 import { PageStatusHeader, type PagePrimaryAction, type PageStatusItem } from "./components/layout/PageStatusHeader";
 import { DetailsPanel, type DetailSelection } from "./components/details/DetailsPanel";
 import { DashboardOverview } from "./components/dashboard/DashboardOverview";
-import { WelcomePanel } from "./components/dashboard/WelcomePanel";
+import { WelcomePanel, type NewWikiProjectDraft } from "./components/dashboard/WelcomePanel";
 import { RuntimeSettingsPanel } from "./components/settings/RuntimeSettingsPanel";
+import { BrandMark } from "./components/brand/BrandMark";
 import type {
   ClaimLedgerItem,
   DesktopAppState,
@@ -101,6 +106,13 @@ import type {
   WritebackApplyStatus,
   WritebackProposal,
 } from "./types";
+import {
+  INTERFACE_LANGUAGE_STORAGE_KEY,
+  languageName,
+  normalizeUiLanguage,
+  oppositeLanguage,
+  type UiLanguage,
+} from "./i18n";
 
 const runtimeActions = [
   { id: "lint", label: "运行 lint", icon: ListChecks },
@@ -154,8 +166,8 @@ const pageTitles: Record<ShellPage, { title: string; subtitle: string }> = {
     subtitle: "Vault state, next actions, and the ingest path users should take next.",
   },
   sources: {
-    title: "Sources",
-    subtitle: "Raw evidence, source registry, parsed artifacts, and vault files.",
+    title: "Raw Sources",
+    subtitle: "Raw evidence, source registry links, parsed artifacts, and traceability status.",
   },
   claims: {
     title: "Claims",
@@ -195,6 +207,297 @@ const pageTitles: Record<ShellPage, { title: string; subtitle: string }> = {
   },
 };
 
+const shellCopy: Record<UiLanguage, {
+  nav: Record<ShellPage, string>;
+  pages: Record<ShellPage, { title: string; subtitle: string }>;
+  runtimeActions: Record<string, string>;
+  pipeline: string[];
+  languageToggle: string;
+  brandSubtitleWithVault: string;
+  brandSubtitleNoVault: string;
+  noVault: string;
+  entryPending: string;
+  vaultManagement: string;
+  open: string;
+  refresh: string;
+  createVault: string;
+  folder: string;
+  finder: string;
+  obsidian: string;
+  copyPath: string;
+  copyUri: string;
+  enableObsidianProfile: string;
+  nextActionTitle: string;
+  nextActionHelp: string;
+  selectEvidence: string;
+  importDropTitle: string;
+  importDropQueued: string;
+  importDropInboxOnly: string;
+  importFiles: string;
+  importFolder: string;
+  preserveFolderContext: string;
+  actionStrip: {
+    plan: string;
+    lint: string;
+    pipeline: string;
+    repair: string;
+    diagnostic: string;
+  };
+  activity: {
+    title: string;
+    idle: string;
+    cancel: string;
+    openLog: string;
+    retry: string;
+    emptyHistory: string;
+  };
+  labels: Record<string, string>;
+  dialogs: Record<string, string>;
+  errors: Record<string, string>;
+}> = {
+  zh: {
+    nav: {
+      dashboard: "仪表盘",
+      sources: "原始资料",
+      claims: "论断",
+      concepts: "概念",
+      reviews: "审核",
+      traceability: "可追踪性",
+      writeback: "问答 / 写回",
+      chat: "聊天 / 搜索",
+      graph: "关系图",
+      activity: "活动",
+      settings: "设置",
+    },
+    pages: {
+      dashboard: { title: "仪表盘", subtitle: "查看 vault 状态、下一步动作，以及用户应该继续的 ingest 路径。" },
+      sources: { title: "原始资料", subtitle: "管理 raw evidence、source registry、解析 artifact 和可追踪状态。" },
+      claims: { title: "论断", subtitle: "带证据的 claim ledger、审核和 verdict 控制。" },
+      concepts: { title: "概念", subtitle: "生成的概念页，以及支撑它们的 vault 上下文。" },
+      reviews: { title: "审核", subtitle: "Science review queue、follow-up actions 和审批边界。" },
+      traceability: { title: "可追踪性", subtitle: "断裂证据链、缺失 anchor、contract findings 和 impact graph。" },
+      writeback: { title: "问答 / 写回", subtitle: "基于证据生成洞察，并先生成 proposal 再写回。" },
+      chat: { title: "聊天 / 搜索", subtitle: "搜索 vault、检查证据、生成回答草稿，并把可信问题转成 proposal。" },
+      graph: { title: "关系图", subtitle: "展示 source、claim、concept、review、warning 和 proposal 的可信研究关系。" },
+      activity: { title: "活动", subtitle: "Runtime jobs、持久历史、日志、取消、超时和重试。" },
+      settings: { title: "设置", subtitle: "Runtime、parser、Obsidian 和 release 相关桌面设置。" },
+    },
+    runtimeActions: {
+      lint: "运行 lint",
+      parse_pdfs: "本地解析 PDF",
+      obsidian_setup: "配置 Obsidian",
+      status_dashboard: "刷新仪表盘",
+      discover: "Source discovery",
+      claims: "抽取 claims",
+      semantic_qa: "Semantic QA",
+      science_review: "Science review",
+      concept_revision_preview: "概念预览",
+      concept_revision_apply: "应用概念",
+      cancel_probe: "取消测试",
+      timeout_probe: "超时测试 2s",
+    },
+    pipeline: ["导入", "解析 PDF / Markdown", "生成 source 草稿", "独立 QA", "发布稳定 source", "抽取 claims", "指标归一化", "Semantic QA", "冲突扫描", "Science review queue", "概念修订", "Lint"],
+    languageToggle: "English",
+    brandSubtitleWithVault: "Vault 命令中心",
+    brandSubtitleNoVault: "选择或创建 vault",
+    noVault: "未选择 vault",
+    entryPending: "Entry note 待生成",
+    vaultManagement: "Vault 管理",
+    open: "打开",
+    refresh: "刷新",
+    createVault: "创建 vault",
+    folder: "文件夹",
+    finder: "Finder",
+    obsidian: "Obsidian",
+    copyPath: "复制路径",
+    copyUri: "复制 URI",
+    enableObsidianProfile: "创建时启用 Obsidian profile",
+    nextActionTitle: "下一步",
+    nextActionHelp: "用左侧导航检查不同工作流，同时保留当前 vault 上下文。",
+    selectEvidence: "选择 evidence 后查看路径、证据和可执行动作。",
+    importDropTitle: "导入 PDF / Markdown / txt / folder",
+    importDropQueued: "导入后写入 runtime-owned ingest queue",
+    importDropInboxOnly: "仅进入 raw/inbox，等待手动规划",
+    importFiles: "导入文件",
+    importFolder: "导入文件夹",
+    preserveFolderContext: "保留目录上下文",
+    actionStrip: {
+      plan: "规划 ingest",
+      lint: "合约 lint",
+      pipeline: "运行 ingest pipeline",
+      repair: "修复模板",
+      diagnostic: "诊断 bundle",
+    },
+    activity: {
+      title: "活动面板",
+      idle: "空闲",
+      cancel: "取消当前 job",
+      openLog: "打开运行日志",
+      retry: "重试同类任务",
+      emptyHistory: "暂无持久 runtime job 记录。",
+    },
+    labels: {
+      vault: "Vault",
+      recent: "最近",
+      suggestions: "建议",
+      rawInbox: "Raw inbox",
+      publishedSources: "已发布资料",
+      blocked: "阻塞",
+      claims: "Claims",
+      needsReview: "待审核",
+      contradicted: "冲突",
+      conceptPages: "概念页",
+      growthQueue: "Growth queue",
+      reports: "报告",
+      openReviews: "未处理审核",
+      scienceQueue: "Science queue",
+      warnings: "警告",
+      evidenceBreaks: "证据断点",
+      contract: "P0/P1 contract",
+      proposals: "Proposals",
+      approved: "已批准",
+      applied: "已应用",
+      currentJob: "当前 job",
+      history: "历史",
+      failures: "失败",
+      runtime: "运行时",
+      parser: "解析器",
+      cloudParsing: "云解析",
+      sources: "资料",
+      concepts: "概念",
+      reviews: "审核",
+      ready: "可用",
+      missing: "缺失",
+      off: "关闭",
+      allowed: "已允许",
+      notSelected: "未选择",
+      inspecting: "检查中",
+      schemaValid: "Schema 有效",
+      schemaInvalid: "Schema 无效",
+      runtimeReady: "运行时可用",
+      runtimeMissing: "运行时缺失",
+      obsidianEnabled: "Obsidian 已启用",
+      obsidianOff: "Obsidian 未启用",
+      dashboardReady: "仪表盘可用",
+      dashboardMissing: "仪表盘缺失",
+    },
+    dialogs: {
+      chooseVault: "选择 open-llm-wiki vault",
+      chooseRuntime: "选择 open-llm-wiki 运行时仓库或已安装 vault",
+      chooseParent: "选择新 Wiki Project 的父目录",
+      importFiles: "导入 PDF / Markdown / txt 到 raw/inbox",
+      importFolder: "导入文件夹到 raw/inbox",
+    },
+    errors: {
+      createVaultPath: "请先填写要创建的 vault 绝对路径。",
+      createProject: "请填写 Project Name 并选择 Parent Directory。",
+      dropNoPath: "拖拽事件没有提供本地文件路径，请使用导入文件或导入文件夹按钮。",
+    },
+  },
+  en: {
+    nav: Object.fromEntries(navigationItems.map((item) => [item.id, item.label])) as Record<ShellPage, string>,
+    pages: pageTitles,
+    runtimeActions: Object.fromEntries(runtimeActions.map((item) => [item.id, item.label])) as Record<string, string>,
+    pipeline,
+    languageToggle: "中文",
+    brandSubtitleWithVault: "Vault command center",
+    brandSubtitleNoVault: "Choose or create a vault",
+    noVault: "No vault selected",
+    entryPending: "Entry note pending",
+    vaultManagement: "Vault management",
+    open: "Open",
+    refresh: "Refresh",
+    createVault: "Create vault",
+    folder: "Folder",
+    finder: "Finder",
+    obsidian: "Obsidian",
+    copyPath: "Copy path",
+    copyUri: "Copy URI",
+    enableObsidianProfile: "Enable Obsidian profile when creating",
+    nextActionTitle: "Next Action",
+    nextActionHelp: "Use the navigation rail to inspect focused workflows without losing vault context.",
+    selectEvidence: "Select evidence to inspect its path, provenance, and actions.",
+    importDropTitle: "Import PDF / Markdown / txt / folder",
+    importDropQueued: "After import, enqueue into the runtime-owned ingest queue",
+    importDropInboxOnly: "Import into raw/inbox only, then plan manually",
+    importFiles: "Import files",
+    importFolder: "Import folder",
+    preserveFolderContext: "Preserve folder context",
+    actionStrip: {
+      plan: "Plan ingest",
+      lint: "Contract lint",
+      pipeline: "Run ingest pipeline",
+      repair: "Repair templates",
+      diagnostic: "Diagnostic bundle",
+    },
+    activity: {
+      title: "Activity Panel",
+      idle: "idle",
+      cancel: "Cancel current job",
+      openLog: "Open run log",
+      retry: "Retry similar task",
+      emptyHistory: "No persisted runtime job history yet.",
+    },
+    labels: {
+      vault: "Vault",
+      recent: "Recent",
+      suggestions: "Suggestions",
+      rawInbox: "Raw inbox",
+      publishedSources: "Published sources",
+      blocked: "Blocked",
+      claims: "Claims",
+      needsReview: "Needs review",
+      contradicted: "Contradicted",
+      conceptPages: "Concept pages",
+      growthQueue: "Growth queue",
+      reports: "Reports",
+      openReviews: "Open reviews",
+      scienceQueue: "Science queue",
+      warnings: "Warnings",
+      evidenceBreaks: "Evidence breaks",
+      contract: "P0/P1 contract",
+      proposals: "Proposals",
+      approved: "Approved",
+      applied: "Applied",
+      currentJob: "Current job",
+      history: "History",
+      failures: "Failures",
+      runtime: "Runtime",
+      parser: "Parser",
+      cloudParsing: "Cloud parsing",
+      sources: "Sources",
+      concepts: "Concepts",
+      reviews: "Reviews",
+      ready: "ready",
+      missing: "missing",
+      off: "off",
+      allowed: "allowed",
+      notSelected: "not selected",
+      inspecting: "Inspecting vault",
+      schemaValid: "Schema valid",
+      schemaInvalid: "Schema invalid",
+      runtimeReady: "Runtime ready",
+      runtimeMissing: "Runtime missing",
+      obsidianEnabled: "Obsidian enabled",
+      obsidianOff: "Obsidian off",
+      dashboardReady: "Dashboard ready",
+      dashboardMissing: "Dashboard missing",
+    },
+    dialogs: {
+      chooseVault: "Choose open-llm-wiki vault",
+      chooseRuntime: "Choose open-llm-wiki runtime repository or installed vault",
+      chooseParent: "Choose parent directory for the new Wiki Project",
+      importFiles: "Import PDF / Markdown / txt to raw/inbox",
+      importFolder: "Import folders to raw/inbox",
+    },
+    errors: {
+      createVaultPath: "Enter an absolute path for the vault first.",
+      createProject: "Enter a Project Name and choose a Parent Directory.",
+      dropNoPath: "The drag event did not provide local file paths. Use Import files or Import folder.",
+    },
+  },
+};
+
 const terminalRuntimeStatuses: RuntimeJobStatus[] = ["completed", "succeeded", "failed", "timeout", "timed_out", "cancelled"];
 const retryableRuntimeStatuses: RuntimeJobStatus[] = ["failed", "timeout", "timed_out", "cancelled"];
 
@@ -202,6 +505,12 @@ const initialDesktopSettings: DesktopSettings = {
   runtimePath: "",
   pythonPath: "python3",
   uvPath: "uv",
+  projectName: "",
+  projectTemplate: "research",
+  projectPurpose: "",
+  aiOutputLanguage: "简体中文",
+  interfaceLanguage: "zh",
+  parentDirectory: "",
   layoutParsingApiUrl: "",
   layoutParsingTokenPresent: false,
   cloudParsingAllowed: false,
@@ -213,6 +522,10 @@ const initialDesktopSettings: DesktopSettings = {
   autoRunLintAfterWrites: true,
   autoOpenReportsAfterFailures: false,
   skipObsidianPluginDownloads: true,
+  llmProviderCenter: {
+    activeProviderId: "codex-cli",
+    providers: {},
+  },
 };
 
 function classNames(...items: Array<string | false | null | undefined>) {
@@ -256,6 +569,19 @@ function runtimeStatusTone(status: string) {
 
 function hasWhitespacePathSegment(path: string) {
   return / +(?=\/|$)/.test(path);
+}
+
+function projectSlug(name: string) {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\u3400-\u9fff]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "untitled-wiki";
+}
+
+function joinLocalPath(parent: string, child: string) {
+  const base = parent.replace(/\/+$/g, "");
+  return `${base || "/"}${base === "" || base === "/" ? "" : "/"}${child}`;
 }
 
 function statusTone(status: VaultStatus | null) {
@@ -302,6 +628,9 @@ function pipelineState(index: number, status: VaultStatus | null, plan: IngestPl
 }
 
 function App() {
+  const [interfaceLanguage, setInterfaceLanguage] = useState<UiLanguage>(() =>
+    normalizeUiLanguage(typeof localStorage === "undefined" ? null : localStorage.getItem(INTERFACE_LANGUAGE_STORAGE_KEY)),
+  );
   const [vaultPath, setVaultPath] = useState("");
   const [appState, setAppState] = useState<DesktopAppState | null>(null);
   const [vaultSuggestions, setVaultSuggestions] = useState<VaultSuggestion[]>([]);
@@ -338,8 +667,10 @@ function App() {
   const [runtimeHistory, setRuntimeHistory] = useState<RuntimeJobEvent[]>([]);
   const [liveLogLines, setLiveLogLines] = useState<string[]>([]);
   const [activePage, setActivePage] = useState<ShellPage>("dashboard");
+  const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const copy = shellCopy[interfaceLanguage];
 
   const grouped = useMemo(() => {
     const groups: Record<string, VaultFile[]> = { source: [], draft: [], concept: [], report: [], inbox: [] };
@@ -373,7 +704,7 @@ function App() {
   });
   const brokenEvidence = evidencePaths.filter((item) => item.chainStatus !== "ok").length;
   const progressDone = jobs.filter((job) => job.status === "succeeded").length;
-  const activePageCopy = pageTitles[activePage];
+  const activePageCopy = copy.pages[activePage];
   const pageVisible = (...pages: ShellPage[]) => pages.includes(activePage);
   const vaultFilePath = (path?: string | null) => {
     if (!path) return vaultPath;
@@ -429,6 +760,37 @@ function App() {
       setRestoreError(`Reveal failed. Open or copy this path manually:\n${target}\n${String(err)}`);
     }
   };
+  const persistInterfaceLanguage = async (nextLanguage: UiLanguage) => {
+    setInterfaceLanguage(nextLanguage);
+    localStorage.setItem(INTERFACE_LANGUAGE_STORAGE_KEY, nextLanguage);
+    const nextSettings = { ...desktopSettings, interfaceLanguage: nextLanguage };
+    setDesktopSettings(nextSettings);
+    if (isTauriAvailable()) {
+      try {
+        setAppState(await saveInterfaceLanguage(nextLanguage));
+        if (vaultPath) {
+          await saveDesktopSettings(vaultPath, nextSettings);
+        }
+      } catch (err) {
+        setRestoreError(String(err));
+      }
+    }
+  };
+  const toggleInterfaceLanguage = () => {
+    void persistInterfaceLanguage(oppositeLanguage(interfaceLanguage));
+  };
+
+  useEffect(() => {
+    setQueryText((current) => {
+      if (interfaceLanguage === "en" && current === DEFAULT_DEEPSEEK_RESEARCH_STRATEGY_QUERY) {
+        return DEFAULT_DEEPSEEK_RESEARCH_STRATEGY_QUERY_EN;
+      }
+      if (interfaceLanguage === "zh" && current === DEFAULT_DEEPSEEK_RESEARCH_STRATEGY_QUERY_EN) {
+        return DEFAULT_DEEPSEEK_RESEARCH_STRATEGY_QUERY;
+      }
+      return current;
+    });
+  }, [interfaceLanguage]);
 
   useEffect(() => {
     let ignore = false;
@@ -445,6 +807,10 @@ function App() {
           listVaultSuggestions(),
         ]);
         if (ignore) return;
+        const restoredLanguage = normalizeUiLanguage(restore.state.interfaceLanguage || localStorage.getItem(INTERFACE_LANGUAGE_STORAGE_KEY));
+        setInterfaceLanguage(restoredLanguage);
+        localStorage.setItem(INTERFACE_LANGUAGE_STORAGE_KEY, restoredLanguage);
+        setDesktopSettings((current) => ({ ...current, interfaceLanguage: restoredLanguage }));
         setAppState(restore.state);
         setVaultSuggestions(suggestions);
         if (restore.vaultPath && restore.status) {
@@ -512,6 +878,8 @@ function App() {
       const nextWritebacks = await listWritebackProposals(path);
       const nextStatus = await inspectVault(path);
       const nextEntry = await resolveVaultEntryNote(path);
+      const settingsLanguage = normalizeUiLanguage(nextSettings.interfaceLanguage || interfaceLanguage);
+      const normalizedSettings = { ...nextSettings, interfaceLanguage: settingsLanguage };
       setStatus(nextStatus);
       setIngestPlan(nextPlan);
       setClaims(nextClaims);
@@ -520,7 +888,9 @@ function App() {
       setRuntimeHistory(nextRuntimeHistory);
       setReviewItems(nextReview);
       setWritebacks(nextWritebacks);
-      setDesktopSettings(nextSettings);
+      setDesktopSettings(normalizedSettings);
+      setInterfaceLanguage(settingsLanguage);
+      localStorage.setItem(INTERFACE_LANGUAGE_STORAGE_KEY, settingsLanguage);
       setEntryNote(nextEntry);
       setAppState(await saveLastSelectedVault(path));
       setVaultSuggestions(await listVaultSuggestions());
@@ -533,7 +903,7 @@ function App() {
   }
 
   async function chooseVault() {
-    const picked = await open({ directory: true, multiple: false, title: "选择 open-llm-wiki vault" });
+    const picked = await open({ directory: true, multiple: false, title: copy.dialogs.chooseVault });
     if (typeof picked !== "string") return;
     await selectVault(picked);
   }
@@ -545,14 +915,19 @@ function App() {
   }
 
   async function chooseRuntime() {
-    const picked = await open({ directory: true, multiple: false, title: "选择 open-llm-wiki runtime 仓库或已安装 vault" });
+    const picked = await open({ directory: true, multiple: false, title: copy.dialogs.chooseRuntime });
     if (typeof picked !== "string") return;
     setDesktopSettings((current) => ({ ...current, runtimePath: picked }));
   }
 
+  async function chooseParentDirectory() {
+    const picked = await open({ directory: true, multiple: false, title: copy.dialogs.chooseParent });
+    return typeof picked === "string" ? picked : null;
+  }
+
   async function handleCreateVault() {
     if (!newVaultPath.trim()) {
-      setError("请先填写要创建的 vault 绝对路径。");
+      setError(copy.errors.createVaultPath);
       return;
     }
     setBusy("create");
@@ -565,6 +940,39 @@ function App() {
       await refresh(next.path);
     } catch (err) {
       setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleCreateProject(draft: NewWikiProjectDraft) {
+    if (!draft.projectName.trim() || !draft.parentDirectory.trim()) {
+      setError(copy.errors.createProject);
+      return false;
+    }
+    const targetPath = joinLocalPath(draft.parentDirectory, projectSlug(draft.projectName));
+    const nextDesktopSettings = {
+      ...desktopSettings,
+      projectName: draft.projectName.trim(),
+      projectTemplate: draft.template,
+      projectPurpose: draft.purpose,
+      aiOutputLanguage: draft.aiOutputLanguage,
+      parentDirectory: draft.parentDirectory,
+    };
+    setBusy("create");
+    setError(null);
+    try {
+      const next = await createVault(targetPath, runtimeSettings(nextDesktopSettings), enableObsidian);
+      await saveDesktopSettings(next.path, nextDesktopSettings);
+      setDesktopSettings(nextDesktopSettings);
+      setVaultPath(next.path);
+      setNewVaultPath("");
+      setActivePage("dashboard");
+      await refresh(next.path);
+      return true;
+    } catch (err) {
+      setError(String(err));
+      return false;
     } finally {
       setBusy(null);
     }
@@ -604,7 +1012,7 @@ function App() {
     const picked = await open({
       directory: false,
       multiple: true,
-      title: "导入 PDF / Markdown / txt 到 raw/inbox",
+      title: copy.dialogs.importFiles,
       filters: [{ name: "Documents", extensions: ["pdf", "md", "markdown", "txt"] }],
     });
     const paths = Array.isArray(picked) ? picked.filter((item): item is string => typeof item === "string") : [];
@@ -612,7 +1020,7 @@ function App() {
   }
 
   async function handleImportFolder() {
-    const picked = await open({ directory: true, multiple: true, title: "导入文件夹到 raw/inbox" });
+    const picked = await open({ directory: true, multiple: true, title: copy.dialogs.importFolder });
     const paths = Array.isArray(picked) ? picked.filter((item): item is string => typeof item === "string") : typeof picked === "string" ? [picked] : [];
     await handleImportPaths(paths);
   }
@@ -624,7 +1032,7 @@ function App() {
       .map((file) => (file as File & { path?: string }).path)
       .filter((path): path is string => Boolean(path));
     if (!paths.length) {
-      setError("拖拽事件没有提供本地文件路径，请使用导入文件或导入文件夹按钮。");
+      setError(copy.errors.dropNoPath);
       return;
     }
     await handleImportPaths(paths);
@@ -981,84 +1389,84 @@ function App() {
   const pageStatusItems: PageStatusItem[] = (() => {
     if (!vaultPath) {
       return [
-        { label: "Vault", value: "not selected", tone: "warning" },
-        { label: "Recent", value: appState?.recentVaults.length ?? 0 },
-        { label: "Suggestions", value: vaultSuggestions.filter((item) => item.exists).length },
+        { label: copy.labels.vault, value: copy.labels.notSelected, tone: "warning" },
+        { label: copy.labels.recent, value: appState?.recentVaults.length ?? 0 },
+        { label: copy.labels.suggestions, value: vaultSuggestions.filter((item) => item.exists).length },
       ];
     }
     if (activePage === "sources") {
       return [
-        { label: "Raw inbox", value: status?.counts.inbox ?? 0 },
-        { label: "Published sources", value: status?.counts.sources ?? 0, tone: "success" },
-        { label: "Blocked", value: planned?.blocked ?? 0, tone: (planned?.blocked ?? 0) > 0 ? "danger" : "neutral" },
+        { label: copy.labels.rawInbox, value: status?.counts.inbox ?? 0 },
+        { label: copy.labels.publishedSources, value: status?.counts.sources ?? 0, tone: "success" },
+        { label: copy.labels.blocked, value: planned?.blocked ?? 0, tone: (planned?.blocked ?? 0) > 0 ? "danger" : "neutral" },
       ];
     }
     if (activePage === "claims") {
       return [
-        { label: "Claims", value: status?.counts.claims ?? claims.length },
-        { label: "Needs review", value: status?.counts.claimsNeedingReview ?? 0, tone: (status?.counts.claimsNeedingReview ?? 0) > 0 ? "warning" : "success" },
-        { label: "Contradicted", value: status?.counts.contradictedClaims ?? 0, tone: (status?.counts.contradictedClaims ?? 0) > 0 ? "danger" : "neutral" },
+        { label: copy.labels.claims, value: status?.counts.claims ?? claims.length },
+        { label: copy.labels.needsReview, value: status?.counts.claimsNeedingReview ?? 0, tone: (status?.counts.claimsNeedingReview ?? 0) > 0 ? "warning" : "success" },
+        { label: copy.labels.contradicted, value: status?.counts.contradictedClaims ?? 0, tone: (status?.counts.contradictedClaims ?? 0) > 0 ? "danger" : "neutral" },
       ];
     }
     if (activePage === "concepts") {
       return [
-        { label: "Concept pages", value: status?.counts.concepts ?? 0, tone: "success" },
-        { label: "Growth queue", value: status?.counts.growthQueue ?? 0 },
-        { label: "Reports", value: status?.counts.reports ?? 0 },
+        { label: copy.labels.conceptPages, value: status?.counts.concepts ?? 0, tone: "success" },
+        { label: copy.labels.growthQueue, value: status?.counts.growthQueue ?? 0 },
+        { label: copy.labels.reports, value: status?.counts.reports ?? 0 },
       ];
     }
     if (activePage === "reviews") {
       return [
-        { label: "Open reviews", value: openReviewCount, tone: openReviewCount > 0 ? "warning" : "success" },
-        { label: "Science queue", value: status?.counts.scienceReviewQueue ?? 0 },
-        { label: "Warnings", value: traceabilityWarnings.length, tone: traceabilityWarnings.length > 0 ? "warning" : "neutral" },
+        { label: copy.labels.openReviews, value: openReviewCount, tone: openReviewCount > 0 ? "warning" : "success" },
+        { label: copy.labels.scienceQueue, value: status?.counts.scienceReviewQueue ?? 0 },
+        { label: copy.labels.warnings, value: traceabilityWarnings.length, tone: traceabilityWarnings.length > 0 ? "warning" : "neutral" },
       ];
     }
     if (activePage === "traceability") {
       return [
-        { label: "Warnings", value: traceabilityWarnings.length, tone: traceabilityWarnings.length > 0 ? "warning" : "success" },
-        { label: "Evidence breaks", value: brokenEvidence, tone: brokenEvidence > 0 ? "danger" : "success" },
-        { label: "P0/P1 contract", value: contractP0P1, tone: contractP0P1 > 0 ? "danger" : "success" },
+        { label: copy.labels.warnings, value: traceabilityWarnings.length, tone: traceabilityWarnings.length > 0 ? "warning" : "success" },
+        { label: copy.labels.evidenceBreaks, value: brokenEvidence, tone: brokenEvidence > 0 ? "danger" : "success" },
+        { label: copy.labels.contract, value: contractP0P1, tone: contractP0P1 > 0 ? "danger" : "success" },
       ];
     }
     if (activePage === "writeback") {
       return [
-        { label: "Proposals", value: writebacks.length },
-        { label: "Approved", value: writebacks.filter((item) => item.status === "approved").length, tone: "warning" },
-        { label: "Applied", value: writebacks.filter((item) => item.status === "applied").length, tone: "success" },
+        { label: copy.labels.proposals, value: writebacks.length },
+        { label: copy.labels.approved, value: writebacks.filter((item) => item.status === "approved").length, tone: "warning" },
+        { label: copy.labels.applied, value: writebacks.filter((item) => item.status === "applied").length, tone: "success" },
       ];
     }
     if (activePage === "activity") {
       return [
-        { label: "Current job", value: activeJob?.status || "idle", tone: runtimeRunning ? "warning" : "neutral" },
-        { label: "History", value: runtimeHistory.length },
-        { label: "Failures", value: runtimeHistory.filter((job) => isRetryableRuntimeStatus(job.status)).length, tone: runtimeHistory.some((job) => isRetryableRuntimeStatus(job.status)) ? "danger" : "neutral" },
+        { label: copy.labels.currentJob, value: activeJob?.status || copy.activity.idle, tone: runtimeRunning ? "warning" : "neutral" },
+        { label: copy.labels.history, value: runtimeHistory.length },
+        { label: copy.labels.failures, value: runtimeHistory.filter((job) => isRetryableRuntimeStatus(job.status)).length, tone: runtimeHistory.some((job) => isRetryableRuntimeStatus(job.status)) ? "danger" : "neutral" },
       ];
     }
     if (activePage === "settings") {
       return [
-        { label: "Runtime", value: status?.runtimeInstalled ? "ready" : "missing", tone: status?.runtimeInstalled ? "success" : "warning" },
-        { label: "Parser", value: desktopSettings.defaultPdfParser },
-        { label: "Cloud parsing", value: desktopSettings.cloudParsingAllowed ? "allowed" : "off", tone: desktopSettings.cloudParsingAllowed ? "warning" : "neutral" },
+        { label: copy.labels.runtime, value: status?.runtimeInstalled ? copy.labels.ready : copy.labels.missing, tone: status?.runtimeInstalled ? "success" : "warning" },
+        { label: copy.labels.parser, value: desktopSettings.defaultPdfParser },
+        { label: copy.labels.cloudParsing, value: desktopSettings.cloudParsingAllowed ? copy.labels.allowed : copy.labels.off, tone: desktopSettings.cloudParsingAllowed ? "warning" : "neutral" },
       ];
     }
     return [
-      { label: "Sources", value: status?.counts.sources ?? 0 },
-      { label: "Concepts", value: status?.counts.concepts ?? 0 },
-      { label: "Reviews", value: openReviewCount, tone: openReviewCount > 0 ? "warning" : "success" },
+      { label: copy.labels.sources, value: status?.counts.sources ?? 0 },
+      { label: copy.labels.concepts, value: status?.counts.concepts ?? 0 },
+      { label: copy.labels.reviews, value: openReviewCount, tone: openReviewCount > 0 ? "warning" : "success" },
     ];
   })();
   const pagePrimaryActions: PagePrimaryAction[] = (() => {
     if (!vaultPath) {
       return [
-        { label: "Open vault", icon: <FolderOpen size={15} />, onClick: chooseVault, tone: "primary" },
-        { label: "Create vault", icon: <Archive size={15} />, onClick: handleCreateVault, disabled: busy === "create" },
+        { label: interfaceLanguage === "zh" ? "新建项目" : "New Project", icon: <Archive size={15} />, onClick: () => setCreateProjectOpen(true), tone: "primary" },
+        { label: interfaceLanguage === "zh" ? "打开项目" : "Open Project", icon: <FolderOpen size={15} />, onClick: chooseVault },
       ];
     }
     if (activePage === "sources") {
       return [
-        { label: "Import files", icon: <FileInput size={15} />, onClick: handleImportFiles, disabled: busy === "import", tone: "primary" },
-        { label: "Plan ingest", icon: <ListChecks size={15} />, onClick: handlePlanIngest, disabled: busy === "plan_ingest" },
+        { label: copy.importFiles, icon: <FileInput size={15} />, onClick: handleImportFiles, disabled: busy === "import", tone: "primary" },
+        { label: copy.actionStrip.plan, icon: <ListChecks size={15} />, onClick: handlePlanIngest, disabled: busy === "plan_ingest" },
       ];
     }
     if (activePage === "claims") {
@@ -1087,25 +1495,54 @@ function App() {
     }
     if (activePage === "activity") {
       return [
-        { label: "Cancel job", icon: <XCircle size={15} />, onClick: handleCancelRuntimeJob, disabled: !activeJob || isTerminalRuntimeStatus(activeJob.status) },
-        { label: "Diagnostic bundle", icon: <TerminalSquare size={15} />, onClick: handleDiagnostic, disabled: busy === "diagnostic" },
+        { label: copy.activity.cancel, icon: <XCircle size={15} />, onClick: handleCancelRuntimeJob, disabled: !activeJob || isTerminalRuntimeStatus(activeJob.status) },
+        { label: copy.actionStrip.diagnostic, icon: <TerminalSquare size={15} />, onClick: handleDiagnostic, disabled: busy === "diagnostic" },
       ];
     }
     if (activePage === "settings") {
       return [
-        { label: "Save settings", icon: <Check size={15} />, onClick: handleSaveSettings, disabled: busy === "save_settings", tone: "primary" },
-        { label: "Choose runtime", icon: <Settings size={15} />, onClick: chooseRuntime },
+        { label: interfaceLanguage === "zh" ? "保存设置" : "Save settings", icon: <Check size={15} />, onClick: handleSaveSettings, disabled: busy === "save_settings", tone: "primary" },
+        { label: interfaceLanguage === "zh" ? "选择 runtime" : "Choose runtime", icon: <Settings size={15} />, onClick: chooseRuntime },
       ];
     }
     return [
-      { label: "Run pipeline", icon: <Play size={15} />, onClick: handleIngestPipeline, disabled: runtimeRunning || busy === "start:ingest_pipeline" || (runnableIngest + parseablePdfs) === 0, tone: "primary" },
-      { label: "Query writeback", icon: <GitCompare size={15} />, onClick: () => setActivePage("writeback") },
+      { label: copy.actionStrip.pipeline, icon: <Play size={15} />, onClick: handleIngestPipeline, disabled: runtimeRunning || busy === "start:ingest_pipeline" || (runnableIngest + parseablePdfs) === 0, tone: "primary" },
+      { label: copy.nav.writeback, icon: <GitCompare size={15} />, onClick: () => setActivePage("writeback") },
     ];
   })();
 
+  if (!vaultPath) {
+    return (
+      <main className="welcome-only-shell">
+        {(error || restoreError) && (
+          <div className="welcome-error-stack">
+            {error && <pre className="error-box">{error}</pre>}
+            {restoreError && <pre className="error-box subtle">{restoreError}</pre>}
+          </div>
+        )}
+        <WelcomePanel
+          language={interfaceLanguage}
+          appState={appState}
+          suggestions={vaultSuggestions}
+          onToggleLanguage={toggleInterfaceLanguage}
+          onChooseVault={chooseVault}
+          onSelectVault={selectVault}
+          createOpen={createProjectOpen}
+          onCreateOpenChange={setCreateProjectOpen}
+          onCreateVault={handleCreateVault}
+          onCreateProject={handleCreateProject}
+          onChooseParentDirectory={chooseParentDirectory}
+          defaultParentDirectory={desktopSettings.parentDirectory}
+          defaultLanguage={desktopSettings.aiOutputLanguage}
+          busy={busy}
+        />
+      </main>
+    );
+  }
+
   return (
     <main
-      className={classNames("app-shell", dragActive && "drag-active")}
+      className={classNames("app-shell", activePage === "settings" && "settings-mode", dragActive && "drag-active")}
       onDragOver={(event) => {
         event.preventDefault();
         setDragActive(true);
@@ -1114,7 +1551,9 @@ function App() {
       onDrop={handleDrop}
     >
       <aside className="icon-sidebar" aria-label="Primary navigation">
-        <div className="icon-brand" title="LLM Wiki Desktop">LW</div>
+        <div className="icon-brand" title="LLM Wiki">
+          <BrandMark size={42} />
+        </div>
         <nav className="nav-rail">
           {navigationItems.map((item) => {
             const Icon = item.icon;
@@ -1123,8 +1562,8 @@ function App() {
               <button
                 key={item.id}
                 className={classNames("nav-button", activePage === item.id && "active")}
-                title={item.label}
-                aria-label={item.label}
+                title={copy.nav[item.id]}
+                aria-label={copy.nav[item.id]}
                 onClick={() => setActivePage(item.id)}
               >
                 <Icon size={19} />
@@ -1136,20 +1575,23 @@ function App() {
         <div className={classNames("rail-status", tone)} title={vaultPath || "No vault selected"} />
       </aside>
 
+      {activePage !== "settings" && (
       <aside className="sidebar command-sidebar">
         <div className="brand">
-          <div className="brand-mark">LW</div>
+          <div className="brand-mark">
+            <BrandMark size={42} />
+          </div>
           <div>
-            <h1>LLM Wiki Desktop</h1>
-            <p>{vaultPath ? "Vault command center" : "Choose or create a vault"}</p>
+            <h1>LLM Wiki</h1>
+            <p>{vaultPath ? copy.brandSubtitleWithVault : copy.brandSubtitleNoVault}</p>
           </div>
         </div>
 
         <section className="panel">
-          <h2>Vault 管理</h2>
-          <div className="path-field" title={vaultPath || "No vault selected"}>{vaultPath ? visiblePath(vaultPath) : "No vault selected"}</div>
-          <div className="path-field" title={entryNote?.entryPath || "No entry note resolved"}>
-            {entryNote?.entryRelativePath ? visiblePath(entryNote.entryRelativePath) : "Entry note pending"}
+          <h2>{copy.vaultManagement}</h2>
+          <div className="path-field" title={vaultPath || copy.noVault}>{vaultPath ? visiblePath(vaultPath) : copy.noVault}</div>
+          <div className="path-field" title={entryNote?.entryPath || copy.entryPending}>
+            {entryNote?.entryRelativePath ? visiblePath(entryNote.entryRelativePath) : copy.entryPending}
           </div>
           {entryNote?.obsidianUri && (
             <div className="path-field" title={entryNote.obsidianUri}>{entryNote.obsidianUri}</div>
@@ -1159,27 +1601,28 @@ function App() {
           )}
           {entryNote?.warning && <p className="note warn-text">{entryNote.warning}</p>}
           <div className="button-row">
-            <button onClick={chooseVault}><FolderOpen size={16} />打开</button>
-            <button onClick={() => refresh()} disabled={!vaultPath || busy === "inspect"}><RefreshCw size={16} />刷新</button>
+            <button onClick={chooseVault}><FolderOpen size={16} />{copy.open}</button>
+            <button onClick={() => refresh()} disabled={!vaultPath || busy === "inspect"}><RefreshCw size={16} />{copy.refresh}</button>
           </div>
           <input value={newVaultPath} onChange={(event) => setNewVaultPath(event.target.value)} placeholder="/absolute/path/to/new-vault" />
           <label className="check-row">
             <input type="checkbox" checked={enableObsidian} onChange={(event) => setEnableObsidian(event.target.checked)} />
-            创建时启用 Obsidian profile
+            {copy.enableObsidianProfile}
           </label>
-          <button className="wide" onClick={handleCreateVault} disabled={busy === "create"}><Archive size={16} />创建 vault</button>
+          <button className="wide" onClick={handleCreateVault} disabled={busy === "create"}><Archive size={16} />{copy.createVault}</button>
           <div className="button-row">
-            <button onClick={() => vaultPath && openPath(vaultPath)} disabled={!vaultPath}><FolderOpen size={16} />文件夹</button>
-            <button onClick={revealEntryOrVault} disabled={!vaultPath}><FolderOpen size={16} />Finder</button>
-            <button onClick={handleOpenObsidian} disabled={!vaultPath || busy === "obsidian_open"}><SquareStack size={16} />Obsidian</button>
+            <button onClick={() => vaultPath && openPath(vaultPath)} disabled={!vaultPath}><FolderOpen size={16} />{copy.folder}</button>
+            <button onClick={revealEntryOrVault} disabled={!vaultPath}><FolderOpen size={16} />{copy.finder}</button>
+            <button onClick={handleOpenObsidian} disabled={!vaultPath || busy === "obsidian_open"}><SquareStack size={16} />{copy.obsidian}</button>
           </div>
           <div className="button-row">
-            <button onClick={() => copyText("entry path", entryNote?.fallbackPath || entryNote?.entryPath || vaultPath)} disabled={!vaultPath}><Copy size={16} />复制路径</button>
-            <button onClick={() => copyText("Obsidian URI", entryNote?.obsidianUri)} disabled={!entryNote?.obsidianUri}><Copy size={16} />复制 URI</button>
+            <button onClick={() => copyText("entry path", entryNote?.fallbackPath || entryNote?.entryPath || vaultPath)} disabled={!vaultPath}><Copy size={16} />{copy.copyPath}</button>
+            <button onClick={() => copyText("Obsidian URI", entryNote?.obsidianUri)} disabled={!entryNote?.obsidianUri}><Copy size={16} />{copy.copyUri}</button>
           </div>
         </section>
 
         <DetailsPanel
+          language={interfaceLanguage}
           selection={detailSelection}
           vaultPath={vaultPath}
           obsidianUri={entryNote?.obsidianUri}
@@ -1206,54 +1649,44 @@ function App() {
           onOpenActivity={() => setActivePage("activity")}
         />
 
-        {activePage === "settings" ? (
-        <RuntimeSettingsPanel
-          settings={desktopSettings}
-          setSettings={setDesktopSettings}
-          vaultPath={vaultPath}
-          busy={busy}
-          onChooseRuntime={chooseRuntime}
-          onSaveSettings={handleSaveSettings}
-        />
-        ) : (
         <section className="panel focus-panel">
-          <h2>Next Action</h2>
-          <p className="note">{vaultPath ? "Use the navigation rail to inspect focused workflows without losing vault context." : "Open a recent vault, choose a generated vault, or create a new one to start."}</p>
+          <h2>{copy.nextActionTitle}</h2>
+          <p className="note">{vaultPath ? copy.nextActionHelp : copy.brandSubtitleNoVault}</p>
           <div className="focus-list">
             <button onClick={() => setActivePage("dashboard")}>
               <SquareStack size={15} />
-              <span>Dashboard</span>
+              <span>{copy.nav.dashboard}</span>
               <em>{status?.dashboardAvailable ? "ready" : "needs refresh"}</em>
             </button>
             <button onClick={() => setActivePage("activity")}>
               <TerminalSquare size={15} />
-              <span>Activity</span>
+              <span>{copy.nav.activity}</span>
               <em>{runtimeRunning ? "running" : `${runtimeHistory.length} history`}</em>
             </button>
             <button onClick={() => setActivePage("writeback")}>
               <GitCompare size={15} />
-              <span>Query / Writeback</span>
+              <span>{copy.nav.writeback}</span>
               <em>{writebacks.length} proposals</em>
             </button>
             <button onClick={() => setActivePage("chat")}>
               <MessageSquare size={15} />
-              <span>Chat / Search</span>
+              <span>{copy.nav.chat}</span>
               <em>{claims.length + reviewItems.length + writebacks.length} searchable records</em>
             </button>
             <button onClick={() => setActivePage("graph")}>
               <Network size={15} />
-              <span>Graph</span>
+              <span>{copy.nav.graph}</span>
               <em>{claims.length + traceabilityWarnings.length + impactEdges.length} links</em>
             </button>
             <button onClick={() => setActivePage("traceability")}>
               <GitCompare size={15} />
-              <span>Traceability</span>
+              <span>{copy.nav.traceability}</span>
               <em>{traceabilityWarnings.length + brokenEvidence} warnings</em>
             </button>
           </div>
         </section>
-        )}
       </aside>
+      )}
 
       <section className="workspace">
         <header className="topbar">
@@ -1268,42 +1701,54 @@ function App() {
             </div>
             <div className={classNames("health", tone)}>
               {tone === "ok" ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
-              {vaultPath ? (status ? (status.schemaValid ? "Schema valid" : "Schema invalid") : "Inspecting vault") : "Choose vault"}
+              {vaultPath ? (status ? (status.schemaValid ? copy.labels.schemaValid : copy.labels.schemaInvalid) : copy.labels.inspecting) : copy.brandSubtitleNoVault}
             </div>
             <div className={classNames("status-pill", status?.runtimeInstalled && "ok")}>
               <TerminalSquare size={15} />
-              <span>{status?.runtimeInstalled ? "Runtime ready" : "Runtime missing"}</span>
+              <span>{status?.runtimeInstalled ? copy.labels.runtimeReady : copy.labels.runtimeMissing}</span>
             </div>
             <div className={classNames("status-pill", status?.obsidianEnabled && "ok")}>
               <SquareStack size={15} />
-              <span>{status?.obsidianEnabled ? "Obsidian enabled" : "Obsidian off"}</span>
+              <span>{status?.obsidianEnabled ? copy.labels.obsidianEnabled : copy.labels.obsidianOff}</span>
             </div>
             <div className={classNames("status-pill", status?.dashboardAvailable && "ok")}>
               <BarChart3 size={15} />
-              <span>{status?.dashboardAvailable ? "Dashboard ready" : "Dashboard missing"}</span>
+              <span>{status?.dashboardAvailable ? copy.labels.dashboardReady : copy.labels.dashboardMissing}</span>
             </div>
+            <button className="language-toggle" type="button" onClick={toggleInterfaceLanguage} title={`Switch to ${copy.languageToggle}`}>
+              <Languages size={15} />
+              <span>{copy.languageToggle}</span>
+            </button>
           </div>
         </header>
 
         {error && <pre className="error-box">{error}</pre>}
         {restoreError && <pre className="error-box subtle">{restoreError}</pre>}
 
-        <PageStatusHeader
-          title={activePageCopy.title}
-          subtitle={activePageCopy.subtitle}
-          statusItems={pageStatusItems}
-          primaryActions={pagePrimaryActions}
-        />
+        {activePage !== "settings" && (
+          <PageStatusHeader
+            title={activePageCopy.title}
+            subtitle={activePageCopy.subtitle}
+            statusItems={pageStatusItems}
+            primaryActions={pagePrimaryActions}
+          />
+        )}
 
         {!vaultPath && (
           <WelcomePanel
+            language={interfaceLanguage}
             appState={appState}
             suggestions={vaultSuggestions}
+            onToggleLanguage={toggleInterfaceLanguage}
             onChooseVault={chooseVault}
             onSelectVault={selectVault}
-            newVaultPath={newVaultPath}
-            setNewVaultPath={setNewVaultPath}
+            createOpen={createProjectOpen}
+            onCreateOpenChange={setCreateProjectOpen}
             onCreateVault={handleCreateVault}
+            onCreateProject={handleCreateProject}
+            onChooseParentDirectory={chooseParentDirectory}
+            defaultParentDirectory={desktopSettings.parentDirectory}
+            defaultLanguage={desktopSettings.aiOutputLanguage}
             busy={busy}
           />
         )}
@@ -1312,6 +1757,7 @@ function App() {
           <>
         {pageVisible("dashboard") && (
           <DeepSeekVaultHome
+            language={interfaceLanguage}
             vaultName={vaultDisplayName}
             counts={status?.counts}
             reviewOpenCount={openReviewCount}
@@ -1326,6 +1772,7 @@ function App() {
         )}
         <DashboardOverview
           className={classNames("view-section", pageVisible("dashboard") && "visible")}
+          language={interfaceLanguage}
           vaultPath={vaultPath}
           status={status}
           desktopSettings={desktopSettings}
@@ -1354,32 +1801,69 @@ function App() {
           onRunObsidianSetup={() => handleRuntime("obsidian_setup")}
         />
 
-        <section className={classNames("drop-zone view-section", dragActive && "active", pageVisible("dashboard", "sources") && "visible")}>
+        <RawSourcesWorkspace
+          className={classNames("view-section", pageVisible("sources") && "visible")}
+          language={interfaceLanguage}
+          vaultPath={vaultPath}
+          status={status}
+          registry={registry}
+          artifacts={artifacts}
+          claims={claims}
+          evidencePaths={evidencePaths}
+          traceabilityWarnings={traceabilityWarnings}
+          importResults={importResults}
+          preserveFolders={preserveFolders}
+          busy={busy}
+          onPreserveFoldersChange={setPreserveFolders}
+          onRefresh={() => refresh()}
+          onImportFiles={handleImportFiles}
+          onImportFolder={handleImportFolder}
+          onPlanIngest={handlePlanIngest}
+          onOpenPath={openPath}
+          onRevealPath={revealResolvedPath}
+          onOpenVaultItem={openVaultItem}
+          onCopyText={copyText}
+          resolveVaultPath={vaultFilePath}
+        />
+
+        <RuntimeSettingsPanel
+          className={classNames("view-section", pageVisible("settings") && "visible")}
+          language={interfaceLanguage}
+          settings={desktopSettings}
+          setSettings={setDesktopSettings}
+          vaultPath={vaultPath}
+          busy={busy}
+          onChooseRuntime={chooseRuntime}
+          onSaveSettings={handleSaveSettings}
+          onToggleLanguage={toggleInterfaceLanguage}
+        />
+
+        <section className={classNames("drop-zone view-section", dragActive && "active", pageVisible("dashboard") && "visible")}>
           <div>
-            <strong>导入 PDF / Markdown / txt / folder</strong>
-            <span>{enqueueAfterImport ? "导入后写入 runtime-owned ingest queue" : "仅进入 raw/inbox，等待手动规划"}</span>
+            <strong>{copy.importDropTitle}</strong>
+            <span>{enqueueAfterImport ? copy.importDropQueued : copy.importDropInboxOnly}</span>
           </div>
           <div className="inline-actions">
-            <button onClick={handleImportFiles} disabled={!vaultPath || busy === "import"}><FileInput size={16} />导入文件</button>
-            <button onClick={handleImportFolder} disabled={!vaultPath || busy === "import"}><FolderOpen size={16} />导入文件夹</button>
+            <button onClick={handleImportFiles} disabled={!vaultPath || busy === "import"}><FileInput size={16} />{copy.importFiles}</button>
+            <button onClick={handleImportFolder} disabled={!vaultPath || busy === "import"}><FolderOpen size={16} />{copy.importFolder}</button>
             <label className="check-row">
               <input type="checkbox" checked={preserveFolders} onChange={(event) => setPreserveFolders(event.target.checked)} />
-              保留目录上下文
+              {copy.preserveFolderContext}
             </label>
           </div>
         </section>
 
         <section className={classNames("action-strip view-section", pageVisible("dashboard") && "visible")}>
-          <button onClick={handlePlanIngest} disabled={!vaultPath || busy === "plan_ingest"}><ListChecks size={16} />规划 ingest</button>
-          <button onClick={handleIngestLint} disabled={!vaultPath || busy === "ingest_lint"}><ShieldCheck size={16} />合约 lint</button>
-          <button onClick={handleIngestPipeline} disabled={!vaultPath || runtimeRunning || busy === "start:ingest_pipeline" || (runnableIngest + parseablePdfs) === 0}><Play size={16} />运行 ingest pipeline</button>
-          <button onClick={handleRepairTemplates} disabled={!vaultPath || busy === "repair_templates"}><Wrench size={16} />修复模板</button>
-          <button onClick={handleDiagnostic} disabled={!vaultPath || busy === "diagnostic"}><TerminalSquare size={16} />诊断 bundle</button>
+          <button onClick={handlePlanIngest} disabled={!vaultPath || busy === "plan_ingest"}><ListChecks size={16} />{copy.actionStrip.plan}</button>
+          <button onClick={handleIngestLint} disabled={!vaultPath || busy === "ingest_lint"}><ShieldCheck size={16} />{copy.actionStrip.lint}</button>
+          <button onClick={handleIngestPipeline} disabled={!vaultPath || runtimeRunning || busy === "start:ingest_pipeline" || (runnableIngest + parseablePdfs) === 0}><Play size={16} />{copy.actionStrip.pipeline}</button>
+          <button onClick={handleRepairTemplates} disabled={!vaultPath || busy === "repair_templates"}><Wrench size={16} />{copy.actionStrip.repair}</button>
+          <button onClick={handleDiagnostic} disabled={!vaultPath || busy === "diagnostic"}><TerminalSquare size={16} />{copy.actionStrip.diagnostic}</button>
           {runtimeActions.map((action) => {
             const Icon = action.icon;
             return (
               <button key={action.id} onClick={() => handleRuntime(action.id)} disabled={!vaultPath || runtimeRunning || busy === `start:${action.id}`}>
-                <Icon size={16} />{action.label}
+                <Icon size={16} />{copy.runtimeActions[action.id] || action.label}
               </button>
             );
           })}
@@ -1387,8 +1871,8 @@ function App() {
 
         <section className={classNames("panel activity-panel view-section", pageVisible("activity", "dashboard") && "visible")}>
           <div className="section-head">
-            <h2>Activity Panel</h2>
-            <span>{activeJob ? `${activeJob.status} · ${runtimeDurationSeconds(activeJob)}s` : "idle"}</span>
+            <h2>{copy.activity.title}</h2>
+            <span>{activeJob ? `${activeJob.status} · ${runtimeDurationSeconds(activeJob)}s` : copy.activity.idle}</span>
           </div>
           <div className="activity-meta">
             <span>Job: {activeJob?.jobId || "none"}</span>
@@ -1402,13 +1886,13 @@ function App() {
             <span>Command: {activeJob ? runtimeCommandLabel(activeJob) : "none"}</span>
           </div>
           <div className="inline-actions">
-            <button onClick={handleCancelRuntimeJob} disabled={!activeJob || isTerminalRuntimeStatus(activeJob.status)}><XCircle size={14} />取消当前 job</button>
-            <button onClick={() => activeJob && runtimeLogPath(activeJob) && openPath(runtimeLogPath(activeJob))} disabled={!activeJob || !runtimeLogPath(activeJob)}><TerminalSquare size={14} />打开运行日志</button>
-            <button onClick={() => activeJob && handleRetryRuntimeJob(activeJob)} disabled={!activeJob || runtimeRunning || !isRetryableRuntimeStatus(activeJob.status)}><RotateCcw size={14} />重试同类任务</button>
+            <button onClick={handleCancelRuntimeJob} disabled={!activeJob || isTerminalRuntimeStatus(activeJob.status)}><XCircle size={14} />{copy.activity.cancel}</button>
+            <button onClick={() => activeJob && runtimeLogPath(activeJob) && openPath(runtimeLogPath(activeJob))} disabled={!activeJob || !runtimeLogPath(activeJob)}><TerminalSquare size={14} />{copy.activity.openLog}</button>
+            <button onClick={() => activeJob && handleRetryRuntimeJob(activeJob)} disabled={!activeJob || runtimeRunning || !isRetryableRuntimeStatus(activeJob.status)}><RotateCcw size={14} />{copy.activity.retry}</button>
           </div>
           <pre className="live-log">{liveLogLines.length ? liveLogLines.join("\n") : "Runtime stdout/stderr will stream here while commands run."}</pre>
           <div className="runtime-history">
-            {runtimeHistory.length === 0 && <p className="empty">暂无持久 runtime job 记录。</p>}
+            {runtimeHistory.length === 0 && <p className="empty">{copy.activity.emptyHistory}</p>}
             {runtimeHistory.slice(0, 8).map((job) => (
               <div className="runtime-history-item" key={job.jobId}>
                 <span className={classNames("status-chip", runtimeStatusTone(job.status))}>{job.status}</span>
@@ -1426,7 +1910,7 @@ function App() {
           </div>
         </section>
 
-        <div className={classNames("main-grid view-section", pageVisible("sources", "activity") && "visible")}>
+        <div className={classNames("main-grid view-section", pageVisible("activity") && "visible")}>
           <section className="panel large">
             <div className="section-head">
               <h2>导入结果</h2>
@@ -1544,6 +2028,7 @@ function App() {
 
         <QueryWritebackComposer
             className={classNames("view-section", pageVisible("writeback") && "visible")}
+            language={interfaceLanguage}
             vaultPath={vaultPath}
             busy={busy}
             queryText={queryText}
@@ -1570,6 +2055,7 @@ function App() {
 
         <ChatSearchPage
           className={classNames("view-section", pageVisible("chat") && "visible")}
+          language={interfaceLanguage}
           vaultPath={vaultPath}
           status={status}
           claims={claims}
@@ -1590,6 +2076,7 @@ function App() {
 
         <ResearchGraphPage
           className={classNames("view-section", pageVisible("graph") && "visible")}
+          language={interfaceLanguage}
           vaultPath={vaultPath}
           status={status}
           registry={registry}
@@ -1601,6 +2088,7 @@ function App() {
           onOpenPath={openPath}
           onRevealPath={revealPath}
           onCopyText={copyText}
+          onOpenObsidian={handleOpenObsidian}
           resolveVaultPath={vaultFilePath}
         />
 
@@ -1669,7 +2157,7 @@ function App() {
           </section>
         </div>
 
-        <div className={classNames("main-grid view-section", pageVisible("sources", "concepts") && "visible")}>
+        <div className={classNames("main-grid view-section", pageVisible("concepts") && "visible")}>
           <section className="panel large">
             <div className="section-head">
               <h2>Source Registry</h2>
@@ -1739,7 +2227,7 @@ function App() {
           </section>
         </div>
 
-        <div className={classNames("main-grid view-section", pageVisible("activity", "sources") && "visible")}>
+        <div className={classNames("main-grid view-section", pageVisible("activity") && "visible")}>
           <section className="panel">
             <div className="section-head">
               <h2>任务日志</h2>
@@ -1783,7 +2271,7 @@ function App() {
           </section>
         </div>
 
-        <div className={classNames("main-grid view-section", pageVisible("traceability", "settings") && "visible")}>
+        <div className={classNames("main-grid view-section", pageVisible("traceability") && "visible")}>
           <section className="panel">
             <div className="section-head">
               <h2>Contract lint</h2>

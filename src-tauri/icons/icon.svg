@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">LLM Wiki Desktop Icon</title>
+  <desc id="desc">A premium macOS app icon showing an open structured wiki with connected research nodes.</desc>
+  <defs>
+    <linearGradient id="bg" x1="168" y1="126" x2="860" y2="894" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#263C48"/>
+      <stop offset="0.52" stop-color="#172A31"/>
+      <stop offset="1" stop-color="#111A1B"/>
+    </linearGradient>
+    <linearGradient id="paperLeft" x1="256" y1="290" x2="520" y2="744" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF8E8"/>
+      <stop offset="1" stop-color="#E6D9BE"/>
+    </linearGradient>
+    <linearGradient id="paperRight" x1="520" y1="292" x2="784" y2="748" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F6EDD7"/>
+      <stop offset="1" stop-color="#D6C39B"/>
+    </linearGradient>
+    <filter id="tileShadow" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="28" stdDeviation="30" flood-color="#061012" flood-opacity="0.32"/>
+    </filter>
+    <filter id="markShadow" x="-15%" y="-15%" width="130%" height="130%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#061012" flood-opacity="0.26"/>
+    </filter>
+  </defs>
+
+  <rect x="72" y="72" width="880" height="880" rx="210" fill="url(#bg)" filter="url(#tileShadow)"/>
+  <path d="M210 214C302 143 454 122 594 158C706 187 804 258 856 356" fill="none" stroke="#3E5E63" stroke-width="22" stroke-linecap="round" opacity="0.28"/>
+  <path d="M168 686C254 811 418 877 582 848C705 826 807 751 858 645" fill="none" stroke="#0A1112" stroke-width="28" stroke-linecap="round" opacity="0.2"/>
+
+  <g filter="url(#markShadow)">
+    <path d="M250 303C250 282 267 265 288 265H462C500 265 526 292 526 331V728C526 748 507 763 487 757C428 739 369 741 308 761C279 771 250 749 250 718Z" fill="url(#paperLeft)"/>
+    <path d="M526 331C526 292 552 265 590 265H764C785 265 802 282 802 303V718C802 749 773 771 744 761C683 741 624 739 565 757C545 763 526 748 526 728Z" fill="url(#paperRight)"/>
+    <path d="M526 321V737" stroke="#B99C63" stroke-width="16" stroke-linecap="round" opacity="0.65"/>
+    <path d="M308 380H455M308 446H438M308 512H468M308 642C361 625 413 625 468 640" fill="none" stroke="#9E8B68" stroke-width="18" stroke-linecap="round" opacity="0.55"/>
+    <path d="M590 380H739M609 446H739M584 512H716M586 642C638 625 691 625 746 640" fill="none" stroke="#8D7650" stroke-width="18" stroke-linecap="round" opacity="0.52"/>
+  </g>
+
+  <g fill="none" stroke="#C5A25F" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M393 442L509 528L634 414"/>
+    <path d="M509 528L649 615"/>
+  </g>
+  <g>
+    <circle cx="393" cy="442" r="35" fill="#F2C879" stroke="#FFF3D2" stroke-width="10"/>
+    <circle cx="509" cy="528" r="39" fill="#E8B85F" stroke="#FFF3D2" stroke-width="10"/>
+    <circle cx="634" cy="414" r="35" fill="#78A98B" stroke="#E7F4EC" stroke-width="10"/>
+    <circle cx="649" cy="615" r="32" fill="#A7B894" stroke="#F1F7EC" stroke-width="10"/>
+  </g>
+  <path d="M308 760C426 723 625 723 744 760" fill="none" stroke="#FFF6E0" stroke-width="10" stroke-linecap="round" opacity="0.62"/>
+</svg>

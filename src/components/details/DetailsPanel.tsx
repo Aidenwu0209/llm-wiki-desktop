@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   SquareStack,
 } from "lucide-react";
+import type { UiLanguage } from "../../i18n";
 import type { ClaimLedgerItem, EvidencePathItem, TraceabilityWarning, VaultFile, WritebackProposal } from "../../types";
 
 export type DetailSelection =
@@ -19,6 +20,7 @@ export type DetailSelection =
   | { kind: "proposal"; proposal: WritebackProposal };
 
 type DetailsPanelProps = {
+  language?: UiLanguage;
   selection: DetailSelection;
   vaultPath: string;
   obsidianUri?: string | null;
@@ -30,11 +32,67 @@ type DetailsPanelProps = {
   onOpenObsidian: () => void;
 };
 
+const detailsCopy = {
+  zh: {
+    title: "详情",
+    emptyTitle: "选择 evidence 查看详情",
+    emptyBody: "选择 source、claim、warning 或 writeback proposal 后，这里会固定显示路径、证据和可执行动作。",
+    noVault: "未选择 vault",
+    open: "打开",
+    reveal: "显示",
+    copyPath: "复制路径",
+    source: "Source",
+    status: "状态",
+    concepts: "概念",
+    evidence: "证据",
+    unknown: "unknown",
+    none: "none",
+    notLinked: "未关联",
+    noQuote: "没有记录 direct quote。",
+    copyClaim: "复制 claim text",
+    claim: "claim",
+    missing: "缺失",
+    artifact: "artifact",
+    copyId: "复制 id",
+    log: "log",
+    copyDiff: "复制 diff",
+    notUpdated: "未更新",
+  },
+  en: {
+    title: "Details",
+    emptyTitle: "Select evidence to inspect",
+    emptyBody: "Choose a source, claim, warning, or writeback proposal to keep its path, evidence, and actions pinned here.",
+    noVault: "No vault selected",
+    open: "open",
+    reveal: "reveal",
+    copyPath: "copy path",
+    source: "Source",
+    status: "Status",
+    concepts: "Concepts",
+    evidence: "Evidence",
+    unknown: "unknown",
+    none: "none",
+    notLinked: "not linked",
+    noQuote: "No direct quote recorded.",
+    copyClaim: "copy claim text",
+    claim: "claim",
+    missing: "Missing",
+    artifact: "artifact",
+    copyId: "copy id",
+    log: "log",
+    copyDiff: "copy diff",
+    notUpdated: "not updated",
+  },
+} as const;
+
+type DetailsText = (typeof detailsCopy)[UiLanguage];
+
 function classNames(...items: Array<string | false | null | undefined>) {
   return items.filter(Boolean).join(" ");
 }
 
 function DetailActions({
+  text,
   path,
   vaultPath,
   obsidianUri,
@@ -44,6 +102,7 @@ function DetailActions({
   onCopy,
   onOpenObsidian,
 }: {
+  text: DetailsText;
   path?: string | null;
   vaultPath: string;
   obsidianUri?: string | null;
@@ -57,13 +116,13 @@ function DetailActions({
   return (
     <div className="details-actions">
       <button disabled={!path} onClick={() => absolutePath && onOpenPath(absolutePath)} type="button">
-        <FolderOpen size={14} />open
+        <FolderOpen size={14} />{text.open}
       </button>
       <button disabled={!path} onClick={() => absolutePath && onRevealPath(absolutePath)} type="button">
-        <Search size={14} />reveal
+        <Search size={14} />{text.reveal}
       </button>
       <button disabled={!path} onClick={() => onCopy("detail path", absolutePath || path)} type="button">
-        <Copy size={14} />copy path
+        <Copy size={14} />{text.copyPath}
       </button>
       <button disabled={!vaultPath && !obsidianUri} onClick={onOpenObsidian} type="button">
         <SquareStack size={14} />Obsidian
@@ -73,6 +132,7 @@ function DetailActions({
 }
 
 export function DetailsPanel({
+  language = "zh",
   selection,
   vaultPath,
   obsidianUri,
@@ -83,18 +143,19 @@ export function DetailsPanel({
   onCopy,
   onOpenObsidian,
 }: DetailsPanelProps) {
+  const text = detailsCopy[language];
   return (
     <section className="panel details-panel">
       <div className="section-head">
-        <h2>Details</h2>
+        <h2>{text.title}</h2>
         <PanelRightOpen size={16} />
       </div>
 
       {selection.kind === "empty" && (
         <div className="details-empty">
-          <strong>Select evidence to inspect</strong>
-          <p>Choose a source, claim, warning, or writeback proposal to keep its path, evidence, and actions pinned here.</p>
-          <code>{vaultPath || "No vault selected"}</code>
+          <strong>{text.emptyTitle}</strong>
+          <p>{text.emptyBody}</p>
+          <code>{vaultPath || text.noVault}</code>
         </div>
       )}
 
@@ -102,9 +163,10 @@ export function DetailsPanel({
         <div className="details-body">
           <span className={classNames("status-chip inline", selection.file.status || "unknown")}>{selection.file.status || selection.file.kind}</span>
           <h3>{selection.file.title || selection.file.name}</h3>
-          <p>{selection.file.kind} · QA {selection.file.qaVerdict || "unknown"} · {selection.file.updated || "not updated"}</p>
+          <p>{selection.file.kind} · QA {selection.file.qaVerdict || text.unknown} · {selection.file.updated || text.notUpdated}</p>
           <code>{selection.file.path}</code>
           <DetailActions
+            text={text}
             path={selection.file.path}
             vaultPath={vaultPath}
             obsidianUri={obsidianUri}
@@ -123,13 +185,14 @@ export function DetailsPanel({
           <h3>{selection.claim.claimId}</h3>
           <p>{selection.claim.claimText}</p>
           <dl className="details-facts">
-            <div><dt>Source</dt><dd>{selection.claim.sourceId || selection.claim.sourceUuid || "unknown"}</dd></div>
-            <div><dt>Status</dt><dd>{selection.claim.status}</dd></div>
-            <div><dt>Concepts</dt><dd>{selection.claim.concepts.join(", ") || "none"}</dd></div>
-            <div><dt>Evidence</dt><dd>{selection.claim.evidenceHash || selection.evidence?.evidenceAnchor || "not linked"}</dd></div>
+            <div><dt>{text.source}</dt><dd>{selection.claim.sourceId || selection.claim.sourceUuid || text.unknown}</dd></div>
+            <div><dt>{text.status}</dt><dd>{selection.claim.status}</dd></div>
+            <div><dt>{text.concepts}</dt><dd>{selection.claim.concepts.join(", ") || text.none}</dd></div>
+            <div><dt>{text.evidence}</dt><dd>{selection.claim.evidenceHash || selection.evidence?.evidenceAnchor || text.notLinked}</dd></div>
           </dl>
-          <blockquote>{selection.claim.evidenceQuote || selection.evidence?.evidenceQuote || "No direct quote recorded."}</blockquote>
+          <blockquote>{selection.claim.evidenceQuote || selection.evidence?.evidenceQuote || text.noQuote}</blockquote>
           <DetailActions
+            text={text}
             path={selection.evidence?.sourcePage || selection.claim.sourcePath || "claims/claims.jsonl"}
             vaultPath={vaultPath}
             obsidianUri={obsidianUri}
@@ -140,7 +203,7 @@ export function DetailsPanel({
             onOpenObsidian={onOpenObsidian}
           />
           <button className="wide" onClick={() => onCopy("claim text", selection.claim.claimText)} type="button">
-            <Copy size={14} />copy claim text
+            <Copy size={14} />{text.copyClaim}
           </button>
         </div>
       )}
@@ -152,10 +215,11 @@ export function DetailsPanel({
           <p>{selection.warning.nextAction || selection.warning.suggestedAction}</p>
           <dl className="details-facts">
             <div><dt>Claim</dt><dd>{selection.warning.claimId}</dd></div>
-            <div><dt>Source</dt><dd>{selection.warning.sourceId || "unknown"}</dd></div>
-            <div><dt>Missing</dt><dd>{selection.warning.missingAnchor || selection.warning.missingHeading}</dd></div>
+            <div><dt>{text.source}</dt><dd>{selection.warning.sourceId || text.unknown}</dd></div>
+            <div><dt>{text.missing}</dt><dd>{selection.warning.missingAnchor || selection.warning.missingHeading}</dd></div>
           </dl>
           <DetailActions
+            text={text}
             path={selection.warning.sourcePath || selection.warning.claimPath}
             vaultPath={vaultPath}
             obsidianUri={obsidianUri}
@@ -167,13 +231,13 @@ export function DetailsPanel({
           />
           <div className="details-actions">
             <button onClick={() => onOpenVaultPath(selection.warning.claimPath)} type="button">
-              <ClipboardList size={14} />claim
+              <ClipboardList size={14} />{text.claim}
             </button>
             <button disabled={!selection.warning.artifactPath} onClick={() => onOpenVaultPath(selection.warning.artifactPath)} type="button">
-              <FileInput size={14} />artifact
+              <FileInput size={14} />{text.artifact}
             </button>
             <button onClick={() => onCopy("warning id", selection.warning.warningId)} type="button">
-              <Copy size={14} />copy id
+              <Copy size={14} />{text.copyId}
             </button>
           </div>
         </div>
@@ -186,6 +250,7 @@ export function DetailsPanel({
           <p>{selection.proposal.targetPath}</p>
           <pre className="details-diff">{selection.proposal.diff}</pre>
           <DetailActions
+            text={text}
             path={selection.proposal.targetPath}
             vaultPath={vaultPath}
             obsidianUri={obsidianUri}
@@ -197,10 +262,10 @@ export function DetailsPanel({
           />
           <div className="details-actions">
             <button disabled={!selection.proposal.logPath} onClick={() => selection.proposal.logPath && onOpenPath(resolveVaultPath(selection.proposal.logPath))} type="button">
-              <GitCompare size={14} />log
+              <GitCompare size={14} />{text.log}
             </button>
             <button onClick={() => onCopy("proposal diff", selection.proposal.diff)} type="button">
-              <Copy size={14} />copy diff
+              <Copy size={14} />{text.copyDiff}
             </button>
           </div>
         </div>

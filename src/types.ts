@@ -42,6 +42,7 @@ export type VaultStatus = {
 export type DesktopAppState = {
   lastSelectedVault?: string | null;
   recentVaults: string[];
+  interfaceLanguage?: "zh" | "en" | string;
   updatedAt?: string | null;
 };
 
@@ -165,6 +166,12 @@ export type DesktopSettings = {
   runtimePath: string;
   pythonPath: string;
   uvPath: string;
+  projectName: string;
+  projectTemplate: "research" | "reading" | "personal-growth" | "business" | "general" | string;
+  projectPurpose: string;
+  aiOutputLanguage: string;
+  interfaceLanguage: "zh" | "en" | string;
+  parentDirectory: string;
   layoutParsingApiUrl: string;
   layoutParsingTokenPresent: boolean;
   cloudParsingAllowed: boolean;
@@ -176,6 +183,29 @@ export type DesktopSettings = {
   autoRunLintAfterWrites: boolean;
   autoOpenReportsAfterFailures: boolean;
   skipObsidianPluginDownloads: boolean;
+  llmProviderCenter: LlmProviderCenterSettings;
+};
+
+export type LlmProviderConfig = {
+  enabled: boolean;
+  expanded: boolean;
+  selectedModel: string;
+  customModel: string;
+  contextWindow: number;
+  reasoningMode: "fast" | "balanced" | "deep" | string;
+};
+
+export type LlmProviderCenterSettings = {
+  activeProviderId: string;
+  providers: Record<string, LlmProviderConfig>;
+};
+
+export type LlmCliCheckResult = {
+  command: string;
+  available: boolean;
+  version?: string | null;
+  path?: string | null;
+  message: string;
 };
 
 export type IngestPlanSummary = {

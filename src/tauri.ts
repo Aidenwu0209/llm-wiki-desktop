@@ -8,6 +8,7 @@ import type {
   ImportBatchResult,
   ImportResult,
   IngestPipelineResult,
+  LlmCliCheckResult,
   IngestPlan,
   QueryWritebackDraft,
   ReviewQueueItem,
@@ -33,6 +34,10 @@ export function loadAppState(): Promise<DesktopAppState> {
 
 export function saveLastSelectedVault(vaultPath: string): Promise<DesktopAppState> {
   return invoke("save_last_selected_vault", { vaultPath });
+}
+
+export function saveInterfaceLanguage(interfaceLanguage: "zh" | "en"): Promise<DesktopAppState> {
+  return invoke("save_interface_language", { interfaceLanguage });
 }
 
 export function restoreLastSelectedVault(): Promise<VaultRestoreResult> {
@@ -85,6 +90,10 @@ export function loadDesktopSettings(vaultPath: string): Promise<DesktopSettings>
 
 export function saveDesktopSettings(vaultPath: string, settings: DesktopSettings): Promise<DesktopSettings> {
   return invoke("save_desktop_settings", { vaultPath, settings });
+}
+
+export function checkLocalLlmCli(command: "codex" | "claude"): Promise<LlmCliCheckResult> {
+  return invoke("check_local_llm_cli", { command });
 }
 
 export function planIngest(vaultPath: string): Promise<IngestPlan> {

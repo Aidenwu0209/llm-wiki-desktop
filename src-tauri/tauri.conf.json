@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "LLM Wiki Desktop",
+  "productName": "LLM Wiki",
   "version": "0.1.0",
   "identifier": "com.aidenwu.llmwiki.desktop",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "LLM Wiki Desktop",
+        "title": "LLM Wiki",
         "width": 1360,
         "height": 860,
         "minWidth": 980,
@@ -28,6 +28,6 @@
   "bundle": {
     "active": true,
     "targets": ["app", "dmg"],
-    "icon": ["icons/icon.png"]
+    "icon": ["icons/icon.png", "icons/icon.icns", "icons/icon.ico"]
   }
 }

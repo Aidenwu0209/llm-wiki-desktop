@@ -61,12 +61,25 @@ struct VaultStatus {
     errors: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct DesktopAppState {
     last_selected_vault: Option<String>,
+    #[serde(default = "default_interface_language")]
+    interface_language: String,
     recent_vaults: Vec<String>,
     updated_at: Option<String>,
+}
+
+impl Default for DesktopAppState {
+    fn default() -> Self {
+        Self {
+            last_selected_vault: None,
+            interface_language: default_interface_language(),
+            recent_vaults: Vec::new(),
+            updated_at: None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -186,6 +199,18 @@ struct DesktopSettings {
     runtime_path: String,
     python_path: String,
     uv_path: String,
+    #[serde(default)]
+    project_name: String,
+    #[serde(default = "default_project_template")]
+    project_template: String,
+    #[serde(default)]
+    project_purpose: String,
+    #[serde(default = "default_ai_output_language")]
+    ai_output_language: String,
+    #[serde(default = "default_interface_language")]
+    interface_language: String,
+    #[serde(default)]
+    parent_directory: String,
     layout_parsing_api_url: String,
     layout_parsing_token_present: bool,
     cloud_parsing_allowed: bool,
@@ -198,6 +223,43 @@ struct DesktopSettings {
     auto_run_lint_after_writes: bool,
     auto_open_reports_after_failures: bool,
     skip_obsidian_plugin_downloads: bool,
+    #[serde(default = "default_llm_provider_center")]
+    llm_provider_center: LlmProviderCenterSettings,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct LlmProviderCenterSettings {
+    active_provider_id: String,
+    #[serde(default)]
+    providers: HashMap<String, LlmProviderConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct LlmProviderConfig {
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default)]
+    expanded: bool,
+    #[serde(default)]
+    selected_model: String,
+    #[serde(default)]
+    custom_model: String,
+    #[serde(default = "default_context_window")]
+    context_window: usize,
+    #[serde(default = "default_reasoning_mode")]
+    reasoning_mode: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LlmCliCheckResult {
+    command: String,
+    available: bool,
+    version: Option<String>,
+    path: Option<String>,
+    message: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -661,12 +723,45 @@ fn default_pdf_parser() -> String {
     "auto".to_string()
 }
 
+fn default_project_template() -> String {
+    "research".to_string()
+}
+
+fn default_ai_output_language() -> String {
+    "简体中文".to_string()
+}
+
+fn default_interface_language() -> String {
+    "zh".to_string()
+}
+
+fn default_context_window() -> usize {
+    128_000
+}
+
+fn default_reasoning_mode() -> String {
+    "balanced".to_string()
+}
+
+fn default_llm_provider_center() -> LlmProviderCenterSettings {
+    LlmProviderCenterSettings {
+        active_provider_id: "codex-cli".to_string(),
+        providers: HashMap::new(),
+    }
+}
+
 impl Default for DesktopSettings {
     fn default() -> Self {
         Self {
             runtime_path: String::new(),
             python_path: "python3".to_string(),
             uv_path: "uv".to_string(),
+            project_name: String::new(),
+            project_template: default_project_template(),
+            project_purpose: String::new(),
+            ai_output_language: default_ai_output_language(),
+            interface_language: default_interface_language(),
+            parent_directory: String::new(),
             layout_parsing_api_url: String::new(),
             layout_parsing_token_present: std::env::var("OPEN_LLM_WIKI_LAYOUT_TOKEN")
                 .ok()
@@ -685,6 +780,7 @@ impl Default for DesktopSettings {
             auto_run_lint_after_writes: true,
             auto_open_reports_after_failures: false,
             skip_obsidian_plugin_downloads: true,
+            llm_provider_center: default_llm_provider_center(),
         }
     }
 }
@@ -1422,6 +1518,19 @@ fn latest_modified_time(root: &Path) -> Option<String> {
 #[tauri::command]
 fn load_app_state() -> Result<DesktopAppState, String> {
     Ok(load_app_state_from_disk())
+}
+
+#[tauri::command]
+fn save_interface_language(interface_language: String) -> Result<DesktopAppState, String> {
+    let normalized = match interface_language.as_str() {
+        "en" => "en",
+        _ => "zh",
+    };
+    let mut state = load_app_state_from_disk();
+    state.interface_language = normalized.to_string();
+    state.updated_at = Some(Local::now().to_rfc3339());
+    save_app_state_to_disk(&state)?;
+    Ok(state)
 }
 
 #[tauri::command]
@@ -4443,6 +4552,56 @@ fn save_desktop_settings(
         .map_err(|e| format!("failed to serialize desktop settings: {e}"))?;
     write_text(&desktop_settings_path(&vault), &(rendered + "\n"))?;
     Ok(settings)
+}
+
+#[tauri::command]
+fn check_local_llm_cli(command: String) -> Result<LlmCliCheckResult, String> {
+    let command = match command.trim() {
+        "codex" => "codex",
+        "claude" | "claude-code" => "claude",
+        other => {
+            return Err(format!(
+                "unsupported local LLM CLI '{other}', expected codex or claude"
+            ))
+        }
+    };
+    let lookup = Command::new("/bin/sh")
+        .args(["-lc", &format!("command -v {command}")])
+        .output()
+        .map_err(|e| format!("failed to check {command}: {e}"))?;
+    if !lookup.status.success() {
+        return Ok(LlmCliCheckResult {
+            command: command.to_string(),
+            available: false,
+            version: None,
+            path: None,
+            message: format!("{command} was not found on PATH"),
+        });
+    }
+    let path = String::from_utf8_lossy(&lookup.stdout).trim().to_string();
+    let version = Command::new(command)
+        .arg("--version")
+        .output()
+        .ok()
+        .and_then(|output| {
+            let rendered = if output.stdout.is_empty() {
+                String::from_utf8_lossy(&output.stderr).to_string()
+            } else {
+                String::from_utf8_lossy(&output.stdout).to_string()
+            };
+            rendered
+                .lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty())
+                .map(ToString::to_string)
+        });
+    Ok(LlmCliCheckResult {
+        command: command.to_string(),
+        available: true,
+        version,
+        path: (!path.is_empty()).then_some(path),
+        message: format!("{command} is available"),
+    })
 }
 
 fn qa_report_for_source(
@@ -8289,6 +8448,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             load_app_state,
+            save_interface_language,
             save_last_selected_vault,
             restore_last_selected_vault,
             list_vault_suggestions,
@@ -8299,6 +8459,7 @@ pub fn run() {
             import_sources,
             load_desktop_settings,
             save_desktop_settings,
+            check_local_llm_cli,
             plan_ingest,
             run_ingest_lint,
             set_dashboard_action_status,
