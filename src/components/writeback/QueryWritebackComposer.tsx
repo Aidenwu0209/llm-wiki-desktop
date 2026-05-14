@@ -1,4 +1,4 @@
-import { Check, FolderOpen, GitCompare, Play, TerminalSquare, XCircle } from "lucide-react";
+import { Check, FolderOpen, GitCompare, PanelRightOpen, Play, TerminalSquare, XCircle } from "lucide-react";
 import type { QueryWritebackDraft, WritebackApplyStatus, WritebackProposal } from "../../types";
 
 export const DEFAULT_DEEPSEEK_RESEARCH_STRATEGY_QUERY = `基于当前 LLM Wiki，请整理 DeepSeek 的研发思路、思考问题的方式、关键决策依据，并预测可能的技术演进方向。
@@ -30,6 +30,7 @@ type QueryWritebackComposerProps = {
   onCreateWriteback: () => void;
   onSetWritebackStatus: (proposalId: string, status: "proposed" | "approved" | "rejected") => void;
   onApplyWriteback: (proposalId: string) => void;
+  onSelectProposal?: (proposal: WritebackProposal) => void;
   onOpenPath: (path: string) => void;
   resolveVaultPath: (path?: string | null) => string;
 };
@@ -65,6 +66,7 @@ export function QueryWritebackComposer({
   onCreateWriteback,
   onSetWritebackStatus,
   onApplyWriteback,
+  onSelectProposal,
   onOpenPath,
   resolveVaultPath,
 }: QueryWritebackComposerProps) {
@@ -199,6 +201,11 @@ export function QueryWritebackComposer({
               <em>{proposal.targetPath} · {proposal.updatedAt}</em>
               <code>{proposal.diff.split("\n").slice(0, 2).join(" | ")}</code>
               <div className="inline-actions">
+                {onSelectProposal && (
+                  <button onClick={() => onSelectProposal(proposal)}>
+                    <PanelRightOpen size={14} />details
+                  </button>
+                )}
                 <button onClick={() => onOpenPath(resolveVaultPath(proposal.targetPath))}><FolderOpen size={14} />target</button>
                 <button onClick={() => onSetWritebackStatus(proposal.proposalId, "approved")} disabled={proposal.status !== "proposed"}><Check size={14} />审批</button>
                 <button onClick={() => onSetWritebackStatus(proposal.proposalId, "rejected")} disabled={proposal.status === "applied"}><XCircle size={14} />拒绝</button>

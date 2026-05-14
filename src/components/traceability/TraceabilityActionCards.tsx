@@ -1,4 +1,4 @@
-import { ClipboardList, FileInput, FolderOpen } from "lucide-react";
+import { ClipboardList, FileInput, FolderOpen, PanelRightOpen } from "lucide-react";
 import type { TraceabilityWarning } from "../../types";
 
 type TraceabilityActionCardsProps = {
@@ -6,6 +6,7 @@ type TraceabilityActionCardsProps = {
   onOpenClaim: (warning: TraceabilityWarning) => void;
   onOpenSource: (warning: TraceabilityWarning) => void;
   onOpenArtifact: (warning: TraceabilityWarning) => void;
+  onSelectWarning?: (warning: TraceabilityWarning) => void;
 };
 
 function classNames(...items: Array<string | false | null | undefined>) {
@@ -17,6 +18,7 @@ export function TraceabilityActionCards({
   onOpenClaim,
   onOpenSource,
   onOpenArtifact,
+  onSelectWarning,
 }: TraceabilityActionCardsProps) {
   if (warnings.length === 0) {
     return <p className="empty">暂无 evidence-anchor warning。</p>;
@@ -35,6 +37,11 @@ export function TraceabilityActionCards({
           <code>missing anchor: {warning.missingAnchor || warning.missingHeading}</code>
           <p className="note">{warning.nextAction || warning.suggestedAction}</p>
           <div className="inline-actions">
+            {onSelectWarning && (
+              <button title="Pin warning in the right details panel" onClick={() => onSelectWarning(warning)}>
+                <PanelRightOpen size={14} />details
+              </button>
+            )}
             <button title="Open claim ledger row context" onClick={() => onOpenClaim(warning)}>
               <ClipboardList size={14} />claim
             </button>

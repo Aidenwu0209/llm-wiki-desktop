@@ -14,6 +14,9 @@ import {
   FolderOpen,
   GitCompare,
   ListChecks,
+  MessageSquare,
+  Network,
+  PanelRightOpen,
   Play,
   RefreshCw,
   RotateCcw,
@@ -67,7 +70,16 @@ import {
   DEFAULT_DEEPSEEK_RESEARCH_STRATEGY_QUERY,
   QueryWritebackComposer,
 } from "./components/writeback/QueryWritebackComposer";
+import { ChatSearchPage } from "./components/search/ChatSearchPage";
+import { ResearchGraphPage } from "./components/graph/ResearchGraphPage";
 import { TraceabilityActionCards } from "./components/traceability/TraceabilityActionCards";
+import { ActivityMiniPanel } from "./components/layout/ActivityMiniPanel";
+import { DeepSeekVaultHome } from "./components/layout/DeepSeekVaultHome";
+import { PageStatusHeader, type PagePrimaryAction, type PageStatusItem } from "./components/layout/PageStatusHeader";
+import { DetailsPanel, type DetailSelection } from "./components/details/DetailsPanel";
+import { DashboardOverview } from "./components/dashboard/DashboardOverview";
+import { WelcomePanel } from "./components/dashboard/WelcomePanel";
+import { RuntimeSettingsPanel } from "./components/settings/RuntimeSettingsPanel";
 import type {
   ClaimLedgerItem,
   DesktopAppState,
@@ -128,6 +140,8 @@ const navigationItems = [
   { id: "reviews", label: "Reviews", icon: AlertTriangle },
   { id: "traceability", label: "Traceability", icon: ShieldCheck },
   { id: "writeback", label: "Query / Writeback", icon: GitCompare },
+  { id: "chat", label: "Chat / Search", icon: MessageSquare },
+  { id: "graph", label: "Graph", icon: Network },
   { id: "activity", label: "Activity", icon: TerminalSquare },
   { id: "settings", label: "Settings", icon: Settings },
 ] as const;
@@ -162,6 +176,14 @@ const pageTitles: Record<ShellPage, { title: string; subtitle: string }> = {
   writeback: {
     title: "Query / Writeback",
     subtitle: "Evidence-backed insight generation with proposal-first writeback.",
+  },
+  chat: {
+    title: "Chat / Search",
+    subtitle: "Search the vault, inspect evidence, draft answers, and promote grounded questions into proposals.",
+  },
+  graph: {
+    title: "Graph",
+    subtitle: "Source, claim, concept, review, warning, and proposal relationships for trusted research.",
   },
   activity: {
     title: "Activity",
@@ -298,6 +320,7 @@ function App() {
   const [writebacks, setWritebacks] = useState<WritebackProposal[]>([]);
   const [importResults, setImportResults] = useState<ImportPreview[]>([]);
   const [selectedFile, setSelectedFile] = useState<VaultFile | null>(null);
+  const [detailSelection, setDetailSelection] = useState<DetailSelection>({ kind: "empty" });
   const [actionFilter, setActionFilter] = useState("open");
   const [claimFilter, setClaimFilter] = useState("needs_review");
   const [reviewFilter, setReviewFilter] = useState("open");
@@ -364,6 +387,25 @@ function App() {
     } catch (err) {
       setError(String(err));
     }
+  };
+  const revealResolvedPath = async (path: string) => {
+    if (!path) return;
+    try {
+      await revealPath(path);
+    } catch (err) {
+      setRestoreError(`Reveal failed. Open or copy this path manually:\n${path}\n${String(err)}`);
+    }
+  };
+  const selectFileForDetails = (file: VaultFile) => {
+    setSelectedFile(file);
+    setDetailSelection({ kind: "source", file });
+  };
+  const selectClaimForDetails = (claim: ClaimLedgerItem) => {
+    setDetailSelection({
+      kind: "claim",
+      claim,
+      evidence: evidencePaths.find((item) => item.claimId === claim.claimId) ?? null,
+    });
   };
   const copyText = async (label: string, text?: string | null) => {
     if (!text) {
@@ -756,6 +798,7 @@ function App() {
         writebackContent,
       );
       setWritebacks((current) => [proposal, ...current.filter((item) => item.proposalId !== proposal.proposalId)]);
+      setDetailSelection({ kind: "proposal", proposal });
       setWritebackApplyStatus(null);
       await refresh();
     } catch (err) {
@@ -774,6 +817,33 @@ function App() {
         vaultPath,
         queryText,
         queryTarget.trim() || "reviews/query-writeback/deepseek-research-insights.md",
+        "DeepSeek research insight query",
+      );
+      setQueryDraft(draft);
+      setWritebacks((current) => [draft.proposal, ...current.filter((item) => item.proposalId !== draft.proposal.proposalId)]);
+      setDetailSelection({ kind: "proposal", proposal: draft.proposal });
+      setWritebackApplyStatus(null);
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleCreateQueryWritebackFromChat(question: string, targetPath: string) {
+    if (!vaultPath || !question.trim()) return;
+    const target = targetPath.trim() || "reviews/query-writeback/deepseek-research-insights.md";
+    setActivePage("writeback");
+    setQueryText(question);
+    setQueryTarget(target);
+    setBusy("query_writeback");
+    setError(null);
+    try {
+      const draft = await createQueryWritebackProposal(
+        vaultPath,
+        question,
+        target,
         "DeepSeek research insight query",
       );
       setQueryDraft(draft);
@@ -830,6 +900,7 @@ function App() {
     try {
       const proposal = await setWritebackStatus(vaultPath, proposalId, status);
       setWritebacks((current) => [proposal, ...current.filter((item) => item.proposalId !== proposalId)]);
+      setDetailSelection({ kind: "proposal", proposal });
       await refresh();
     } catch (err) {
       setError(String(err));
@@ -866,6 +937,7 @@ function App() {
       }
       setWritebackApplyStatus(nextStatus);
       setWritebacks((current) => [result.proposal, ...current.filter((item) => item.proposalId !== proposalId)]);
+      setDetailSelection({ kind: "proposal", proposal: result.proposal });
       await refresh();
     } catch (err) {
       setError(String(err));
@@ -900,10 +972,136 @@ function App() {
     if (page === "reviews") return openReviewCount || null;
     if (page === "traceability") return traceabilityWarnings.length + brokenEvidence + contractP0P1 || null;
     if (page === "writeback") return writebacks.length || null;
+    if (page === "chat") return claims.length + reviewItems.length + writebacks.length || null;
+    if (page === "graph") return impactEdges.length + claims.length + traceabilityWarnings.length || null;
     if (page === "activity") return runtimeRunning ? "live" : runtimeHistory.length || null;
     if (page === "settings") return status && !status.runtimeInstalled ? "!" : null;
     return null;
   };
+  const pageStatusItems: PageStatusItem[] = (() => {
+    if (!vaultPath) {
+      return [
+        { label: "Vault", value: "not selected", tone: "warning" },
+        { label: "Recent", value: appState?.recentVaults.length ?? 0 },
+        { label: "Suggestions", value: vaultSuggestions.filter((item) => item.exists).length },
+      ];
+    }
+    if (activePage === "sources") {
+      return [
+        { label: "Raw inbox", value: status?.counts.inbox ?? 0 },
+        { label: "Published sources", value: status?.counts.sources ?? 0, tone: "success" },
+        { label: "Blocked", value: planned?.blocked ?? 0, tone: (planned?.blocked ?? 0) > 0 ? "danger" : "neutral" },
+      ];
+    }
+    if (activePage === "claims") {
+      return [
+        { label: "Claims", value: status?.counts.claims ?? claims.length },
+        { label: "Needs review", value: status?.counts.claimsNeedingReview ?? 0, tone: (status?.counts.claimsNeedingReview ?? 0) > 0 ? "warning" : "success" },
+        { label: "Contradicted", value: status?.counts.contradictedClaims ?? 0, tone: (status?.counts.contradictedClaims ?? 0) > 0 ? "danger" : "neutral" },
+      ];
+    }
+    if (activePage === "concepts") {
+      return [
+        { label: "Concept pages", value: status?.counts.concepts ?? 0, tone: "success" },
+        { label: "Growth queue", value: status?.counts.growthQueue ?? 0 },
+        { label: "Reports", value: status?.counts.reports ?? 0 },
+      ];
+    }
+    if (activePage === "reviews") {
+      return [
+        { label: "Open reviews", value: openReviewCount, tone: openReviewCount > 0 ? "warning" : "success" },
+        { label: "Science queue", value: status?.counts.scienceReviewQueue ?? 0 },
+        { label: "Warnings", value: traceabilityWarnings.length, tone: traceabilityWarnings.length > 0 ? "warning" : "neutral" },
+      ];
+    }
+    if (activePage === "traceability") {
+      return [
+        { label: "Warnings", value: traceabilityWarnings.length, tone: traceabilityWarnings.length > 0 ? "warning" : "success" },
+        { label: "Evidence breaks", value: brokenEvidence, tone: brokenEvidence > 0 ? "danger" : "success" },
+        { label: "P0/P1 contract", value: contractP0P1, tone: contractP0P1 > 0 ? "danger" : "success" },
+      ];
+    }
+    if (activePage === "writeback") {
+      return [
+        { label: "Proposals", value: writebacks.length },
+        { label: "Approved", value: writebacks.filter((item) => item.status === "approved").length, tone: "warning" },
+        { label: "Applied", value: writebacks.filter((item) => item.status === "applied").length, tone: "success" },
+      ];
+    }
+    if (activePage === "activity") {
+      return [
+        { label: "Current job", value: activeJob?.status || "idle", tone: runtimeRunning ? "warning" : "neutral" },
+        { label: "History", value: runtimeHistory.length },
+        { label: "Failures", value: runtimeHistory.filter((job) => isRetryableRuntimeStatus(job.status)).length, tone: runtimeHistory.some((job) => isRetryableRuntimeStatus(job.status)) ? "danger" : "neutral" },
+      ];
+    }
+    if (activePage === "settings") {
+      return [
+        { label: "Runtime", value: status?.runtimeInstalled ? "ready" : "missing", tone: status?.runtimeInstalled ? "success" : "warning" },
+        { label: "Parser", value: desktopSettings.defaultPdfParser },
+        { label: "Cloud parsing", value: desktopSettings.cloudParsingAllowed ? "allowed" : "off", tone: desktopSettings.cloudParsingAllowed ? "warning" : "neutral" },
+      ];
+    }
+    return [
+      { label: "Sources", value: status?.counts.sources ?? 0 },
+      { label: "Concepts", value: status?.counts.concepts ?? 0 },
+      { label: "Reviews", value: openReviewCount, tone: openReviewCount > 0 ? "warning" : "success" },
+    ];
+  })();
+  const pagePrimaryActions: PagePrimaryAction[] = (() => {
+    if (!vaultPath) {
+      return [
+        { label: "Open vault", icon: <FolderOpen size={15} />, onClick: chooseVault, tone: "primary" },
+        { label: "Create vault", icon: <Archive size={15} />, onClick: handleCreateVault, disabled: busy === "create" },
+      ];
+    }
+    if (activePage === "sources") {
+      return [
+        { label: "Import files", icon: <FileInput size={15} />, onClick: handleImportFiles, disabled: busy === "import", tone: "primary" },
+        { label: "Plan ingest", icon: <ListChecks size={15} />, onClick: handlePlanIngest, disabled: busy === "plan_ingest" },
+      ];
+    }
+    if (activePage === "claims") {
+      return [
+        { label: "Extract claims", icon: <ClipboardList size={15} />, onClick: () => handleRuntime("claims"), disabled: runtimeRunning || busy === "start:claims", tone: "primary" },
+        { label: "Review queue", icon: <AlertTriangle size={15} />, onClick: () => setActivePage("reviews") },
+      ];
+    }
+    if (activePage === "reviews") {
+      return [
+        { label: "Science review", icon: <ShieldCheck size={15} />, onClick: () => handleRuntime("science_review"), disabled: runtimeRunning || busy === "start:science_review", tone: "primary" },
+        { label: "Traceability", icon: <GitCompare size={15} />, onClick: () => setActivePage("traceability") },
+      ];
+    }
+    if (activePage === "traceability") {
+      return [
+        { label: "Contract lint", icon: <ShieldCheck size={15} />, onClick: handleIngestLint, disabled: busy === "ingest_lint", tone: "primary" },
+        { label: "Diagnostic bundle", icon: <TerminalSquare size={15} />, onClick: handleDiagnostic, disabled: busy === "diagnostic" },
+      ];
+    }
+    if (activePage === "writeback") {
+      return [
+        { label: "Generate proposal", icon: <GitCompare size={15} />, onClick: handleCreateQueryWriteback, disabled: busy === "query_writeback", tone: "primary" },
+        { label: "Open reviews", icon: <ClipboardList size={15} />, onClick: () => setActivePage("reviews") },
+      ];
+    }
+    if (activePage === "activity") {
+      return [
+        { label: "Cancel job", icon: <XCircle size={15} />, onClick: handleCancelRuntimeJob, disabled: !activeJob || isTerminalRuntimeStatus(activeJob.status) },
+        { label: "Diagnostic bundle", icon: <TerminalSquare size={15} />, onClick: handleDiagnostic, disabled: busy === "diagnostic" },
+      ];
+    }
+    if (activePage === "settings") {
+      return [
+        { label: "Save settings", icon: <Check size={15} />, onClick: handleSaveSettings, disabled: busy === "save_settings", tone: "primary" },
+        { label: "Choose runtime", icon: <Settings size={15} />, onClick: chooseRuntime },
+      ];
+    }
+    return [
+      { label: "Run pipeline", icon: <Play size={15} />, onClick: handleIngestPipeline, disabled: runtimeRunning || busy === "start:ingest_pipeline" || (runnableIngest + parseablePdfs) === 0, tone: "primary" },
+      { label: "Query writeback", icon: <GitCompare size={15} />, onClick: () => setActivePage("writeback") },
+    ];
+  })();
 
   return (
     <main
@@ -981,51 +1179,42 @@ function App() {
           </div>
         </section>
 
+        <DetailsPanel
+          selection={detailSelection}
+          vaultPath={vaultPath}
+          obsidianUri={entryNote?.obsidianUri}
+          resolveVaultPath={vaultFilePath}
+          onOpenPath={openPath}
+          onRevealPath={revealResolvedPath}
+          onOpenVaultPath={openVaultItem}
+          onCopy={copyText}
+          onOpenObsidian={handleOpenObsidian}
+        />
+
+        <ActivityMiniPanel
+          activeJob={activeJob}
+          history={runtimeHistory}
+          runtimeRunning={runtimeRunning}
+          getDurationSeconds={runtimeDurationSeconds}
+          getLogPath={runtimeLogPath}
+          isRetryable={isRetryableRuntimeStatus}
+          isTerminal={isTerminalRuntimeStatus}
+          statusTone={runtimeStatusTone}
+          onOpenLog={openPath}
+          onRetry={handleRetryRuntimeJob}
+          onCancel={handleCancelRuntimeJob}
+          onOpenActivity={() => setActivePage("activity")}
+        />
+
         {activePage === "settings" ? (
-        <section className="panel">
-          <h2>Runtime 设置</h2>
-          <input value={desktopSettings.pythonPath} onChange={(event) => setDesktopSettings((current) => ({ ...current, pythonPath: event.target.value }))} placeholder="python3" />
-          <input value={desktopSettings.uvPath} onChange={(event) => setDesktopSettings((current) => ({ ...current, uvPath: event.target.value }))} placeholder="uv" />
-          <div className="path-field" title={desktopSettings.runtimePath || "优先使用 vault 内 .open-llm-wiki/scripts"}>{desktopSettings.runtimePath || "优先使用 vault 内 runtime"}</div>
-          <button className="wide" onClick={chooseRuntime}><Settings size={16} />选择 runtime 路径</button>
-          <select value={desktopSettings.defaultObsidianProfile} onChange={(event) => setDesktopSettings((current) => ({ ...current, defaultObsidianProfile: event.target.value }))}>
-            <option value="minimal">minimal</option>
-            <option value="research">research</option>
-            <option value="full">full</option>
-          </select>
-          <select value={desktopSettings.defaultIngestMode} onChange={(event) => setDesktopSettings((current) => ({ ...current, defaultIngestMode: event.target.value }))}>
-            <option value="inbox_only">先入 inbox</option>
-            <option value="enqueue_after_import">导入后入队</option>
-          </select>
-          <div className="settings-grid">
-            <label>Retry<input type="number" min={1} value={desktopSettings.retryCount} onChange={(event) => setDesktopSettings((current) => ({ ...current, retryCount: Number(event.target.value) || 1 }))} /></label>
-            <label>Timeout<input type="number" min={60} value={desktopSettings.timeoutSeconds} onChange={(event) => setDesktopSettings((current) => ({ ...current, timeoutSeconds: Number(event.target.value) || 60 }))} /></label>
-          </div>
-          <input value={desktopSettings.layoutParsingApiUrl} onChange={(event) => setDesktopSettings((current) => ({ ...current, layoutParsingApiUrl: event.target.value }))} placeholder="Layout parsing API URL" />
-          <select value={desktopSettings.defaultPdfParser} onChange={(event) => setDesktopSettings((current) => ({ ...current, defaultPdfParser: event.target.value }))}>
-            <option value="auto">PDF parser: auto / local-first</option>
-            <option value="local-text">PDF parser: local-text</option>
-            <option value="layout-api">PDF parser: layout-api</option>
-          </select>
-          <p className="note">Token: {desktopSettings.layoutParsingTokenPresent ? "环境变量已配置" : "未检测到"} · auto/local-text 不上传 PDF；layout-api 会发送文档内容</p>
-          <label className="check-row">
-            <input type="checkbox" checked={desktopSettings.cloudParsingAllowed} onChange={(event) => setDesktopSettings((current) => ({ ...current, cloudParsingAllowed: event.target.checked }))} />
-            允许云解析
-          </label>
-          <label className="check-row">
-            <input type="checkbox" checked={desktopSettings.autoRunLintAfterWrites} onChange={(event) => setDesktopSettings((current) => ({ ...current, autoRunLintAfterWrites: event.target.checked }))} />
-            写回后自动 lint
-          </label>
-          <label className="check-row">
-            <input type="checkbox" checked={desktopSettings.autoOpenReportsAfterFailures} onChange={(event) => setDesktopSettings((current) => ({ ...current, autoOpenReportsAfterFailures: event.target.checked }))} />
-            失败后打开 report
-          </label>
-          <label className="check-row">
-            <input type="checkbox" checked={desktopSettings.skipObsidianPluginDownloads} onChange={(event) => setDesktopSettings((current) => ({ ...current, skipObsidianPluginDownloads: event.target.checked }))} />
-            Obsidian setup 跳过插件下载
-          </label>
-          <button className="wide" onClick={handleSaveSettings} disabled={!vaultPath || busy === "save_settings"}><Check size={16} />保存设置</button>
-        </section>
+        <RuntimeSettingsPanel
+          settings={desktopSettings}
+          setSettings={setDesktopSettings}
+          vaultPath={vaultPath}
+          busy={busy}
+          onChooseRuntime={chooseRuntime}
+          onSaveSettings={handleSaveSettings}
+        />
         ) : (
         <section className="panel focus-panel">
           <h2>Next Action</h2>
@@ -1045,6 +1234,16 @@ function App() {
               <GitCompare size={15} />
               <span>Query / Writeback</span>
               <em>{writebacks.length} proposals</em>
+            </button>
+            <button onClick={() => setActivePage("chat")}>
+              <MessageSquare size={15} />
+              <span>Chat / Search</span>
+              <em>{claims.length + reviewItems.length + writebacks.length} searchable records</em>
+            </button>
+            <button onClick={() => setActivePage("graph")}>
+              <Network size={15} />
+              <span>Graph</span>
+              <em>{claims.length + traceabilityWarnings.length + impactEdges.length} links</em>
             </button>
             <button onClick={() => setActivePage("traceability")}>
               <GitCompare size={15} />
@@ -1089,8 +1288,15 @@ function App() {
         {error && <pre className="error-box">{error}</pre>}
         {restoreError && <pre className="error-box subtle">{restoreError}</pre>}
 
+        <PageStatusHeader
+          title={activePageCopy.title}
+          subtitle={activePageCopy.subtitle}
+          statusItems={pageStatusItems}
+          primaryActions={pagePrimaryActions}
+        />
+
         {!vaultPath && (
-          <EmptyVaultState
+          <WelcomePanel
             appState={appState}
             suggestions={vaultSuggestions}
             onChooseVault={chooseVault}
@@ -1104,27 +1310,49 @@ function App() {
 
         {vaultPath && (
           <>
-        <section className={classNames("metrics view-section", pageVisible("dashboard") && "visible")}>
-          <Metric label="Raw inbox" value={status?.counts.inbox ?? 0} />
-          <Metric label="Sources" value={status?.counts.sources ?? 0} />
-          <Metric label="Concepts" value={status?.counts.concepts ?? 0} />
-          <Metric label="Reports" value={status?.counts.reports ?? 0} />
-          <Metric label="Review claims" value={status?.counts.claimsNeedingReview ?? 0} emphasis />
-          <Metric label="Stale claims" value={status?.counts.staleClaims ?? 0} emphasis={(status?.counts.staleClaims ?? 0) > 0} />
-          <Metric label="Contradictions" value={status?.counts.contradictedClaims ?? 0} emphasis={(status?.counts.contradictedClaims ?? 0) > 0} />
-          <Metric label="Ingest ready" value={planned?.ready ?? 0} />
-          <Metric label="Stageable" value={planned?.stageable ?? 0} />
-          <Metric label="Published" value={planned?.published ?? 0} />
-          <Metric label="Blocked" value={planned?.blocked ?? 0} emphasis={(planned?.blocked ?? 0) > 0} />
-          <Metric label="Evidence breaks" value={brokenEvidence} emphasis={brokenEvidence > 0} />
-          <Metric label="Desktop contract P1/P0" value={lintFindings.filter((finding) => finding.severity === "p0" || finding.severity === "p1").length} emphasis={lintFindings.some((finding) => finding.severity === "p0" || finding.severity === "p1")} />
-          <Metric label="Queue" value={`${progressDone}/${jobs.length}`} />
-          <Metric label="Runtime" value={status?.runtimeInstalled ? "installed" : "missing"} />
-          <Metric label="Runtime version" value={status?.runtimeVersion || "unknown"} />
-          <Metric label="Last update" value={status?.lastUpdated ? new Date(status.lastUpdated).toLocaleDateString() : "unknown"} />
-          <Metric label="Obsidian" value={status?.obsidianEnabled ? "enabled" : "disabled"} />
-          <Metric label="Dashboard" value={status?.dashboardAvailable ? "ready" : "missing"} />
-        </section>
+        {pageVisible("dashboard") && (
+          <DeepSeekVaultHome
+            vaultName={vaultDisplayName}
+            counts={status?.counts}
+            reviewOpenCount={openReviewCount}
+            traceabilityWarningCount={traceabilityWarnings.length + brokenEvidence}
+            proposalCount={writebacks.length}
+            onOpenSources={() => setActivePage("sources")}
+            onOpenConcepts={() => setActivePage("concepts")}
+            onOpenReviews={() => setActivePage("reviews")}
+            onOpenTraceability={() => setActivePage("traceability")}
+            onOpenWriteback={() => setActivePage("writeback")}
+          />
+        )}
+        <DashboardOverview
+          className={classNames("view-section", pageVisible("dashboard") && "visible")}
+          vaultPath={vaultPath}
+          status={status}
+          desktopSettings={desktopSettings}
+          ingestPlan={ingestPlan}
+          writebacks={writebacks}
+          traceabilityWarnings={traceabilityWarnings}
+          lintFindings={lintFindings}
+          entryNote={entryNote}
+          brokenEvidence={brokenEvidence}
+          openReviewCount={openReviewCount}
+          runtimeRunning={runtimeRunning}
+          runtimeHistoryCount={runtimeHistory.length}
+          busy={busy}
+          onRefresh={() => refresh()}
+          onOpenSettings={() => setActivePage("settings")}
+          onOpenSources={() => setActivePage("sources")}
+          onOpenReviews={() => setActivePage("reviews")}
+          onOpenTraceability={() => setActivePage("traceability")}
+          onOpenWriteback={() => setActivePage("writeback")}
+          onOpenActivity={() => setActivePage("activity")}
+          onChooseRuntime={chooseRuntime}
+          onPlanIngest={handlePlanIngest}
+          onRunLint={handleIngestLint}
+          onRunPipeline={handleIngestPipeline}
+          onOpenObsidian={handleOpenObsidian}
+          onRunObsidianSetup={() => handleRuntime("obsidian_setup")}
+        />
 
         <section className={classNames("drop-zone view-section", dragActive && "active", pageVisible("dashboard", "sources") && "visible")}>
           <div>
@@ -1254,6 +1482,7 @@ function App() {
                 onOpenClaim={(warning) => openVaultItem(warning.claimPath)}
                 onOpenSource={(warning) => openVaultItem(warning.sourcePath)}
                 onOpenArtifact={(warning) => openVaultItem(warning.artifactPath)}
+                onSelectWarning={(warning) => setDetailSelection({ kind: "warning", warning })}
               />
             </div>
           </section>
@@ -1334,8 +1563,45 @@ function App() {
             onCreateWriteback={handleCreateWriteback}
             onSetWritebackStatus={handleWritebackStatus}
             onApplyWriteback={handleApplyWriteback}
+            onSelectProposal={(proposal) => setDetailSelection({ kind: "proposal", proposal })}
             onOpenPath={openPath}
             resolveVaultPath={vaultFilePath}
+        />
+
+        <ChatSearchPage
+          className={classNames("view-section", pageVisible("chat") && "visible")}
+          vaultPath={vaultPath}
+          status={status}
+          claims={claims}
+          evidencePaths={evidencePaths}
+          reviewItems={reviewItems}
+          writebacks={writebacks}
+          traceabilityWarnings={traceabilityWarnings}
+          busy={busy}
+          onOpenPath={openPath}
+          resolveVaultPath={vaultFilePath}
+          onCreateProposal={handleCreateQueryWritebackFromChat}
+          onOpenVaultItem={openVaultItem}
+          onRevealPath={(path) => {
+            void revealPath(path).catch((err) => setError(String(err)));
+          }}
+          onCopyText={copyText}
+        />
+
+        <ResearchGraphPage
+          className={classNames("view-section", pageVisible("graph") && "visible")}
+          vaultPath={vaultPath}
+          status={status}
+          registry={registry}
+          claims={claims}
+          evidencePaths={evidencePaths}
+          reviewItems={reviewItems}
+          writebacks={writebacks}
+          traceabilityWarnings={traceabilityWarnings}
+          onOpenPath={openPath}
+          onRevealPath={revealPath}
+          onCopyText={copyText}
+          resolveVaultPath={vaultFilePath}
         />
 
         <div className={classNames("main-grid view-section", pageVisible("dashboard", "claims") && "visible")}>
@@ -1389,6 +1655,7 @@ function App() {
                   <em>{claim.sourceId || claim.sourceUuid || claim.sourcePath || `line ${claim.line}`}</em>
                   <code>{claim.evidenceHash || "no evidence hash"} · {claim.evidenceQuote || "no quote"}</code>
                   <div className="inline-actions">
+                    <button onClick={() => selectClaimForDetails(claim)}><PanelRightOpen size={14} />details</button>
                     <button onClick={() => openPath(vaultFilePath("claims/claims.jsonl"))}><FolderOpen size={14} />打开</button>
                     <button onClick={() => handleClaimVerdict(claim.claimId, "supported")} disabled={claim.verdict === "supported"}><Check size={14} />支持</button>
                     <button onClick={() => handleClaimVerdict(claim.claimId, "needs_review")} disabled={claim.verdict === "needs_review"}><AlertTriangle size={14} />待审</button>
@@ -1427,10 +1694,10 @@ function App() {
               <span>{status?.files.length ?? 0} items</span>
             </div>
             <div className="browser">
-              <FileColumn title="Inbox" files={grouped.inbox} onSelect={setSelectedFile} />
-              <FileColumn title="Sources" files={[...grouped.source, ...grouped.draft]} onSelect={setSelectedFile} />
-              <FileColumn title="Concepts" files={grouped.concept} onSelect={setSelectedFile} />
-              <FileColumn title="Reports" files={grouped.report} onSelect={setSelectedFile} />
+              <FileColumn title="Inbox" files={grouped.inbox} onSelect={selectFileForDetails} />
+              <FileColumn title="Sources" files={[...grouped.source, ...grouped.draft]} onSelect={selectFileForDetails} />
+              <FileColumn title="Concepts" files={grouped.concept} onSelect={selectFileForDetails} />
+              <FileColumn title="Reports" files={grouped.report} onSelect={selectFileForDetails} />
             </div>
           </section>
         </div>
@@ -1595,82 +1862,6 @@ function App() {
         )}
       </section>
     </main>
-  );
-}
-
-function EmptyVaultState({
-  appState,
-  suggestions,
-  onChooseVault,
-  onSelectVault,
-  newVaultPath,
-  setNewVaultPath,
-  onCreateVault,
-  busy,
-}: {
-  appState: DesktopAppState | null;
-  suggestions: VaultSuggestion[];
-  onChooseVault: () => void;
-  onSelectVault: (path: string) => void;
-  newVaultPath: string;
-  setNewVaultPath: (path: string) => void;
-  onCreateVault: () => void;
-  busy: string | null;
-}) {
-  const lastVault = appState?.lastSelectedVault || "";
-  const deepseekVault = suggestions.find((item) => item.kind === "deepseek" && item.exists);
-  return (
-    <section className="empty-vault">
-      <div>
-        <h2>Open or create a vault</h2>
-        <p>LLM Wiki Desktop restores your last vault automatically. Start from a recent vault, open any vault folder, create a new vault, or inspect the DeepSeek demo corpus.</p>
-      </div>
-      <div className="empty-actions">
-        <button className="empty-action-card" onClick={() => lastVault && onSelectVault(lastVault)} disabled={!lastVault}>
-          <RotateCcw size={20} />
-          <span>Open recent vault</span>
-          <em>{lastVault ? visiblePath(lastVault) : "No recent vault recorded yet"}</em>
-        </button>
-        <button className="empty-action-card" onClick={onChooseVault}>
-          <FolderOpen size={20} />
-          <span>Open vault</span>
-          <em>Select an existing generated LLM Wiki vault folder.</em>
-        </button>
-        <button className="empty-action-card" onClick={onCreateVault} disabled={busy === "create"}>
-          <Archive size={20} />
-          <span>Create vault</span>
-          <em>Uses the path below and the current Obsidian profile setting.</em>
-        </button>
-        <button className="empty-action-card" onClick={() => deepseekVault && onSelectVault(deepseekVault.path)} disabled={!deepseekVault}>
-          <Database size={20} />
-          <span>Open DeepSeek demo vault</span>
-          <em>{deepseekVault ? visiblePath(deepseekVault.path) : "Run discovery or create the demo vault first"}</em>
-        </button>
-      </div>
-      <div className="suggestion-list">
-        {suggestions.map((item) => (
-          <button key={`${item.kind}-${item.path}`} onClick={() => onSelectVault(item.path)} disabled={!item.exists}>
-            <span className={classNames("status-chip", item.exists ? "ready" : "failed")}>{item.kind}</span>
-            <strong>{item.label}</strong>
-            <em>{item.exists ? "available" : "missing"}</em>
-            <code>{visiblePath(item.path)}</code>
-          </button>
-        ))}
-      </div>
-      <div className="create-inline">
-        <input value={newVaultPath} onChange={(event) => setNewVaultPath(event.target.value)} placeholder="/absolute/path/to/new-vault" />
-        <button onClick={onCreateVault} disabled={busy === "create"}><Archive size={16} />创建新 vault</button>
-      </div>
-    </section>
-  );
-}
-
-function Metric({ label, value, emphasis = false }: { label: string; value: string | number; emphasis?: boolean }) {
-  return (
-    <div className={classNames("metric", emphasis && "emphasis")}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
   );
 }
 

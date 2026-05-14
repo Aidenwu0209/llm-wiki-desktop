@@ -30,6 +30,8 @@
 - 浏览 `sources/`、`drafts/`、`concepts/`、`qa-reports/` 和 `raw/inbox/`。
 - 为每个 runtime command 保存可查看的任务日志到 `log-archive/desktop/`。
 - 显示 claims、science review queue、growth queue 等 review 状态。
+- 提供 Chat / Search 入口：搜索 sources、claims、concepts、reviews、traceability warnings 和 query writeback proposals，并把带 evidence map 的研究问题转成 proposal。
+- 提供基础 Graph 入口：展示 source -> claim -> concept / review / proposal / warning 的证据关系，帮助定位 traceability break 和 insight 写回位置。
 
 ## 安全边界
 
@@ -103,10 +105,12 @@ npm run desktop:dev
 常用开发命令：
 
 ```bash
+npm run start
+npm run desktop:dev
 npm run dev:web
-npm run typecheck
 npm test
 npm run build
+npm run build:app
 ```
 
 脚本约定：
@@ -121,6 +125,8 @@ npm run build
 | `npm run build:app` | 运行 Tauri 本地应用打包。 |
 | `./scripts/test.sh` | shell 入口，等同于 `npm test`。 |
 | `./scripts/build-app.sh` | shell 入口，等同于 `npm run build:app`。 |
+
+Release readiness, local packaging, CI scope and formal distribution requirements are tracked in [`docs/release-readiness.md`](docs/release-readiness.md).
 
 Rust 侧单独检查：
 
@@ -146,6 +152,13 @@ open src-tauri/target/release/bundle/dmg
 
 如果只是验证 release candidate，不要把 notarization 失败和本地启动失败混在一起。公开分发前还需要单独处理 Developer ID signing、hardened runtime、notarization、stapling 和完整图标资产。
 
+Release mode boundary:
+
+- Local web trial: `npm run dev:web` only starts Vite and does not prove native desktop behavior.
+- Desktop dev mode: `npm run desktop:dev` / `npm run start` runs the full Tauri shell for development.
+- Release candidate: `npm run build` plus `npm run build:app` creates local `.app` / `.dmg` artifacts for current-Mac validation.
+- Formal distribution: requires signing, hardened runtime, notarization, stapling and final icon assets outside this basic local packaging path.
+
 ## Tauri 配置状态
 
 当前 `src-tauri/tauri.conf.json` 的 release 相关配置：
@@ -154,7 +167,7 @@ open src-tauri/target/release/bundle/dmg
 - window title: `LLM Wiki Desktop`
 - `identifier`: `com.aidenwu.llmwiki.desktop`
 - `bundle.active`: `true`
-- `bundle.targets`: `all`
+- `bundle.targets`: `["app", "dmg"]`
 - `bundle.icon`: `src-tauri/icons/icon.png`
 
 这些字段与 package/Cargo 命名保持一致。当前图标资产只有一个 32x32 PNG，足够暴露占位图问题，但不适合作为正式 macOS 分发图标集。正式分发前应补齐 Tauri icon set，再单独做签名和 notarization 检查。
