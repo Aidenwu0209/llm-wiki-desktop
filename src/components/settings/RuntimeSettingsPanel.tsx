@@ -106,6 +106,8 @@ const settingsCopy = {
     path: "路径",
     pathPending: "等待 PATH 检查",
     recheck: "重新检查",
+    checkAndEnable: "检查并启用",
+    temporarilyUnavailable: "暂不可启用",
     apiNote: "API 密钥不在此界面中保存或明文显示。请使用环境变量、系统钥匙串或本地运行时配置。",
     customModel: "自定义模型",
     optionalOverride: "可选覆盖",
@@ -153,6 +155,8 @@ const settingsCopy = {
     path: "Path",
     pathPending: "PATH lookup pending",
     recheck: "Re-check",
+    checkAndEnable: "Check and enable",
+    temporarilyUnavailable: "Unavailable",
     apiNote: "API keys are not saved or shown in this UI. Use environment variables, the system keychain, or local runtime config.",
     customModel: "Custom model",
     optionalOverride: "Optional override",
@@ -386,15 +390,19 @@ export function RuntimeSettingsPanel({
                         <em>{language === "zh" ? provider.subtitleZh : provider.subtitle}</em>
                       </span>
                       <span className={classNames("provider-status", config.enabled && "active", cliCheck && !cliCheck.available && "danger")}>{status}</span>
-                      <label className="toggle" onClick={(event) => event.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={config.enabled}
-                          disabled={!canEnable}
-                          onChange={(event) => toggleProvider(provider.id, event.target.checked)}
-                        />
-                        <span />
-                      </label>
+                      {isLocal ? (
+                        <label className="toggle" onClick={(event) => event.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={config.enabled}
+                            disabled={!canEnable}
+                            onChange={(event) => toggleProvider(provider.id, event.target.checked)}
+                          />
+                          <span />
+                        </label>
+                      ) : (
+                        <span className="provider-lockout">{text.temporarilyUnavailable}</span>
+                      )}
                     </button>
 
                     {config.expanded && (
@@ -418,7 +426,7 @@ export function RuntimeSettingsPanel({
                               disabled={checkingCli === provider.id}
                             >
                               <RefreshCw size={14} />
-                              {text.recheck}
+                              {canEnable ? text.recheck : text.checkAndEnable}
                             </button>
                           </div>
                         ) : (
@@ -434,63 +442,55 @@ export function RuntimeSettingsPanel({
                           </div>
                         )}
 
-                        {isLocal && (
-                          <>
-                            <div className="model-chip-row">
-                              {provider.models.map((model) => (
-                                <button
-                                  type="button"
-                                  key={model}
-                                  className={config.selectedModel === model ? "active" : ""}
-                                  disabled={!canEnable}
-                                  onClick={() => updateProvider(provider.id, { selectedModel: model })}
-                                >
-                                  {model}
-                                </button>
-                              ))}
-                            </div>
+                        <div className="model-chip-row">
+                          {provider.models.map((model) => (
+                            <button
+                              type="button"
+                              key={model}
+                              className={config.selectedModel === model ? "active" : ""}
+                              onClick={() => updateProvider(provider.id, { selectedModel: model })}
+                            >
+                              {model}
+                            </button>
+                          ))}
+                        </div>
 
-                            <div className="provider-controls">
-                              <label className="field-label">
-                                {text.customModel}
-                                <input
-                                  value={config.customModel}
-                                  disabled={!canEnable}
-                                  onChange={(event) => updateProvider(provider.id, { customModel: event.target.value })}
-                                  placeholder={text.optionalOverride}
-                                />
-                              </label>
-                              <label className="field-label">
-                                {text.contextWindow}: {config.contextWindow.toLocaleString()} {language === "zh" ? "令牌" : "tokens"}
-                                <input
-                                  type="range"
-                                  min={8192}
-                                  max={256000}
-                                  step={8192}
-                                  value={config.contextWindow}
-                                  disabled={!canEnable}
-                                  onChange={(event) => updateProvider(provider.id, { contextWindow: Number(event.target.value) })}
-                                />
-                              </label>
-                              <div className="reasoning-picker" aria-label={text.reasoning}>
-                                <span className="control-caption">{text.reasoning}</span>
-                                {["fast", "balanced", "deep"].map((mode) => (
-                                  <button
-                                    key={mode}
-                                    type="button"
-                                    className={config.reasoningMode === mode ? "active" : ""}
-                                    disabled={!canEnable}
-                                    onClick={() => updateProvider(provider.id, { reasoningMode: mode })}
-                                  >
-                                    {language === "zh"
-                                      ? ({ fast: "快速", balanced: "平衡", deep: text.deepThinking } as Record<string, string>)[mode]
-                                      : mode}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          </>
-                        )}
+                        <div className="provider-controls">
+                          <label className="field-label">
+                            {text.customModel}
+                            <input
+                              value={config.customModel}
+                              onChange={(event) => updateProvider(provider.id, { customModel: event.target.value })}
+                              placeholder={text.optionalOverride}
+                            />
+                          </label>
+                          <label className="field-label">
+                            {text.contextWindow}: {config.contextWindow.toLocaleString()} {language === "zh" ? "令牌" : "tokens"}
+                            <input
+                              type="range"
+                              min={8192}
+                              max={256000}
+                              step={8192}
+                              value={config.contextWindow}
+                              onChange={(event) => updateProvider(provider.id, { contextWindow: Number(event.target.value) })}
+                            />
+                          </label>
+                          <div className="reasoning-picker" aria-label={text.reasoning}>
+                            <span className="control-caption">{text.reasoning}</span>
+                            {["fast", "balanced", "deep"].map((mode) => (
+                              <button
+                                key={mode}
+                                type="button"
+                                className={config.reasoningMode === mode ? "active" : ""}
+                                onClick={() => updateProvider(provider.id, { reasoningMode: mode })}
+                              >
+                                {language === "zh"
+                                  ? ({ fast: "快速", balanced: "平衡", deep: text.deepThinking } as Record<string, string>)[mode]
+                                  : mode}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
                       </div>
                     )}
                   </article>
