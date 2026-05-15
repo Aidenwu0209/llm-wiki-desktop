@@ -335,6 +335,333 @@ export function RuntimeSettingsPanel({
 
   const cloudParserSelected = settings.defaultPdfParser === "layout-api";
   const cloudParserBlocked = cloudParserSelected && !settings.cloudParsingAllowed;
+  const isZh = language === "zh";
+  const saveDisabled = !vaultPath || busy === "save_settings";
+
+  const updateSettings = (patch: Partial<DesktopSettings>) => {
+    setSettings((current) => ({ ...current, ...patch }));
+  };
+
+  const sectionStatus = (label: string, tone: "available" | "reserved" | "disabled" = "reserved") => (
+    <span className={classNames("settings-status-pill", tone)}>{label}</span>
+  );
+
+  const renderSectionHead = (
+    title: string,
+    subtitle: string,
+    status: ReturnType<typeof sectionStatus>,
+    withSave = true,
+  ) => (
+    <div className="settings-page-head">
+      <div>
+        <h2>{title}</h2>
+        <p>{subtitle}</p>
+      </div>
+      <div className="settings-head-actions">
+        {status}
+        {withSave && (
+          <button onClick={onSaveSettings} disabled={saveDisabled}>
+            <Check size={15} />
+            {text.save}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderReservedBlock = (title: string, description: string, Icon = Info) => (
+    <div className="settings-block reserved">
+      <div className="settings-block-title">
+        <Icon size={15} />
+        <span>{title}</span>
+      </div>
+      <p className="settings-block-copy">{description}</p>
+    </div>
+  );
+
+  const renderRuntimeBlock = () => (
+    <div className="settings-block">
+      <div className="settings-block-title"><TerminalSquare size={15} /><span>{text.runtime}</span></div>
+      <label className="field-label">
+        {text.runtimePath}
+        <div className="path-field" title={settings.runtimePath || "Prefer vault-local .open-llm-wiki/scripts"}>
+          {settings.runtimePath ? visiblePath(settings.runtimePath) : text.preferLocalRuntime}
+        </div>
+      </label>
+      <button className="wide" onClick={onChooseRuntime}>
+        <Settings size={16} />
+        {text.chooseRuntime}
+      </button>
+      <div className="settings-grid">
+        <label>Python<input value={settings.pythonPath} onChange={(event) => updateSettings({ pythonPath: event.target.value })} /></label>
+        <label>uv<input value={settings.uvPath} onChange={(event) => updateSettings({ uvPath: event.target.value })} /></label>
+      </div>
+    </div>
+  );
+
+  const renderParserBlock = () => (
+    <div className="settings-block">
+      <div className="settings-block-title"><Cloud size={15} /><span>{text.parserBoundary}</span></div>
+      <label className="field-label">
+        {text.defaultPdfParser}
+        <select value={settings.defaultPdfParser} onChange={(event) => updateSettings({ defaultPdfParser: event.target.value })}>
+          <option value="auto">auto / local-first</option>
+          <option value="local-text">local-text</option>
+          <option value="layout-api">layout-api</option>
+        </select>
+      </label>
+      <div className={cloudParserBlocked ? "settings-notice danger" : "settings-notice"}>
+        {text.token}: {settings.layoutParsingTokenPresent ? text.configured : text.notDetected} · {text.cloudParser}:
+        {settings.cloudParsingAllowed ? ` ${text.allowed}` : ` ${text.blocked}`}
+      </div>
+      <label className="switch-row">
+        <input type="checkbox" checked={settings.cloudParsingAllowed} onChange={(event) => updateSettings({ cloudParsingAllowed: event.target.checked })} />
+        <span>{text.allowCloudParser}</span>
+      </label>
+    </div>
+  );
+
+  const renderSettingsSection = () => {
+    switch (section) {
+      case "embeddings":
+        return (
+          <div className="settings-section-page">
+            {renderSectionHead(
+              text.nav.embeddings,
+              isZh ? "向量检索入口已保留；当前桌面端还没有接入可启用的 embedding 运行链路。" : "Embedding retrieval is reserved; the desktop app has not wired an enableable embedding pipeline yet.",
+              sectionStatus(isZh ? "预留" : "Reserved"),
+            )}
+            {renderReservedBlock(
+              isZh ? "当前状态" : "Current state",
+              isZh ? "这里不会让你开启一个假向量模型。等本地 embedding runtime 和索引路径接好后，才会开放启用开关。" : "This page does not expose a fake embedding switch. Enabling will be added only after a local embedding runtime and index path are wired.",
+              Database,
+            )}
+            <div className="settings-block">
+              <div className="settings-block-title"><Database size={15} /><span>{isZh ? "预留配置项" : "Reserved fields"}</span></div>
+              <div className="settings-grid">
+                <label>{isZh ? "默认向量模型" : "Default embedding model"}<input value="local-embedding (reserved)" readOnly disabled /></label>
+                <label>{isZh ? "索引位置" : "Index location"}<input value={isZh ? "知识库内 _state/vector-index（未启用）" : "vault _state/vector-index (inactive)"} readOnly disabled /></label>
+              </div>
+            </div>
+          </div>
+        );
+      case "captioning":
+        return (
+          <div className="settings-section-page">
+            {renderSectionHead(
+              text.nav.captioning,
+              isZh ? "图片描述会作为 source 辅助证据；当前尚未接入本地 caption runtime。" : "Image captioning will support source evidence, but no local caption runtime is connected yet.",
+              sectionStatus(isZh ? "预留" : "Reserved"),
+            )}
+            {renderReservedBlock(
+              isZh ? "本地优先边界" : "Local-first boundary",
+              isZh ? "不会默认上传图片到外部 API。后续只在明确配置本地模型或用户允许远程服务后才会启用。" : "Images are not uploaded to external APIs by default. This will activate only with an explicit local model or user-approved remote service.",
+              Image,
+            )}
+            <div className="settings-block">
+              <div className="settings-block-title"><Image size={15} /><span>{isZh ? "预留配置项" : "Reserved fields"}</span></div>
+              <div className="settings-grid">
+                <label>{isZh ? "Caption 引擎" : "Caption engine"}<input value={isZh ? "未接入" : "Not connected"} readOnly disabled /></label>
+                <label>{isZh ? "输出语言" : "Output language"}<input value={settings.aiOutputLanguage || (isZh ? "中文" : "English")} readOnly disabled /></label>
+              </div>
+            </div>
+          </div>
+        );
+      case "web-search":
+        return (
+          <div className="settings-section-page">
+            {renderSectionHead(
+              text.nav["web-search"],
+              isZh ? "网页搜索默认关闭，避免把本地研究流程变成外部联网流程。" : "Web search stays off by default so local research does not silently become an online workflow.",
+              sectionStatus(isZh ? "未启用" : "Disabled", "disabled"),
+            )}
+            {renderReservedBlock(
+              isZh ? "联网能力未接入" : "Online search is not wired",
+              isZh ? "Chat/Search 当前应优先使用 vault evidence。网页搜索会在有明确网络授权、来源标注和审计记录后再开放。" : "Chat/Search should currently use vault evidence first. Web search will open only with explicit network permission, source labeling, and audit records.",
+              Search,
+            )}
+            <div className="settings-notice">
+              {isZh ? "当前策略：不调用外部搜索 API；不把论文或查询内容上传到第三方搜索服务。" : "Current policy: no external search API calls and no paper/query upload to third-party search services."}
+            </div>
+          </div>
+        );
+      case "network":
+        return (
+          <div className="settings-section-page">
+            {renderSectionHead(
+              text.nav.network,
+              isZh ? "控制解析 API、云解析开关和网络边界。默认仍然是 local-first。" : "Controls parser API and network boundaries. The default remains local-first.",
+              sectionStatus(isZh ? "可配置" : "Configurable", "available"),
+            )}
+            <div className="settings-block">
+              <div className="settings-block-title"><Network size={15} /><span>{isZh ? "Layout API" : "Layout API"}</span></div>
+              <label className="field-label">
+                {isZh ? "解析 API 地址" : "Parser API URL"}
+                <input
+                  value={settings.layoutParsingApiUrl}
+                  onChange={(event) => updateSettings({ layoutParsingApiUrl: event.target.value })}
+                  placeholder="http://127.0.0.1:8000"
+                />
+              </label>
+              <div className={cloudParserBlocked ? "settings-notice danger" : "settings-notice"}>
+                {text.token}: {settings.layoutParsingTokenPresent ? text.configured : text.notDetected} · {text.cloudParser}:
+                {settings.cloudParsingAllowed ? ` ${text.allowed}` : ` ${text.blocked}`}
+              </div>
+              <label className="switch-row">
+                <input type="checkbox" checked={settings.cloudParsingAllowed} onChange={(event) => updateSettings({ cloudParsingAllowed: event.target.checked })} />
+                <span>{text.allowCloudParser}</span>
+              </label>
+            </div>
+            {renderParserBlock()}
+          </div>
+        );
+      case "source-watch":
+        return (
+          <div className="settings-section-page">
+            {renderSectionHead(
+              text.nav["source-watch"],
+              isZh ? "控制导入后的默认资料处理方式；后台文件监听尚未接入。" : "Controls default source handling after import; background folder watching is not wired yet.",
+              sectionStatus(isZh ? "部分可配置" : "Partly configurable", "available"),
+            )}
+            <div className="settings-block">
+              <div className="settings-block-title"><ShieldCheck size={15} /><span>{isZh ? "导入模式" : "Import mode"}</span></div>
+              <label className="field-label">
+                {isZh ? "默认导入模式" : "Default ingest mode"}
+                <select value={settings.defaultIngestMode} onChange={(event) => updateSettings({ defaultIngestMode: event.target.value })}>
+                  <option value="inbox_only">{isZh ? "只进入 raw inbox，不自动排队" : "Raw inbox only, do not enqueue"}</option>
+                  <option value="enqueue_after_import">{isZh ? "导入后加入待处理队列" : "Enqueue after import"}</option>
+                </select>
+              </label>
+              <p className="settings-block-copy">
+                {isZh ? "该设置影响后续 Import/Raw Sources 流程；不会修改已经进入 vault 的 raw evidence。" : "This affects future Import/Raw Sources flows and does not mutate raw evidence already in the vault."}
+              </p>
+            </div>
+            {renderReservedBlock(
+              isZh ? "文件夹监听" : "Folder watching",
+              isZh ? "自动监控目录、去重和计划 ingest 还没有接入后台任务。当前只能通过 Raw Sources / Import 手动触发。" : "Automatic folder watching, dedupe, and planned ingest jobs are not connected yet. Use Raw Sources / Import manually for now.",
+              History,
+            )}
+          </div>
+        );
+      case "scheduled-import":
+        return (
+          <div className="settings-section-page">
+            {renderSectionHead(
+              text.nav["scheduled-import"],
+              isZh ? "定时导入需要后台调度和 vault-scoped 任务队列；当前只保留入口。" : "Scheduled import requires background scheduling and a vault-scoped job queue; this is currently an entry point only.",
+              sectionStatus(isZh ? "预留" : "Reserved"),
+            )}
+            {renderReservedBlock(
+              isZh ? "未启用后台调度" : "Background scheduling is inactive",
+              isZh ? "这里不会创建假定时任务。后续启用时会显示计划、上次运行、下次运行和失败重试记录。" : "This page does not create fake scheduled jobs. When enabled it will show schedule, last run, next run, and retry history.",
+              History,
+            )}
+          </div>
+        );
+      case "output":
+        return (
+          <div className="settings-section-page">
+            {renderSectionHead(
+              text.nav.output,
+              isZh ? "控制回答、报告和写回后的验证输出。" : "Controls answer, report, and post-writeback validation output.",
+              sectionStatus(isZh ? "可配置" : "Configurable", "available"),
+            )}
+            <div className="settings-block">
+              <div className="settings-block-title"><FileText size={15} /><span>{isZh ? "输出偏好" : "Output preferences"}</span></div>
+              <label className="field-label">
+                {isZh ? "AI 输出语言" : "AI output language"}
+                <input
+                  value={settings.aiOutputLanguage}
+                  onChange={(event) => updateSettings({ aiOutputLanguage: event.target.value })}
+                  placeholder={isZh ? "中文 / English" : "English / Chinese"}
+                />
+              </label>
+              <label className="switch-row">
+                <input type="checkbox" checked={settings.autoRunLintAfterWrites} onChange={(event) => updateSettings({ autoRunLintAfterWrites: event.target.checked })} />
+                <span>{isZh ? "写回后自动运行 lint" : "Run lint automatically after writeback"}</span>
+              </label>
+              <label className="switch-row">
+                <input type="checkbox" checked={settings.autoOpenReportsAfterFailures} onChange={(event) => updateSettings({ autoOpenReportsAfterFailures: event.target.checked })} />
+                <span>{isZh ? "失败后自动打开报告" : "Open reports automatically after failures"}</span>
+              </label>
+            </div>
+          </div>
+        );
+      case "interface":
+        return (
+          <div className="settings-section-page">
+            {renderSectionHead(
+              text.nav.interface,
+              isZh ? "控制桌面端语言和 Obsidian 集成体验。" : "Controls desktop language and Obsidian integration behavior.",
+              sectionStatus(isZh ? "可配置" : "Configurable", "available"),
+            )}
+            <div className="settings-block">
+              <div className="settings-block-title"><Paintbrush size={15} /><span>{isZh ? "界面语言" : "Interface language"}</span></div>
+              <div className="settings-grid">
+                <label>{isZh ? "当前语言" : "Current language"}<input value={languageName(language)} readOnly /></label>
+                <label>{isZh ? "Obsidian Profile" : "Obsidian profile"}
+                  <select value={settings.defaultObsidianProfile} onChange={(event) => updateSettings({ defaultObsidianProfile: event.target.value })}>
+                    <option value="minimal">minimal</option>
+                    <option value="research">research</option>
+                    <option value="full">full</option>
+                  </select>
+                </label>
+              </div>
+              {onToggleLanguage && (
+                <button onClick={onToggleLanguage}>
+                  <Globe size={15} />
+                  {text.switchLanguage}: {languageName(language)}
+                </button>
+              )}
+              <label className="switch-row">
+                <input type="checkbox" checked={settings.skipObsidianPluginDownloads} onChange={(event) => updateSettings({ skipObsidianPluginDownloads: event.target.checked })} />
+                <span>{isZh ? "跳过 Obsidian 插件下载" : "Skip Obsidian plugin downloads"}</span>
+              </label>
+            </div>
+          </div>
+        );
+      case "maintenance":
+        return (
+          <div className="settings-section-page">
+            {renderSectionHead(
+              text.nav.maintenance,
+              isZh ? "运行时路径、命令、重试和超时设置。" : "Runtime paths, commands, retry, and timeout settings.",
+              sectionStatus(isZh ? "可配置" : "Configurable", "available"),
+            )}
+            {renderRuntimeBlock()}
+            <div className="settings-block">
+              <div className="settings-block-title"><Settings size={15} /><span>{isZh ? "任务控制" : "Job controls"}</span></div>
+              <div className="settings-grid">
+                <label>{isZh ? "重试次数" : "Retry count"}<input type="number" min={0} max={10} value={settings.retryCount} onChange={(event) => updateSettings({ retryCount: Number(event.target.value) })} /></label>
+                <label>{isZh ? "超时秒数" : "Timeout seconds"}<input type="number" min={10} max={7200} value={settings.timeoutSeconds} onChange={(event) => updateSettings({ timeoutSeconds: Number(event.target.value) })} /></label>
+              </div>
+            </div>
+            {renderParserBlock()}
+          </div>
+        );
+      case "changelog":
+        return (
+          <div className="settings-section-page">
+            {renderSectionHead(
+              text.nav.changelog,
+              isZh ? "当前桌面端最近的产品化变更。" : "Recent productization changes in the desktop app.",
+              sectionStatus("0.1.0", "available"),
+              false,
+            )}
+            <div className="settings-block">
+              <div className="settings-block-title"><Sparkles size={15} /><span>{isZh ? "最近更新" : "Recent changes"}</span></div>
+              <ul className="settings-change-list">
+                <li>{isZh ? "大语言模型不再默认启用 Codex；本地 CLI 需要检查后才能启用。" : "LLM provider no longer defaults to Codex; local CLIs must be checked before enabling."}</li>
+                <li>{isZh ? "托管 API provider 标记为配置占位，不保存或明文显示 API key。" : "Hosted API providers are marked as configuration placeholders and do not save or show API keys."}</li>
+                <li>{isZh ? "设置分区拆分为对应页面；未实现能力明确显示为预留。" : "Settings sections now show distinct pages; unavailable capabilities are clearly marked reserved."}</li>
+              </ul>
+            </div>
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
 
   return (
     <section className={classNames("settings-center panel", className)}>
@@ -363,7 +690,7 @@ export function RuntimeSettingsPanel({
                 <p>{text.llmSubtitle}</p>
                 <p className="settings-muted">{center.activeProviderId ? `${language === "zh" ? "当前提供方" : "Active provider"}: ${providers.find((item) => item.id === center.activeProviderId)?.name ?? center.activeProviderId}` : text.noProvider}</p>
               </div>
-              <button onClick={onSaveSettings} disabled={!vaultPath || busy === "save_settings"}>
+              <button onClick={onSaveSettings} disabled={saveDisabled}>
                 <Check size={15} />
                 {text.save}
               </button>
@@ -382,7 +709,7 @@ export function RuntimeSettingsPanel({
                     : persistedCliAvailable ? text.detected : text.needsCheck
                   : text.configurationPlaceholder;
                 return (
-                  <article key={provider.id} className={classNames("provider-card", config.enabled && "enabled")}>
+                  <article key={provider.id} className={classNames("provider-card", config.enabled && "enabled", config.expanded && "expanded")}>
                     <button className="provider-row" type="button" onClick={() => toggleExpanded(provider.id)}>
                       <span className="provider-chevron">{config.expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</span>
                       <span>
@@ -500,53 +827,7 @@ export function RuntimeSettingsPanel({
           </div>
         )}
 
-        {section !== "llm" && section !== "about" && (
-          <div className="settings-placeholder-page">
-            <div className="settings-page-head">
-              <div>
-                <h2>{text.nav[section]}</h2>
-                <p>{text.placeholder}</p>
-              </div>
-            </div>
-            <div className="settings-block">
-              <div className="settings-block-title"><TerminalSquare size={15} /><span>{text.runtime}</span></div>
-              <label className="field-label">
-                {text.runtimePath}
-                <div className="path-field" title={settings.runtimePath || "Prefer vault-local .open-llm-wiki/scripts"}>
-                  {settings.runtimePath ? visiblePath(settings.runtimePath) : text.preferLocalRuntime}
-                </div>
-              </label>
-              <button className="wide" onClick={onChooseRuntime}>
-                <Settings size={16} />
-                {text.chooseRuntime}
-              </button>
-              <div className="settings-grid">
-                <label>Python<input value={settings.pythonPath} onChange={(event) => setSettings((current) => ({ ...current, pythonPath: event.target.value }))} /></label>
-                <label>uv<input value={settings.uvPath} onChange={(event) => setSettings((current) => ({ ...current, uvPath: event.target.value }))} /></label>
-              </div>
-            </div>
-
-            <div className="settings-block">
-              <div className="settings-block-title"><Cloud size={15} /><span>{text.parserBoundary}</span></div>
-              <label className="field-label">
-                {text.defaultPdfParser}
-                <select value={settings.defaultPdfParser} onChange={(event) => setSettings((current) => ({ ...current, defaultPdfParser: event.target.value }))}>
-                  <option value="auto">auto / local-first</option>
-                  <option value="local-text">local-text</option>
-                  <option value="layout-api">layout-api</option>
-                </select>
-              </label>
-              <div className={cloudParserBlocked ? "settings-notice danger" : "settings-notice"}>
-                {text.token}: {settings.layoutParsingTokenPresent ? text.configured : text.notDetected} · {text.cloudParser}:
-                {settings.cloudParsingAllowed ? ` ${text.allowed}` : ` ${text.blocked}`}
-              </div>
-              <label className="switch-row">
-                <input type="checkbox" checked={settings.cloudParsingAllowed} onChange={(event) => setSettings((current) => ({ ...current, cloudParsingAllowed: event.target.checked }))} />
-                <span>{text.allowCloudParser}</span>
-              </label>
-            </div>
-          </div>
-        )}
+        {section !== "llm" && section !== "about" && renderSettingsSection()}
 
         {section === "about" && (
           <div className="about-page">
@@ -564,7 +845,7 @@ export function RuntimeSettingsPanel({
               {text.switchLanguage}: {languageName(language)}
             </button>
           )}
-          <button onClick={onSaveSettings} disabled={!vaultPath || busy === "save_settings"}>
+          <button onClick={onSaveSettings} disabled={saveDisabled}>
             <Check size={15} />
             {text.save}
             </button>

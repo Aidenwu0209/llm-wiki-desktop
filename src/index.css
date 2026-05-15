@@ -3553,8 +3553,9 @@ textarea {
 .provider-expanded {
   display: grid;
   gap: 10px;
+  min-height: 150px;
   border-top: 1px solid #e4e8e4;
-  padding: 10px;
+  padding: 10px 12px 12px;
 }
 
 .cli-status-card {
@@ -3719,7 +3720,8 @@ textarea {
 
 .settings-content,
 .llm-models-page,
-.settings-placeholder-page {
+.settings-placeholder-page,
+.settings-section-page {
   display: grid;
   gap: 12px;
   min-width: 0;
@@ -3758,7 +3760,64 @@ textarea {
   font-weight: 700;
 }
 
+.settings-head-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.settings-status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  border: 1px solid #d8ded9;
+  border-radius: 999px;
+  background: #f7f9f7;
+  padding: 0 10px;
+  color: #64706a;
+  font-size: 11px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.settings-status-pill.available {
+  border-color: #a6c9b1;
+  background: #e7f4ec;
+  color: #1f6f45;
+}
+
+.settings-status-pill.disabled {
+  border-color: #d5b6a7;
+  background: #fff7f2;
+  color: #9a4d2e;
+}
+
+.settings-block.reserved {
+  border-style: dashed;
+  background: #fbfcfa;
+}
+
+.settings-block-copy {
+  margin: 6px 0 0;
+  color: #64706a;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-change-list {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: #40514a;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .provider-card {
+  display: grid;
+  grid-template-rows: auto auto;
   overflow: hidden;
   border: 1px solid #d8ded9;
   border-radius: 8px;
@@ -3768,6 +3827,16 @@ textarea {
 .provider-card.enabled {
   border-color: #91b79d;
   box-shadow: inset 3px 0 0 #1f6f45;
+}
+
+.provider-card.expanded {
+  min-height: 232px;
+}
+
+.provider-card.expanded .provider-expanded {
+  display: grid !important;
+  visibility: visible;
+  opacity: 1;
 }
 
 .provider-row {
