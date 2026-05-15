@@ -4,11 +4,11 @@ import type { UiLanguage } from "../../i18n";
 
 export const DEFAULT_DEEPSEEK_RESEARCH_STRATEGY_QUERY = `基于当前 LLM Wiki，请整理 DeepSeek 的研发思路、思考问题的方式、关键决策依据，并预测可能的技术演进方向。
 要求：
-1. 所有确定性结论必须引用 LLM Wiki 中的 source / claim / concept 证据。
-2. 区分 evidence、inference、hypothesis、forecast。
+1. 所有确定性结论必须引用 LLM Wiki 中的资料 / 论断 / 概念证据。
+2. 区分证据、推断、假设和预测。
 3. 不要把预测写成事实。
-4. 生成 query writeback proposal，不要静默写入。
-5. proposal 中必须说明目标页面、写入内容、证据链接、风险和需要人工确认的部分。`;
+4. 生成问答写回提案，不要静默写入。
+5. 提案中必须说明目标页面、写入内容、证据链接、风险和需要人工确认的部分。`;
 
 export const DEFAULT_DEEPSEEK_RESEARCH_STRATEGY_QUERY_EN = `Based on the current LLM Wiki, summarize DeepSeek's research strategy, problem-framing style, key decision basis, and likely technical evolution direction.
 Requirements:
@@ -47,23 +47,37 @@ type QueryWritebackComposerProps = {
 
 const writebackCopy = {
   zh: {
-    title: "问答 / 洞察 / 写回 Composer",
-    placeholder: "基于当前 vault 提问；输出必须区分 evidence / inference / hypothesis / forecast。",
-    generate: "生成 evidence-backed proposal",
-    noEvidence: "当前 draft 没有可引用 evidence。",
-    manualTitle: "Manual Writeback 安全流程",
+    title: "问答 / 洞察 / 写回编排器",
+    placeholder: "基于当前知识库提问；输出必须区分证据 / 推断 / 假设 / 预测。",
+    generate: "生成证据支撑提案",
+    noEvidence: "当前草稿没有可引用证据。",
+    manualTitle: "手动写回安全流程",
     manualTarget: "reviews/query-writeback/example.md 或 concepts/example.md",
-    manualContent: "proposal 内容；默认写入 reviews/query-writeback/，不静默修改 source/concept。",
-    reviewProposal: "生成 review proposal",
-    proposalsTitle: "Writeback proposals",
-    empty: "暂无 writeback proposal。",
-    approvalNote: "尚未应用。只有 proposal 被明确批准后才能 apply。",
+    manualContent: "提案内容；默认写入 reviews/query-writeback/，不静默修改资料页或概念页。",
+    reviewProposal: "生成审核提案",
+    proposalsTitle: "写回提案",
+    empty: "暂无写回提案。",
+    approvalNote: "尚未应用。只有提案被明确批准后才能应用。",
     details: "详情",
     target: "目标",
     approve: "审批",
     reject: "拒绝",
     apply: "应用",
     log: "日志",
+    boundary: "先提案后写回",
+    answer: "回答草稿",
+    evidenceMap: "证据图",
+    insightCandidates: "洞察候选",
+    uncertaintyConflicts: "不确定性 / 冲突",
+    writebackProposal: "写回提案",
+    diffPreview: "差异预览",
+    approvalStatus: "审批状态",
+    proposalTitle: "提案标题",
+    proposalCount: "个提案",
+    dashboardRefreshed: "仪表盘已刷新",
+    dashboardRefreshIssue: "仪表盘刷新异常",
+    dashboardRefreshFailed: "仪表盘刷新失败",
+    dashboardRefreshedAfterApply: "应用后已刷新仪表盘。",
   },
   en: {
     title: "Query / Insight / Writeback Composer",
@@ -83,6 +97,20 @@ const writebackCopy = {
     reject: "reject",
     apply: "apply",
     log: "log",
+    boundary: "proposal-first",
+    answer: "Answer",
+    evidenceMap: "Evidence map",
+    insightCandidates: "Insight candidates",
+    uncertaintyConflicts: "Uncertainty / conflicts",
+    writebackProposal: "Writeback proposal",
+    diffPreview: "Diff preview",
+    approvalStatus: "Approval status",
+    proposalTitle: "proposal title",
+    proposalCount: "proposals",
+    dashboardRefreshed: "dashboard refreshed",
+    dashboardRefreshIssue: "dashboard refresh issue",
+    dashboardRefreshFailed: "Dashboard refresh failed",
+    dashboardRefreshedAfterApply: "Dashboard refreshed after apply.",
   },
 } as const;
 
@@ -90,10 +118,12 @@ function classNames(...items: Array<string | false | null | undefined>) {
   return items.filter(Boolean).join(" ");
 }
 
-function lintSummary(status: WritebackApplyStatus) {
-  if (!status.lint.ran) return "Auto lint skipped";
-  if (status.lint.error) return `Auto lint failed: ${status.lint.error}`;
-  return `Auto lint completed: ${status.lint.findingCount ?? 0} findings, ${status.lint.blockingCount ?? 0} P0/P1`;
+function lintSummary(status: WritebackApplyStatus, language: UiLanguage) {
+  if (!status.lint.ran) return language === "zh" ? "自动合约检查已跳过" : "Auto lint skipped";
+  if (status.lint.error) return language === "zh" ? `自动合约检查失败：${status.lint.error}` : `Auto lint failed: ${status.lint.error}`;
+  return language === "zh"
+    ? `自动合约检查完成：${status.lint.findingCount ?? 0} 个发现，${status.lint.blockingCount ?? 0} 个 P0/P1`
+    : `Auto lint completed: ${status.lint.findingCount ?? 0} findings, ${status.lint.blockingCount ?? 0} P0/P1`;
 }
 
 export function QueryWritebackComposer({
@@ -128,7 +158,7 @@ export function QueryWritebackComposer({
       <section className="panel large">
         <div className="section-head">
           <h2>{text.title}</h2>
-          <span>proposal-first</span>
+          <span>{text.boundary}</span>
         </div>
         <div className="writeback-form">
           <textarea
@@ -146,10 +176,10 @@ export function QueryWritebackComposer({
           </button>
           {queryDraft && (
             <div className="composer-result">
-              <strong>Answer</strong>
+              <strong>{text.answer}</strong>
               <pre className="diff-box">{queryDraft.answer}</pre>
 
-              <strong>Evidence map</strong>
+              <strong>{text.evidenceMap}</strong>
               <div className="impact-list compact">
                 {queryDraft.evidenceMap.length === 0 && <p className="empty">{text.noEvidence}</p>}
                 {queryDraft.evidenceMap.map((item, index) => (
@@ -165,7 +195,7 @@ export function QueryWritebackComposer({
                 ))}
               </div>
 
-              <strong>Insight candidates</strong>
+              <strong>{text.insightCandidates}</strong>
               <div className="action-list">
                 {queryDraft.insightCandidates.map((item) => (
                   <div className="work-item" key={item}>
@@ -174,7 +204,7 @@ export function QueryWritebackComposer({
                 ))}
               </div>
 
-              <strong>Uncertainty / conflicts</strong>
+              <strong>{text.uncertaintyConflicts}</strong>
               <div className="action-list">
                 {queryDraft.uncertaintyConflicts.map((item) => (
                   <div className="work-item" key={item}>
@@ -183,13 +213,13 @@ export function QueryWritebackComposer({
                 ))}
               </div>
 
-              <strong>Writeback proposal</strong>
+              <strong>{text.writebackProposal}</strong>
               <pre className="diff-box">{queryDraft.writebackProposal}</pre>
 
-              <strong>Diff preview</strong>
+              <strong>{text.diffPreview}</strong>
               <pre className="diff-box">{queryDraft.diffPreview}</pre>
 
-              <strong>Approval status</strong>
+              <strong>{text.approvalStatus}</strong>
               <div className="work-item">
                 <span className={classNames("status-chip", queryDraft.approvalStatus)}>{queryDraft.approvalStatus}</span>
                 <code>{text.approvalNote}</code>
@@ -213,7 +243,7 @@ export function QueryWritebackComposer({
           <input
             value={writebackTitle}
             onChange={(event) => onWritebackTitleChange(event.target.value)}
-            placeholder="proposal title"
+            placeholder={text.proposalTitle}
           />
           <textarea
             value={writebackContent}
@@ -229,19 +259,19 @@ export function QueryWritebackComposer({
       <section className="panel large">
         <div className="section-head">
           <h2>{text.proposalsTitle}</h2>
-          <span>{writebacks.length} proposals</span>
+          <span>{writebacks.length} {text.proposalCount}</span>
         </div>
         {applyStatus && (
           <div className="work-item">
             <span className={classNames("status-chip", applyStatus.dashboardRefreshed ? "applied" : "p1")}>
-              {applyStatus.dashboardRefreshed ? "dashboard refreshed" : "dashboard refresh issue"}
+              {applyStatus.dashboardRefreshed ? text.dashboardRefreshed : text.dashboardRefreshIssue}
             </span>
             <strong>{applyStatus.targetPath}</strong>
             <em>{applyStatus.appliedAt || "applied"}</em>
             <code>
-              {applyStatus.dashboardError ? `Dashboard refresh failed: ${applyStatus.dashboardError}` : "Dashboard refreshed after apply."}
+              {applyStatus.dashboardError ? `${text.dashboardRefreshFailed}: ${applyStatus.dashboardError}` : text.dashboardRefreshedAfterApply}
               {" "}
-              {lintSummary(applyStatus)}
+              {lintSummary(applyStatus, language)}
             </code>
           </div>
         )}

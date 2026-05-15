@@ -72,12 +72,12 @@ const settingsCopy = {
   zh: {
     settings: "设置",
     nav: {
-      llm: "LLM 模型",
-      embeddings: "Embeddings",
+      llm: "大语言模型",
+      embeddings: "向量模型",
       captioning: "图像描述",
       "web-search": "网页搜索",
       network: "网络",
-      "source-watch": "Source Watch",
+      "source-watch": "资料监控",
       "scheduled-import": "定时导入",
       output: "输出",
       interface: "界面",
@@ -85,8 +85,8 @@ const settingsCopy = {
       changelog: "更新记录",
       about: "关于",
     },
-    llmTitle: "LLM 模型",
-    llmSubtitle: "选择一个当前启用的模型 provider。本地 CLI provider 不会把密钥写入桌面设置文件。",
+    llmTitle: "大语言模型",
+    llmSubtitle: "选择一个当前启用的模型提供方。本地命令行提供方不会把密钥写入桌面设置文件。",
     save: "保存",
     detected: "已检测",
     notFound: "未找到",
@@ -102,27 +102,27 @@ const settingsCopy = {
     path: "路径",
     pathPending: "等待 PATH 检查",
     recheck: "重新检查",
-    apiNote: "API key 不在这个 UI 中保存或明文显示。请使用环境变量、系统钥匙串或本地 runtime 配置。",
+    apiNote: "API 密钥不在此界面中保存或明文显示。请使用环境变量、系统钥匙串或本地运行时配置。",
     customModel: "自定义模型",
     optionalOverride: "可选覆盖",
     contextWindow: "上下文窗口",
     reasoning: "推理 / 思考强度",
     deepThinking: "深度思考",
     placeholder: "Coming soon / Reserved：该分区目前只是预留入口；未实现的 provider、网络或自动化能力不会在这里伪装成可用功能。",
-    runtime: "Runtime",
-    runtimePath: "Runtime 路径",
-    preferLocalRuntime: "优先使用 vault-local runtime",
-    chooseRuntime: "选择 runtime 路径",
+    runtime: "运行时",
+    runtimePath: "运行时路径",
+    preferLocalRuntime: "优先使用知识库内的本地运行时",
+    chooseRuntime: "选择运行时路径",
     parserBoundary: "解析和网络边界",
-    defaultPdfParser: "默认 PDF parser",
+    defaultPdfParser: "默认 PDF 解析器",
     token: "Token",
     configured: "已配置",
     notDetected: "未检测到",
-    cloudParser: "云 parser",
+    cloudParser: "云解析器",
     allowed: "已允许",
     blocked: "已阻止",
-    allowCloudParser: "允许 layout-api 使用云 parser",
-    aboutBoundary: "本地优先桌面外壳。Runtime-first 执行。Evidence-backed 研究。Proposal-first writeback 与 approval gate。",
+    allowCloudParser: "允许 layout-api 使用云解析器",
+    aboutBoundary: "本地优先桌面外壳。运行时优先执行。证据支撑研究。先提案后写回，并保留审批门。",
     switchLanguage: "界面语言",
   },
   en: {
@@ -171,17 +171,17 @@ const settingsCopy = {
 } as const;
 
 const providers = [
-  { id: "anthropic", name: "Anthropic (Claude)", subtitle: "Claude API models for remote research jobs.", kind: "api", models: ["claude-3-7-sonnet", "claude-3-5-haiku"] },
-  { id: "claude-code", name: "Claude Code CLI (local)", subtitle: "Local Claude Code CLI handoff without storing API keys.", kind: "local", command: "claude" as const, models: ["sonnet", "opus", "default"] },
-  { id: "codex-cli", name: "Codex CLI (local)", subtitle: "Local Codex runtime for repo-aware research and automation.", kind: "local", command: "codex" as const, models: ["gpt-5.5", "gpt-5.4", "gpt-5.3-codex"] },
-  { id: "openai", name: "OpenAI (GPT)", subtitle: "Hosted GPT models when explicit API use is allowed.", kind: "api", models: ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"] },
-  { id: "google", name: "Google (Gemini)", subtitle: "Gemini API provider for external model runs.", kind: "api", models: ["gemini-2.5-pro", "gemini-2.5-flash"] },
-  { id: "deepseek", name: "DeepSeek", subtitle: "DeepSeek hosted models for approved remote inference.", kind: "api", models: ["deepseek-reasoner", "deepseek-chat"] },
-  { id: "groq", name: "Groq", subtitle: "Fast hosted inference for low-latency checks.", kind: "api", models: ["llama-3.3-70b", "mixtral"] },
-  { id: "xai", name: "xAI (Grok)", subtitle: "Grok provider for approved hosted research tasks.", kind: "api", models: ["grok-3", "grok-3-mini"] },
-  { id: "nvidia", name: "NVIDIA NIM", subtitle: "NIM endpoints for enterprise or local gateway use.", kind: "api", models: ["nemotron", "llama-nemotron"] },
-  { id: "kimi", name: "Kimi (Moonshot)", subtitle: "Moonshot API models outside China region.", kind: "api", models: ["kimi-k2", "moonshot-v1"] },
-  { id: "kimi-cn", name: "Kimi (Moonshot, 中国)", subtitle: "Moonshot China endpoint profile.", kind: "api", models: ["kimi-k2-cn", "moonshot-v1-cn"] },
+  { id: "anthropic", name: "Anthropic (Claude)", subtitle: "Claude API models for remote research jobs.", subtitleZh: "面向远程研究任务的 Claude API 模型。", kind: "api", models: ["claude-3-7-sonnet", "claude-3-5-haiku"] },
+  { id: "claude-code", name: "Claude Code CLI (local)", subtitle: "Local Claude Code CLI handoff without storing API keys.", subtitleZh: "通过本地 Claude Code 命令行交接任务，不在桌面端保存 API key。", kind: "local", command: "claude" as const, models: ["sonnet", "opus", "default"] },
+  { id: "codex-cli", name: "Codex CLI (local)", subtitle: "Local Codex runtime for repo-aware research and automation.", subtitleZh: "本地 Codex 运行时，用于仓库上下文研究和自动化。", kind: "local", command: "codex" as const, models: ["gpt-5.5", "gpt-5.4", "gpt-5.3-codex"] },
+  { id: "openai", name: "OpenAI (GPT)", subtitle: "Hosted GPT models when explicit API use is allowed.", subtitleZh: "仅在明确允许 API 使用时启用的托管 GPT 模型。", kind: "api", models: ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"] },
+  { id: "google", name: "Google (Gemini)", subtitle: "Gemini API provider for external model runs.", subtitleZh: "用于外部模型运行的 Gemini API 提供方。", kind: "api", models: ["gemini-2.5-pro", "gemini-2.5-flash"] },
+  { id: "deepseek", name: "DeepSeek", subtitle: "DeepSeek hosted models for approved remote inference.", subtitleZh: "用于已批准远程推理的 DeepSeek 托管模型。", kind: "api", models: ["deepseek-reasoner", "deepseek-chat"] },
+  { id: "groq", name: "Groq", subtitle: "Fast hosted inference for low-latency checks.", subtitleZh: "用于低延迟检查的快速托管推理。", kind: "api", models: ["llama-3.3-70b", "mixtral"] },
+  { id: "xai", name: "xAI (Grok)", subtitle: "Grok provider for approved hosted research tasks.", subtitleZh: "用于已批准托管研究任务的 Grok 提供方。", kind: "api", models: ["grok-3", "grok-3-mini"] },
+  { id: "nvidia", name: "NVIDIA NIM", subtitle: "NIM endpoints for enterprise or local gateway use.", subtitleZh: "用于企业端点或本地网关的 NIM 配置。", kind: "api", models: ["nemotron", "llama-nemotron"] },
+  { id: "kimi", name: "Kimi (Moonshot)", subtitle: "Moonshot API models outside China region.", subtitleZh: "中国区外 Moonshot API 模型配置。", kind: "api", models: ["kimi-k2", "moonshot-v1"] },
+  { id: "kimi-cn", name: "Kimi (Moonshot, 中国)", subtitle: "Moonshot China endpoint profile.", subtitleZh: "Moonshot 中国区端点配置。", kind: "api", models: ["kimi-k2-cn", "moonshot-v1-cn"] },
 ] as const;
 
 function visiblePath(path: string) {
@@ -335,7 +335,7 @@ export function RuntimeSettingsPanel({
                       <span className="provider-chevron">{config.expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</span>
                       <span>
                         <strong>{provider.name}</strong>
-                        <em>{provider.subtitle}</em>
+                        <em>{language === "zh" ? provider.subtitleZh : provider.subtitle}</em>
                       </span>
                       <span className={classNames("provider-status", config.enabled && "active", cliCheck && !cliCheck.available && "danger")}>{status}</span>
                       <label className="toggle" onClick={(event) => event.stopPropagation()}>
@@ -402,7 +402,7 @@ export function RuntimeSettingsPanel({
                             />
                           </label>
                           <label className="field-label">
-                            {text.contextWindow}: {config.contextWindow.toLocaleString()} tokens
+                            {text.contextWindow}: {config.contextWindow.toLocaleString()} {language === "zh" ? "令牌" : "tokens"}
                             <input
                               type="range"
                               min={8192}
@@ -412,7 +412,7 @@ export function RuntimeSettingsPanel({
                               onChange={(event) => updateProvider(provider.id, { contextWindow: Number(event.target.value) })}
                             />
                           </label>
-                          <div className="reasoning-picker" aria-label="Reasoning and thinking level">
+                          <div className="reasoning-picker" aria-label={text.reasoning}>
                             <span className="control-caption">{text.reasoning}</span>
                             {["fast", "balanced", "deep"].map((mode) => (
                               <button
@@ -421,7 +421,9 @@ export function RuntimeSettingsPanel({
                                 className={config.reasoningMode === mode ? "active" : ""}
                                 onClick={() => updateProvider(provider.id, { reasoningMode: mode })}
                               >
-                                {mode === "deep" ? text.deepThinking : mode}
+                                {language === "zh"
+                                  ? ({ fast: "快速", balanced: "平衡", deep: text.deepThinking } as Record<string, string>)[mode]
+                                  : mode}
                               </button>
                             ))}
                           </div>

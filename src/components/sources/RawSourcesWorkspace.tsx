@@ -77,43 +77,60 @@ type RawSourcesWorkspaceProps = {
 const rawCopy = {
   zh: {
     title: "原始资料",
-    loaded: (count: number) => `已从 vault state 和 source registry 加载 ${count} 条 raw/source 记录。`,
-    emptyVault: "打开一个已生成的 vault 来检查原始资料。",
+    loaded: (count: number) => `已从知识库状态和资料登记表加载 ${count} 条原始资料记录。`,
+    emptyVault: "打开一个已生成的知识库来检查原始资料。",
     refresh: "刷新",
     import: "导入",
     folder: "文件夹",
     plan: "规划",
     preserve: "保留目录",
     sources: "资料",
-    filter: "筛选 source id、文件、parser、状态",
+    filter: "筛选资料 ID、文件、解析器、状态",
     noMatch: "没有匹配的原始资料。",
-    preview: "预览 / Artifact",
+    preview: "预览 / 解析产物",
     noSelected: "未选择原始资料",
-    noSelectedBody: "导入文件、刷新 vault，或运行 ingest planning 来填充 raw source records。",
+    noSelectedBody: "导入文件、刷新知识库，或运行导入规划来填充原始资料记录。",
     type: "类型",
-    sourceId: "Source ID",
-    claims: "Claims",
-    concepts: "Concepts",
+    sourceId: "资料 ID",
+    claims: "论断",
+    concepts: "概念",
     traceability: "可追踪性",
     updated: "更新时间",
-    artifactContract: "Artifact contract",
+    artifactContract: "解析产物合约",
     needsReview: "需审核",
-    noArtifact: "还没有关联的 parsed artifact",
-    noArtifactBody: "运行 ingest planning 或 parsing 来关联 artifact contracts、chunks 和 parser metadata。",
-    linkedClaims: "关联 claims",
-    linkedConcepts: "关联 concepts",
-    noClaims: "没有 claim ledger 关联。",
-    noConcepts: "没有 concept 关联。",
+    noArtifact: "还没有关联的解析产物",
+    noArtifactBody: "运行导入规划或解析流程来关联解析产物合约、分块和解析器元数据。",
+    linkedClaims: "关联论断",
+    linkedConcepts: "关联概念",
+    noClaims: "没有论断台账关联。",
+    noConcepts: "没有概念关联。",
     details: "详情",
-    selectDetails: "选择一个 source 来检查路径、hash、parser、artifacts 和 links。",
+    selectDetails: "选择一条资料来检查路径、哈希、解析器、解析产物和链接。",
     path: "路径",
-    rawPath: "Raw path",
-    sourcePage: "Source page",
-    hash: "Hash",
-    parser: "Parser",
-    artifact: "Artifact",
-    artifactHash: "Artifact hash",
-    complete: "该 source 关联的 evidence paths 当前完整。",
+    rawPath: "原始路径",
+    sourcePage: "资料页面",
+    hash: "哈希",
+    parser: "解析器",
+    artifact: "解析产物",
+    artifactHash: "产物哈希",
+    complete: "该资料关联的证据路径当前完整。",
+    manifest: "清单",
+    chunks: "分块",
+    parseLog: "解析日志",
+    schema: "结构版本",
+    anchors: "锚点",
+    pages: "页面",
+    tables: "表格",
+    figures: "图像",
+    yes: "有",
+    no: "无",
+    valid: "有效",
+    empty: "空",
+    missing: "缺失",
+    unknown: "未知",
+    noSourceId: "无资料 ID",
+    notUpdated: "未更新",
+    recentImportResults: (count: number) => `上次导入后有 ${count} 条导入结果。`,
     actions: { open: "打开", reveal: "显示", copyPath: "复制路径", obsidian: "Obsidian" },
   },
   en: {
@@ -155,6 +172,23 @@ const rawCopy = {
     artifact: "Artifact",
     artifactHash: "Artifact hash",
     complete: "Evidence paths linked to this source are currently complete.",
+    manifest: "manifest",
+    chunks: "chunks",
+    parseLog: "parse log",
+    schema: "Schema",
+    anchors: "Anchors",
+    pages: "pages",
+    tables: "tables",
+    figures: "figures",
+    yes: "yes",
+    no: "no",
+    valid: "valid",
+    empty: "empty",
+    missing: "missing",
+    unknown: "unknown",
+    noSourceId: "no source id",
+    notUpdated: "not updated",
+    recentImportResults: (count: number) => `${count} recent import results are available after the last import.`,
     actions: { open: "open", reveal: "reveal", copyPath: "copy path", obsidian: "Obsidian" },
   },
 } as const;
@@ -500,7 +534,7 @@ export function RawSourcesWorkspace({
                 <span className={classNames("status-chip inline", record.traceabilityStatus || record.status)}>{record.traceabilityStatus}</span>
                 <strong>{record.fileName}</strong>
                 <em>{record.type} · {record.status}</em>
-                <code>{record.sourceId || record.sourceUuid || "no source id"} · {record.updated || "not updated"}</code>
+                <code>{record.sourceId || record.sourceUuid || text.noSourceId} · {record.updated || text.notUpdated}</code>
               </button>
             ))}
           </div>
@@ -509,7 +543,7 @@ export function RawSourcesWorkspace({
         <main className="raw-source-preview panel">
           <div className="section-head">
             <h3>{selected ? text.preview : text.preview.split(" / ")[0]}</h3>
-            <span>{selected?.status || "empty"}</span>
+            <span>{selected?.status || text.empty}</span>
           </div>
 
           {!selected && (
@@ -517,7 +551,7 @@ export function RawSourcesWorkspace({
               <FileText size={24} />
               <strong>{text.noSelected}</strong>
               <p>{text.noSelectedBody}</p>
-              {importResults.length > 0 && <code>{importResults.length} recent import results are available after the last import.</code>}
+              {importResults.length > 0 && <code>{text.recentImportResults(importResults.length)}</code>}
             </div>
           )}
 
@@ -531,7 +565,7 @@ export function RawSourcesWorkspace({
 
               <div className="raw-source-summary-grid">
                 <div><span>{text.type}</span><strong>{selected.type}</strong></div>
-                <div><span>{text.sourceId}</span><strong>{selected.sourceId || selected.sourceUuid || "missing"}</strong></div>
+                <div><span>{text.sourceId}</span><strong>{selected.sourceId || selected.sourceUuid || text.missing}</strong></div>
                 <div><span>{text.claims}</span><strong>{selected.linkedClaims.length}</strong></div>
                 <div><span>{text.concepts}</span><strong>{selected.linkedConcepts.length}</strong></div>
                 <div><span>{text.traceability}</span><strong>{selected.traceabilityStatus}</strong></div>
@@ -542,14 +576,14 @@ export function RawSourcesWorkspace({
                 <div className="artifact-card">
                   <div className="section-head compact">
                     <h3><ShieldCheck size={15} /> {text.artifactContract}</h3>
-                    <span>{artifact.contractValid ? "valid" : text.needsReview}</span>
+                    <span>{artifact.contractValid ? text.valid : text.needsReview}</span>
                   </div>
                   <dl className="raw-source-facts">
-                    <div><dt>Artifact</dt><dd>{artifact.artifactPath}</dd></div>
-                    <div><dt>Parser</dt><dd>{compact(artifact.parser)} {artifact.parserVersion || ""}</dd></div>
-                    <div><dt>Schema</dt><dd>{compact(artifact.schemaVersion)}</dd></div>
-                    <div><dt>Chunks</dt><dd>{artifact.chunkCount}</dd></div>
-                    <div><dt>Anchors</dt><dd>pages {artifact.anchorsPages ? "yes" : "no"} · tables {artifact.anchorsTables ? "yes" : "no"} · figures {artifact.anchorsFigures ? "yes" : "no"}</dd></div>
+                    <div><dt>{text.artifact}</dt><dd>{artifact.artifactPath}</dd></div>
+                    <div><dt>{text.parser}</dt><dd>{compact(artifact.parser)} {artifact.parserVersion || ""}</dd></div>
+                    <div><dt>{text.schema}</dt><dd>{compact(artifact.schemaVersion)}</dd></div>
+                    <div><dt>{text.chunks}</dt><dd>{artifact.chunkCount}</dd></div>
+                    <div><dt>{text.anchors}</dt><dd>{text.pages} {artifact.anchorsPages ? text.yes : text.no} · {text.tables} {artifact.anchorsTables ? text.yes : text.no} · {text.figures} {artifact.anchorsFigures ? text.yes : text.no}</dd></div>
                   </dl>
                   {(artifact.limitations.length > 0 || artifact.lintErrors.length > 0) && (
                     <div className="raw-source-notes">
@@ -558,16 +592,16 @@ export function RawSourcesWorkspace({
                   )}
                   <div className="raw-source-actions">
                     <button type="button" onClick={() => onOpenPath(resolveVaultPath(artifact.artifactPath))}>
-                      <FileInput size={14} />artifact
+                      <FileInput size={14} />{text.artifact}
                     </button>
                     <button type="button" disabled={!artifact.manifestPath} onClick={() => artifact.manifestPath && onOpenPath(resolveVaultPath(artifact.manifestPath))}>
-                      <FileText size={14} />manifest
+                      <FileText size={14} />{text.manifest}
                     </button>
                     <button type="button" disabled={!artifact.chunksPath} onClick={() => artifact.chunksPath && onOpenPath(resolveVaultPath(artifact.chunksPath))}>
-                      <ListChecks size={14} />chunks
+                      <ListChecks size={14} />{text.chunks}
                     </button>
                     <button type="button" disabled={!artifact.parseLogPath} onClick={() => artifact.parseLogPath && onOpenPath(resolveVaultPath(artifact.parseLogPath))}>
-                      <Search size={14} />parse log
+                      <Search size={14} />{text.parseLog}
                     </button>
                   </div>
                 </div>
@@ -604,7 +638,7 @@ export function RawSourcesWorkspace({
         <aside className="raw-source-details panel">
           <div className="section-head">
             <h3>{text.details}</h3>
-            <span>{selected?.traceabilityStatus || "empty"}</span>
+            <span>{selected?.traceabilityStatus || text.empty}</span>
           </div>
 
           {!selected && <p className="empty">{text.selectDetails}</p>}

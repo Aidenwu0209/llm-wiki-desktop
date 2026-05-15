@@ -18,20 +18,20 @@ type DeepSeekVaultHomeProps = {
 
 const deepSeekHomeCopy = {
   zh: {
-    eyebrow: "DeepSeek vault 首页",
-    fallbackName: "Generated vault",
+    eyebrow: "DeepSeek 知识库首页",
+    fallbackName: "生成的知识库",
     summary: "把语料准备度、资料覆盖、审核压力、证据可追踪性和洞察写回放在同一屏，用户进入明细表前就能知道状态。",
     sources: "资料",
-    rawInbox: "raw 收件箱",
+    rawInbox: "原始收件箱",
     concepts: "概念",
     reports: "报告",
     reviewQueue: "审核队列",
-    claimReviews: "claim 审核",
+    claimReviews: "论断审核",
     traceability: "可追踪性",
     contradictions: "冲突",
     writeback: "问答写回",
     proposalFirst: "先提案后写回的洞察",
-    forecastNote: "预测在获得资料 / 论断 / 概念证据支撑并通过写回批准前，仍然只是 hypothesis。",
+    forecastNote: "预测在获得资料 / 论断 / 概念证据支撑并通过写回批准前，仍然只是待验证假设。",
   },
   en: {
     eyebrow: "DeepSeek vault home",

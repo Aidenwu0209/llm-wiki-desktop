@@ -98,28 +98,28 @@ const VISUAL_EDGE_LIMIT = 120;
 const graphCopy = {
   zh: {
     summaryStats: {
-      sources: "Sources / papers",
-      sourceBackedClaims: "有 source 支撑的 claims",
-      keyConcepts: "关键 concepts",
-      reviewNodes: "Review 节点",
+      sources: "资料 / 论文",
+      sourceBackedClaims: "有资料支撑的论断",
+      keyConcepts: "关键概念",
+      reviewNodes: "审核节点",
       traceabilityBreaks: "证据断点",
-      writebackInsights: "Writeback proposals",
+      writebackInsights: "写回提案",
     },
-    researchSummary: "Evidence Graph 摘要",
-    vaultSummary: "该 Evidence Graph 连接当前 vault 中的 sources、claims、concepts、reviews、traceability warnings 和 writeback proposals。",
-    noVaultSummary: "打开 generated vault 后即可构建 Evidence Graph。",
-    keyConcepts: "关键 concepts",
+    researchSummary: "证据图谱摘要",
+    vaultSummary: "该证据图谱连接当前知识库中的资料、论断、概念、审核、可追踪性警告和写回提案。",
+    noVaultSummary: "打开已生成的知识库后即可构建证据图谱。",
+    keyConcepts: "关键概念",
     noneYet: "暂未生成",
-    evidenceBreaks: "Evidence breaks",
+    evidenceBreaks: "证据断点",
     noneSurfaced: "暂无",
-    searchPlaceholder: "搜索 nodes、paths、claims、concepts、proposal targets 和 warning 文本",
+    searchPlaceholder: "搜索节点、路径、论断、概念、提案目标和警告文本",
     nodeType: "节点类型",
     edgeType: "边类型",
-    relationshipMap: "Evidence Graph",
+    relationshipMap: "证据图谱",
     nodeDetails: "节点详情",
-    noGraphNodes: "当前筛选下没有 graph node。",
+    noGraphNodes: "当前筛选下没有图谱节点。",
     limitHint: (visibleNodes: number, totalNodes: number, visibleEdges: number, totalEdges: number) =>
-      `画布为性能只显示前 ${visibleNodes}/${totalNodes} 个节点和 ${visibleEdges}/${totalEdges} 条边；请用搜索或筛选缩小 Evidence Graph。`,
+      `画布为性能只显示前 ${visibleNodes}/${totalNodes} 个节点和 ${visibleEdges}/${totalEdges} 条边；请用搜索或筛选缩小证据图谱。`,
     open: "打开",
     reveal: "显示",
     copy: "复制",
@@ -130,35 +130,40 @@ const graphCopy = {
     noNodesMatch: "没有节点匹配当前筛选。",
     noEdgesMatch: "没有边匹配当前筛选。",
     evidenceBreakLocator: "证据断点定位",
-    noTraceabilityWarnings: "暂无 traceability warnings。",
-    conceptSourceLocator: "Concept 来源定位",
-    noConceptRelationships: "暂无 concept 关系。",
-    relationships: "relationships",
-    writebackInsightTargets: "Writeback proposal targets",
-    noWritebacks: "暂无 query writeback proposals。",
-    graphContract: "Evidence Graph contract",
-    sourceToClaim: "source -> claim：source registry、claim ledger、evidence paths",
-    claimToConcept: "claim -> concept：claim concept tags 和 evidence concepts",
-    claimToReview: "claim -> review：review queue 和 needs-review claims",
-    proposalToTarget: "proposal -> target：query writeback target page",
-    warningToClaim: "warning -> claim/source：traceability warnings",
+    noTraceabilityWarnings: "暂无可追踪性警告。",
+    conceptSourceLocator: "概念来源定位",
+    noConceptRelationships: "暂无概念关系。",
+    relationships: "条关系",
+    writebackInsightTargets: "写回提案目标",
+    noWritebacks: "暂无问答写回提案。",
+    graphContract: "证据图谱契约",
+    sourceToClaim: "资料 -> 论断：资料登记、论断台账、证据路径",
+    claimToConcept: "论断 -> 概念：论断概念标签和证据概念",
+    claimToReview: "论断 -> 审核：审核队列和待审核论断",
+    proposalToTarget: "提案 -> 目标：问答写回目标页面",
+    warningToClaim: "警告 -> 论断/资料：可追踪性警告",
+    nodes: "个节点",
+    edges: "条边",
+    linked: "已连接",
+    sourceUnknown: "资料未知",
+    conceptTag: "概念标签",
     nodeTypes: {
       all: "全部",
-      source: "Sources",
-      claim: "Claims",
-      concept: "Concepts",
-      review: "Reviews",
-      proposal: "Proposals",
-      warning: "Warnings",
+      source: "资料",
+      claim: "论断",
+      concept: "概念",
+      review: "审核",
+      proposal: "提案",
+      warning: "警告",
     } satisfies Record<ResearchNodeType | "all", string>,
     edgeTypes: {
       all: "全部边",
-      source_claim: "Source -> Claim",
-      claim_concept: "Claim -> Concept",
-      claim_review: "Claim -> Review",
-      proposal_target: "Proposal -> Target",
-      warning_claim: "Warning -> Claim",
-      warning_source: "Warning -> Source",
+      source_claim: "资料 -> 论断",
+      claim_concept: "论断 -> 概念",
+      claim_review: "论断 -> 审核",
+      proposal_target: "提案 -> 目标",
+      warning_claim: "警告 -> 论断",
+      warning_source: "警告 -> 资料",
     } satisfies Record<ResearchEdgeType | "all", string>,
   },
   en: {
@@ -207,6 +212,11 @@ const graphCopy = {
     claimToReview: "claim -> review: review queue and needs-review claims",
     proposalToTarget: "proposal -> target: query writeback target page",
     warningToClaim: "warning -> claim/source: traceability warnings",
+    nodes: "nodes",
+    edges: "edges",
+    linked: "linked",
+    sourceUnknown: "source unknown",
+    conceptTag: "concept tag",
     nodeTypes: {
       all: "All",
       source: "Sources",
@@ -713,14 +723,14 @@ function graphPositions(nodes: ResearchGraphNode[]) {
 }
 
 function graphSummaryText(graph: ResearchGraph, language: UiLanguage) {
-  const concepts = graph.summary.keyConcepts.map((node) => node.label).join(", ") || (language === "zh" ? "暂无 concept 连接" : "no concept links yet");
+  const concepts = graph.summary.keyConcepts.map((node) => node.label).join(", ") || (language === "zh" ? "暂无概念连接" : "no concept links yet");
   const reviewPressure = graph.summary.reviewNodes + graph.summary.traceabilityBreaks;
   if (language === "zh") {
     return [
-      `${graph.summary.sourcesPapers} 个 source 节点支撑 ${graph.summary.sourceBackedClaims} 条 source-to-claim 证据链。`,
-      `连接最多的 concepts：${concepts}。`,
-      `${reviewPressure} 个 review 或 traceability 节点需要处理后，才能把生成洞察视为稳定内容。`,
-      `${graph.summary.writebackInsights} 个 writeback proposal 在批准前保持 proposal-first。`,
+      `${graph.summary.sourcesPapers} 个资料节点支撑 ${graph.summary.sourceBackedClaims} 条资料到论断证据链。`,
+      `连接最多的概念：${concepts}。`,
+      `${reviewPressure} 个审核或可追踪性节点需要处理后，才能把生成洞察视为稳定内容。`,
+      `${graph.summary.writebackInsights} 个写回提案在批准前保持先提案后写回。`,
     ];
   }
   return [
@@ -757,6 +767,33 @@ export function ResearchGraphPage({
     () => buildResearchGraph({ status, registry, claims, evidencePaths, reviewItems, writebacks, traceabilityWarnings }),
     [claims, evidencePaths, registry, reviewItems, status, traceabilityWarnings, writebacks],
   );
+  const nodeSubtitle = (value?: string | null) => {
+    if (!value || language !== "zh") return value;
+    return value
+      .replace("claim concept tag", "论断概念标签")
+      .replace("claim needs review", "论断待审核")
+      .replace("evidence path", "证据路径")
+      .replace("query writeback target", "问答写回目标")
+      .replace("traceability warning", "可追踪性警告")
+      .replace(/^line (.+)$/, "第 $1 行")
+      .replace(" · ", " · ");
+  };
+  const edgeLabel = (edge: ResearchGraphEdge) => {
+    if (language !== "zh") return edge.label;
+    const labels: Record<string, string> = {
+      "supports claim": "支撑论断",
+      "feeds concept": "沉淀概念",
+      "requires review": "需要审核",
+      "evidence path": "证据路径",
+      "evidence concept": "证据概念",
+      "review item": "审核项",
+      "targets concept": "指向概念",
+      "targets review artifact": "指向审核产物",
+      "flags claim": "标记论断",
+      "breaks source trace": "断开资料追踪",
+    };
+    return labels[edge.label] || edge.label;
+  };
   const nodeById = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph.nodes]);
   const normalizedQuery = query.trim().toLowerCase();
   const nodeMatchedIds = new Set<string>();
@@ -904,7 +941,7 @@ export function ResearchGraphPage({
         <section className="panel graph-panel">
           <div className="section-head">
             <h2>{text.relationshipMap}</h2>
-            <span>{visualNodes.length}/{filteredNodes.length} nodes · {visualEdges.length}/{visibleEdges.length} edges</span>
+            <span>{visualNodes.length}/{filteredNodes.length} {text.nodes} · {visualEdges.length}/{visibleEdges.length} {text.edges}</span>
           </div>
           <svg className="research-graph-svg" viewBox="0 0 860 360" role="img" aria-label="Research relationship graph">
             <defs>
@@ -950,7 +987,7 @@ export function ResearchGraphPage({
           )}
           <div className="graph-legend">
             {(Object.keys(typeColors) as ResearchNodeType[]).map((type) => (
-              <span key={type}><i style={{ backgroundColor: typeColors[type] }} />{type}</span>
+              <span key={type}><i style={{ backgroundColor: typeColors[type] }} />{text.nodeTypes[type]}</span>
             ))}
           </div>
         </section>
@@ -958,13 +995,13 @@ export function ResearchGraphPage({
         <section className="panel graph-panel">
           <div className="section-head">
             <h2>{text.nodeDetails}</h2>
-            {selected && <span>{selected.type}</span>}
+            {selected && <span>{text.nodeTypes[selected.type]}</span>}
           </div>
           {selected ? (
             <div className="graph-node-detail">
-              <span className={`status-chip ${nodeStatusClass(selected)}`}>{selected.type}</span>
+              <span className={`status-chip ${nodeStatusClass(selected)}`}>{text.nodeTypes[selected.type]}</span>
               <strong>{selected.label}</strong>
-              <em>{selected.subtitle || selected.status || selected.id}</em>
+              <em>{nodeSubtitle(selected.subtitle) || selected.status || selected.id}</em>
               {selected.body && <p>{selected.body}</p>}
               {selected.path && <code>{selected.path}</code>}
               {selected.metrics && (
@@ -985,7 +1022,7 @@ export function ResearchGraphPage({
                 {relatedEdges.length === 0 && <p className="empty">{text.noRelatedEdges}</p>}
                 {relatedEdges.map((edge) => (
                   <button key={edge.id} onClick={() => setSelectedId(edge.from === selected.id ? edge.to : edge.from)}>
-                    <span>{text.edgeTypes[edge.type]} · {edge.label}</span>
+                    <span>{text.edgeTypes[edge.type]} · {edgeLabel(edge)}</span>
                     <em>{endpointLabel(edge.from)} {"->"} {endpointLabel(edge.to)}</em>
                   </button>
                 ))}
@@ -1001,15 +1038,15 @@ export function ResearchGraphPage({
         <section className="panel">
           <div className="section-head">
             <h2>{text.nodeList}</h2>
-            <span>{filteredNodes.length}/{graph.nodes.length} nodes</span>
+            <span>{filteredNodes.length}/{graph.nodes.length} {text.nodes}</span>
           </div>
           <div className="graph-list">
             {filteredNodes.length === 0 && <p className="empty">{text.noNodesMatch}</p>}
             {filteredNodes.map((node) => (
               <button key={node.id} onClick={() => setSelectedId(node.id)}>
-                <span className={`status-chip ${nodeStatusClass(node)}`}>{node.type}</span>
+                <span className={`status-chip ${nodeStatusClass(node)}`}>{text.nodeTypes[node.type]}</span>
                 <strong>{compact(node.label, 120)}</strong>
-                <em>{node.subtitle || node.status || node.id}</em>
+                <em>{nodeSubtitle(node.subtitle) || node.status || node.id}</em>
                 <code>{node.path || node.id}</code>
               </button>
             ))}
@@ -1019,16 +1056,16 @@ export function ResearchGraphPage({
         <section className="panel">
           <div className="section-head">
             <h2>{text.edgeList}</h2>
-            <span>{visibleEdges.length}/{graph.edges.length} edges</span>
+            <span>{visibleEdges.length}/{graph.edges.length} {text.edges}</span>
           </div>
           <div className="graph-list">
             {visibleEdges.length === 0 && <p className="empty">{text.noEdgesMatch}</p>}
             {visibleEdges.map((edge) => (
               <button key={edge.id} onClick={() => setSelectedId(edge.to)}>
                 <span className={classNames("status-chip", edgeStatusClass(edge))}>{text.edgeTypes[edge.type]}</span>
-                <strong>{edge.label}</strong>
+                <strong>{edgeLabel(edge)}</strong>
                 <em>{endpointLabel(edge.from)} {"->"} {endpointLabel(edge.to)}</em>
-                <code>{edge.status || "linked"}</code>
+                <code>{edge.status || text.linked}</code>
               </button>
             ))}
           </div>
@@ -1045,7 +1082,7 @@ export function ResearchGraphPage({
               <button key={warning.warningId} onClick={() => setSelectedId(warningNodeId(warning.warningId))}>
                 <span className={`status-chip ${warning.severity}`}>{warning.severity}</span>
                 <strong>{warning.claimText || warning.claimId}</strong>
-                <em>{warning.sourcePath || warning.sourceId || "source unknown"}</em>
+                <em>{warning.sourcePath || warning.sourceId || text.sourceUnknown}</em>
                 <code>{warning.missingAnchor || warning.summary}</code>
               </button>
             ))}
@@ -1061,9 +1098,9 @@ export function ResearchGraphPage({
             {graph.summary.keyConcepts.length === 0 && <p className="empty">{text.noConceptRelationships}</p>}
             {graph.summary.keyConcepts.map((concept) => (
               <button key={concept.id} onClick={() => setSelectedId(concept.id)}>
-                <span className="status-chip concept">concept</span>
+                <span className="status-chip concept">{text.nodeTypes.concept}</span>
                 <strong>{concept.label}</strong>
-                <em>{concept.subtitle || concept.path || "concept tag"}</em>
+                <em>{nodeSubtitle(concept.subtitle) || concept.path || text.conceptTag}</em>
                 <code>{graph.edges.filter((edge) => edge.to === concept.id || edge.from === concept.id).length} {text.relationships}</code>
               </button>
             ))}

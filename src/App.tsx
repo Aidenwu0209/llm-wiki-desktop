@@ -115,10 +115,10 @@ import {
 } from "./i18n";
 
 const runtimeActions = [
-  { id: "lint", label: "运行 lint", icon: ListChecks },
-  { id: "parse_pdfs", label: "本地解析 PDFs", icon: FileInput },
+  { id: "lint", label: "Run lint", icon: ListChecks },
+  { id: "parse_pdfs", label: "Parse PDFs locally", icon: FileInput },
   { id: "obsidian_setup", label: "Obsidian setup", icon: SquareStack },
-  { id: "status_dashboard", label: "刷新 dashboard", icon: RefreshCw },
+  { id: "status_dashboard", label: "Refresh dashboard", icon: RefreshCw },
   { id: "discover", label: "Source discovery", icon: Search },
   { id: "claims", label: "Claim extraction", icon: ClipboardList },
   { id: "semantic_qa", label: "Semantic QA", icon: ShieldCheck },
@@ -215,6 +215,7 @@ const shellCopy: Record<UiLanguage, {
   languageToggle: string;
   brandSubtitleWithVault: string;
   brandSubtitleNoVault: string;
+  drawerTitle: string;
   noVault: string;
   entryPending: string;
   vaultManagement: string;
@@ -243,6 +244,28 @@ const shellCopy: Record<UiLanguage, {
     repair: string;
     diagnostic: string;
   };
+  stateLabels: {
+    ready: string;
+    needsRefresh: string;
+    history: string;
+    proposals: string;
+    searchableRecords: string;
+    links: string;
+    warnings: string;
+    running: string;
+  };
+  pageActions: {
+    extractClaims: string;
+    reviewQueue: string;
+    scienceReview: string;
+    traceability: string;
+    contractLint: string;
+    diagnosticBundle: string;
+    generateProposal: string;
+    openReviews: string;
+    saveSettings: string;
+    chooseRuntime: string;
+  };
   activity: {
     title: string;
     idle: string;
@@ -265,99 +288,100 @@ const shellCopy: Record<UiLanguage, {
       traceability: "可追踪性",
       writeback: "问答 / 写回",
       chat: "证据草稿",
-      graph: "Evidence Graph",
+      graph: "证据图谱",
       activity: "活动",
       settings: "设置",
     },
     pages: {
-      dashboard: { title: "仪表盘", subtitle: "查看 vault 状态、下一步动作，以及用户应该继续的 ingest 路径。" },
-      sources: { title: "原始资料", subtitle: "管理 raw evidence、source registry、解析 artifact 和可追踪状态。" },
-      claims: { title: "论断", subtitle: "带证据的 claim ledger、审核和 verdict 控制。" },
-      concepts: { title: "概念", subtitle: "生成的概念页，以及支撑它们的 vault 上下文。" },
-      reviews: { title: "审核", subtitle: "Science review queue、follow-up actions 和审批边界。" },
-      traceability: { title: "可追踪性", subtitle: "断裂证据链、缺失 anchor、contract findings 和 impact graph。" },
-      writeback: { title: "问答 / 写回", subtitle: "基于证据生成洞察，并先生成 proposal 再写回。" },
-      chat: { title: "证据搜索 / 本地草稿", subtitle: "搜索 vault、检查证据、生成本地 evidence draft，并把可信问题转成 proposal。" },
-      graph: { title: "Evidence Graph", subtitle: "展示 source、claim、concept、review、warning 和 proposal 的可信证据关系。" },
-      activity: { title: "活动", subtitle: "Runtime jobs、持久历史、日志、取消、超时和重试。" },
-      settings: { title: "设置", subtitle: "Runtime、parser、Obsidian 和 release 相关桌面设置。" },
+      dashboard: { title: "仪表盘", subtitle: "查看知识库状态、下一步动作，以及用户应该继续的导入路径。" },
+      sources: { title: "原始资料", subtitle: "管理原始证据、资料登记、解析产物和可追踪状态。" },
+      claims: { title: "论断", subtitle: "带证据的论断台账、审核和结论控制。" },
+      concepts: { title: "概念", subtitle: "生成的概念页，以及支撑它们的知识库上下文。" },
+      reviews: { title: "审核", subtitle: "科学审核队列、后续动作和审批边界。" },
+      traceability: { title: "可追踪性", subtitle: "断裂证据链、缺失锚点、合约发现和影响图。" },
+      writeback: { title: "问答 / 写回", subtitle: "基于证据生成洞察，并先生成提案再写回。" },
+      chat: { title: "证据搜索 / 本地草稿", subtitle: "搜索知识库、检查证据、生成本地证据草稿，并把可信问题转成提案。" },
+      graph: { title: "证据图谱", subtitle: "展示资料、论断、概念、审核、警告和提案之间的可信证据关系。" },
+      activity: { title: "活动", subtitle: "运行任务、持久历史、日志、取消、超时和重试。" },
+      settings: { title: "设置", subtitle: "运行时、解析器、Obsidian 和发布相关桌面设置。" },
     },
     runtimeActions: {
-      lint: "运行 lint",
+      lint: "运行合约检查",
       parse_pdfs: "本地解析 PDF",
       obsidian_setup: "配置 Obsidian",
       status_dashboard: "刷新仪表盘",
-      discover: "Source discovery",
-      claims: "抽取 claims",
-      semantic_qa: "Semantic QA",
-      science_review: "Science review",
+      discover: "发现资料",
+      claims: "抽取论断",
+      semantic_qa: "语义 QA",
+      science_review: "科学审核",
       concept_revision_preview: "概念预览",
       concept_revision_apply: "应用概念",
       cancel_probe: "取消测试",
       timeout_probe: "超时测试 2s",
     },
-    pipeline: ["导入", "解析 PDF / Markdown", "生成 source 草稿", "独立 QA", "发布稳定 source", "抽取 claims", "指标归一化", "Semantic QA", "冲突扫描", "Science review queue", "概念修订", "Lint"],
+    pipeline: ["导入", "解析 PDF / Markdown", "生成资料草稿", "独立 QA", "发布稳定资料", "抽取论断", "指标归一化", "语义 QA", "冲突扫描", "科学审核队列", "概念修订", "合约检查"],
     languageToggle: "English",
-    brandSubtitleWithVault: "Vault 命令中心",
-    brandSubtitleNoVault: "选择或创建 vault",
-    noVault: "未选择 vault",
-    entryPending: "Entry note 待生成",
-    vaultManagement: "Vault 管理",
+    brandSubtitleWithVault: "知识库命令中心",
+    brandSubtitleNoVault: "选择或创建知识库",
+    drawerTitle: "知识库 / 检查器",
+    noVault: "未选择知识库",
+    entryPending: "入口笔记待生成",
+    vaultManagement: "知识库管理",
     open: "打开",
     refresh: "刷新",
-    createVault: "创建 vault",
+    createVault: "创建知识库",
     folder: "文件夹",
     finder: "Finder",
     obsidian: "Obsidian",
     copyPath: "复制路径",
     copyUri: "复制 URI",
-    enableObsidianProfile: "创建时启用 Obsidian profile",
+    enableObsidianProfile: "创建时启用 Obsidian 配置",
     nextActionTitle: "下一步",
-    nextActionHelp: "用左侧导航检查不同工作流，同时保留当前 vault 上下文。",
-    selectEvidence: "选择 evidence 后查看路径、证据和可执行动作。",
-    importDropTitle: "导入 PDF / Markdown / txt / folder",
-    importDropQueued: "导入后写入 runtime-owned ingest queue",
-    importDropInboxOnly: "仅进入 raw/inbox，等待手动规划",
+    nextActionHelp: "用左侧导航检查不同工作流，同时保留当前知识库上下文。",
+    selectEvidence: "选择证据后查看路径、证据和可执行动作。",
+    importDropTitle: "导入 PDF / Markdown / TXT / 文件夹",
+    importDropQueued: "导入后写入运行时管理的导入队列",
+    importDropInboxOnly: "仅进入原始收件箱，等待手动规划",
     importFiles: "导入文件",
     importFolder: "导入文件夹",
     preserveFolderContext: "保留目录上下文",
     actionStrip: {
-      plan: "规划 ingest",
-      lint: "合约 lint",
-      pipeline: "运行 ingest pipeline",
+      plan: "规划导入",
+      lint: "合约检查",
+      pipeline: "运行处理流程",
       repair: "修复模板",
-      diagnostic: "诊断 bundle",
+      diagnostic: "诊断包",
     },
     activity: {
       title: "活动面板",
       idle: "空闲",
-      cancel: "取消当前 job",
+      cancel: "取消当前任务",
       openLog: "打开运行日志",
       retry: "重试同类任务",
-      emptyHistory: "暂无持久 runtime job 记录。",
+      emptyHistory: "暂无持久运行任务记录。",
     },
     labels: {
-      vault: "Vault",
+      vault: "知识库",
       recent: "最近",
       suggestions: "建议",
-      rawInbox: "Raw inbox",
+      rawInbox: "原始收件箱",
       publishedSources: "已发布资料",
       blocked: "阻塞",
-      claims: "Claims",
+      claims: "论断",
       needsReview: "待审核",
       contradicted: "冲突",
       conceptPages: "概念页",
-      growthQueue: "Growth queue",
+      growthQueue: "增长队列",
       reports: "报告",
       openReviews: "未处理审核",
-      scienceQueue: "Science queue",
+      scienceQueue: "科学审核队列",
       warnings: "警告",
       evidenceBreaks: "证据断点",
-      contract: "P0/P1 contract",
-      proposals: "Proposals",
+      contract: "P0/P1 合约",
+      proposals: "提案",
       approved: "已批准",
       applied: "已应用",
-      currentJob: "当前 job",
+      currentJob: "当前任务",
       history: "历史",
       failures: "失败",
       runtime: "运行时",
@@ -372,8 +396,8 @@ const shellCopy: Record<UiLanguage, {
       allowed: "已允许",
       notSelected: "未选择",
       inspecting: "检查中",
-      schemaValid: "Schema 有效",
-      schemaInvalid: "Schema 无效",
+      schemaValid: "结构有效",
+      schemaInvalid: "结构无效",
       runtimeReady: "运行时可用",
       runtimeMissing: "运行时缺失",
       obsidianEnabled: "Obsidian 已启用",
@@ -381,15 +405,37 @@ const shellCopy: Record<UiLanguage, {
       dashboardReady: "仪表盘可用",
       dashboardMissing: "仪表盘缺失",
     },
+    stateLabels: {
+      ready: "就绪",
+      needsRefresh: "需刷新",
+      history: "条历史",
+      proposals: "个提案",
+      searchableRecords: "条可搜索记录",
+      links: "条链接",
+      warnings: "个警告",
+      running: "运行中",
+    },
+    pageActions: {
+      extractClaims: "抽取论断",
+      reviewQueue: "审核队列",
+      scienceReview: "科学审核",
+      traceability: "可追踪性",
+      contractLint: "合约检查",
+      diagnosticBundle: "诊断包",
+      generateProposal: "生成提案",
+      openReviews: "打开审核",
+      saveSettings: "保存设置",
+      chooseRuntime: "选择运行时",
+    },
     dialogs: {
-      chooseVault: "选择 open-llm-wiki vault",
-      chooseRuntime: "选择 open-llm-wiki 运行时仓库或已安装 vault",
+      chooseVault: "选择 open-llm-wiki 知识库",
+      chooseRuntime: "选择 open-llm-wiki 运行时仓库或已安装知识库",
       chooseParent: "选择新 Wiki Project 的父目录",
       importFiles: "导入 PDF / Markdown / txt 到 raw/inbox",
       importFolder: "导入文件夹到 raw/inbox",
     },
     errors: {
-      createVaultPath: "请先填写要创建的 vault 绝对路径。",
+      createVaultPath: "请先填写要创建的知识库绝对路径。",
       createProject: "请填写 Project Name 并选择 Parent Directory。",
       dropNoPath: "拖拽事件没有提供本地文件路径，请使用导入文件或导入文件夹按钮。",
     },
@@ -402,6 +448,7 @@ const shellCopy: Record<UiLanguage, {
     languageToggle: "中文",
     brandSubtitleWithVault: "Vault command center",
     brandSubtitleNoVault: "Choose or create a vault",
+    drawerTitle: "Vault / Inspector",
     noVault: "No vault selected",
     entryPending: "Entry note pending",
     vaultManagement: "Vault management",
@@ -482,6 +529,28 @@ const shellCopy: Record<UiLanguage, {
       obsidianOff: "Obsidian off",
       dashboardReady: "Dashboard ready",
       dashboardMissing: "Dashboard missing",
+    },
+    stateLabels: {
+      ready: "ready",
+      needsRefresh: "needs refresh",
+      history: "history",
+      proposals: "proposals",
+      searchableRecords: "searchable records",
+      links: "links",
+      warnings: "warnings",
+      running: "running",
+    },
+    pageActions: {
+      extractClaims: "Extract claims",
+      reviewQueue: "Review queue",
+      scienceReview: "Science review",
+      traceability: "Traceability",
+      contractLint: "Contract lint",
+      diagnosticBundle: "Diagnostic bundle",
+      generateProposal: "Generate proposal",
+      openReviews: "Open reviews",
+      saveSettings: "Save settings",
+      chooseRuntime: "Choose runtime",
     },
     dialogs: {
       chooseVault: "Choose open-llm-wiki vault",
@@ -1485,26 +1554,26 @@ function App() {
     }
     if (activePage === "claims") {
       return [
-        { label: "Extract claims", icon: <ClipboardList size={15} />, onClick: () => handleRuntime("claims"), disabled: runtimeRunning || busy === "start:claims", tone: "primary" },
-        { label: "Review queue", icon: <AlertTriangle size={15} />, onClick: () => setActivePage("reviews") },
+        { label: copy.pageActions.extractClaims, icon: <ClipboardList size={15} />, onClick: () => handleRuntime("claims"), disabled: runtimeRunning || busy === "start:claims", tone: "primary" },
+        { label: copy.pageActions.reviewQueue, icon: <AlertTriangle size={15} />, onClick: () => setActivePage("reviews") },
       ];
     }
     if (activePage === "reviews") {
       return [
-        { label: "Science review", icon: <ShieldCheck size={15} />, onClick: () => handleRuntime("science_review"), disabled: runtimeRunning || busy === "start:science_review", tone: "primary" },
-        { label: "Traceability", icon: <GitCompare size={15} />, onClick: () => setActivePage("traceability") },
+        { label: copy.pageActions.scienceReview, icon: <ShieldCheck size={15} />, onClick: () => handleRuntime("science_review"), disabled: runtimeRunning || busy === "start:science_review", tone: "primary" },
+        { label: copy.pageActions.traceability, icon: <GitCompare size={15} />, onClick: () => setActivePage("traceability") },
       ];
     }
     if (activePage === "traceability") {
       return [
-        { label: "Contract lint", icon: <ShieldCheck size={15} />, onClick: handleIngestLint, disabled: busy === "ingest_lint", tone: "primary" },
-        { label: "Diagnostic bundle", icon: <TerminalSquare size={15} />, onClick: handleDiagnostic, disabled: busy === "diagnostic" },
+        { label: copy.pageActions.contractLint, icon: <ShieldCheck size={15} />, onClick: handleIngestLint, disabled: busy === "ingest_lint", tone: "primary" },
+        { label: copy.pageActions.diagnosticBundle, icon: <TerminalSquare size={15} />, onClick: handleDiagnostic, disabled: busy === "diagnostic" },
       ];
     }
     if (activePage === "writeback") {
       return [
-        { label: "Generate proposal", icon: <GitCompare size={15} />, onClick: handleCreateQueryWriteback, disabled: busy === "query_writeback", tone: "primary" },
-        { label: "Open reviews", icon: <ClipboardList size={15} />, onClick: () => setActivePage("reviews") },
+        { label: copy.pageActions.generateProposal, icon: <GitCompare size={15} />, onClick: handleCreateQueryWriteback, disabled: busy === "query_writeback", tone: "primary" },
+        { label: copy.pageActions.openReviews, icon: <ClipboardList size={15} />, onClick: () => setActivePage("reviews") },
       ];
     }
     if (activePage === "activity") {
@@ -1515,8 +1584,8 @@ function App() {
     }
     if (activePage === "settings") {
       return [
-        { label: interfaceLanguage === "zh" ? "保存设置" : "Save settings", icon: <Check size={15} />, onClick: handleSaveSettings, disabled: busy === "save_settings", tone: "primary" },
-        { label: interfaceLanguage === "zh" ? "选择 runtime" : "Choose runtime", icon: <Settings size={15} />, onClick: chooseRuntime },
+        { label: copy.pageActions.saveSettings, icon: <Check size={15} />, onClick: handleSaveSettings, disabled: busy === "save_settings", tone: "primary" },
+        { label: copy.pageActions.chooseRuntime, icon: <Settings size={15} />, onClick: chooseRuntime },
       ];
     }
     return [
@@ -1606,7 +1675,7 @@ function App() {
       {activePage !== "settings" && detailDrawerOpen && (
         <aside className="sidebar command-sidebar open">
           <div className="drawer-header">
-            <span>{interfaceLanguage === "zh" ? "Vault / Inspector" : "Vault / Inspector"}</span>
+            <span>{copy.drawerTitle}</span>
             <button type="button" onClick={() => setDetailDrawerOpen(false)} aria-label={interfaceLanguage === "zh" ? "关闭侧栏" : "Close inspector"}>
               <XCircle size={16} />
             </button>
@@ -1690,32 +1759,32 @@ function App() {
             <button onClick={() => setActivePage("dashboard")}>
               <SquareStack size={15} />
               <span>{copy.nav.dashboard}</span>
-              <em>{status?.dashboardAvailable ? "ready" : "needs refresh"}</em>
+              <em>{status?.dashboardAvailable ? copy.stateLabels.ready : copy.stateLabels.needsRefresh}</em>
             </button>
             <button onClick={() => setActivePage("activity")}>
               <TerminalSquare size={15} />
               <span>{copy.nav.activity}</span>
-              <em>{runtimeRunning ? "running" : `${runtimeHistory.length} history`}</em>
+              <em>{runtimeRunning ? copy.stateLabels.running : `${runtimeHistory.length} ${copy.stateLabels.history}`}</em>
             </button>
             <button onClick={() => setActivePage("writeback")}>
               <GitCompare size={15} />
               <span>{copy.nav.writeback}</span>
-              <em>{writebacks.length} proposals</em>
+              <em>{writebacks.length} ${copy.stateLabels.proposals}</em>
             </button>
             <button onClick={() => setActivePage("chat")}>
               <MessageSquare size={15} />
               <span>{copy.nav.chat}</span>
-              <em>{claims.length + reviewItems.length + writebacks.length} searchable records</em>
+              <em>{claims.length + reviewItems.length + writebacks.length} ${copy.stateLabels.searchableRecords}</em>
             </button>
             <button onClick={() => setActivePage("graph")}>
               <Network size={15} />
               <span>{copy.nav.graph}</span>
-              <em>{claims.length + traceabilityWarnings.length + impactEdges.length} links</em>
+              <em>{claims.length + traceabilityWarnings.length + impactEdges.length} ${copy.stateLabels.links}</em>
             </button>
             <button onClick={() => setActivePage("traceability")}>
               <GitCompare size={15} />
               <span>{copy.nav.traceability}</span>
-              <em>{traceabilityWarnings.length + brokenEvidence} warnings</em>
+              <em>{traceabilityWarnings.length + brokenEvidence} ${copy.stateLabels.warnings}</em>
             </button>
           </div>
         </section>
@@ -1759,7 +1828,7 @@ function App() {
                 type="button"
                 onClick={() => setDetailDrawerOpen((open) => !open)}
                 aria-expanded={detailDrawerOpen}
-                title={interfaceLanguage === "zh" ? "打开 Vault / Inspector 侧栏" : "Open Vault / Inspector sidebar"}
+                title={interfaceLanguage === "zh" ? "打开知识库检查侧栏" : "Open Vault / Inspector sidebar"}
               >
                 <PanelRightOpen size={15} />
                 <span>{interfaceLanguage === "zh" ? "侧栏" : "Inspector"}</span>
@@ -1921,35 +1990,39 @@ function App() {
             <span>{activeJob ? `${activeJob.status} · ${runtimeDurationSeconds(activeJob)}s` : copy.activity.idle}</span>
           </div>
           <div className="activity-meta">
-            <span>Job: {activeJob?.jobId || "none"}</span>
-            <span>Stage: {activeJob?.stage || busy || "idle"}</span>
-            <span>Started: {activeJob?.startedAt || "none"}</span>
-            <span>Duration: {activeJob ? `${runtimeDurationSeconds(activeJob)}s` : "0s"}</span>
-            <span>Attempt: {activeJob ? `${activeJob.attempt}/${activeJob.maxAttempts}` : `${desktopSettings.retryCount} configured`}</span>
-            <span>Retry count: {activeJob ? runtimeRetryCount(activeJob) : desktopSettings.retryCount}</span>
-            <span>Timeout: {desktopSettings.timeoutSeconds}s</span>
-            <span>Live log: {activeJob ? runtimeLogPath(activeJob) || "stream only" : "none"}</span>
-            <span>Command: {activeJob ? runtimeCommandLabel(activeJob) : "none"}</span>
+            <span>{interfaceLanguage === "zh" ? "任务" : "Job"}: {activeJob?.jobId || (interfaceLanguage === "zh" ? "无" : "none")}</span>
+            <span>{interfaceLanguage === "zh" ? "阶段" : "Stage"}: {activeJob?.stage || busy || copy.activity.idle}</span>
+            <span>{interfaceLanguage === "zh" ? "开始时间" : "Started"}: {activeJob?.startedAt || (interfaceLanguage === "zh" ? "无" : "none")}</span>
+            <span>{interfaceLanguage === "zh" ? "耗时" : "Duration"}: {activeJob ? `${runtimeDurationSeconds(activeJob)}s` : "0s"}</span>
+            <span>{interfaceLanguage === "zh" ? "尝试" : "Attempt"}: {activeJob ? `${activeJob.attempt}/${activeJob.maxAttempts}` : `${desktopSettings.retryCount} ${interfaceLanguage === "zh" ? "已配置" : "configured"}`}</span>
+            <span>{interfaceLanguage === "zh" ? "重试次数" : "Retry count"}: {activeJob ? runtimeRetryCount(activeJob) : desktopSettings.retryCount}</span>
+            <span>{interfaceLanguage === "zh" ? "超时" : "Timeout"}: {desktopSettings.timeoutSeconds}s</span>
+            <span>{interfaceLanguage === "zh" ? "实时日志" : "Live log"}: {activeJob ? runtimeLogPath(activeJob) || (interfaceLanguage === "zh" ? "仅实时流" : "stream only") : (interfaceLanguage === "zh" ? "无" : "none")}</span>
+            <span>{interfaceLanguage === "zh" ? "命令" : "Command"}: {activeJob ? runtimeCommandLabel(activeJob) : (interfaceLanguage === "zh" ? "无" : "none")}</span>
           </div>
           <div className="inline-actions">
             <button onClick={handleCancelRuntimeJob} disabled={!activeJob || isTerminalRuntimeStatus(activeJob.status)}><XCircle size={14} />{copy.activity.cancel}</button>
             <button onClick={() => activeJob && runtimeLogPath(activeJob) && openPath(runtimeLogPath(activeJob))} disabled={!activeJob || !runtimeLogPath(activeJob)}><TerminalSquare size={14} />{copy.activity.openLog}</button>
             <button onClick={() => activeJob && handleRetryRuntimeJob(activeJob)} disabled={!activeJob || runtimeRunning || !isRetryableRuntimeStatus(activeJob.status)}><RotateCcw size={14} />{copy.activity.retry}</button>
           </div>
-          <pre className="live-log">{liveLogLines.length ? liveLogLines.join("\n") : "Runtime stdout/stderr will stream here while commands run."}</pre>
+          <pre className="live-log">
+            {liveLogLines.length ? liveLogLines.join("\n") : interfaceLanguage === "zh" ? "命令运行时会在这里显示实时输出。" : "Runtime stdout/stderr will stream here while commands run."}
+          </pre>
           <div className="runtime-history">
             {runtimeHistory.length === 0 && <p className="empty">{copy.activity.emptyHistory}</p>}
             {runtimeHistory.slice(0, 8).map((job) => (
               <div className="runtime-history-item" key={job.jobId}>
                 <span className={classNames("status-chip", runtimeStatusTone(job.status))}>{job.status}</span>
                 <strong>{job.kind}</strong>
-                <em>{job.startedAt} · {runtimeDurationSeconds(job)}s · attempt {job.attempt}/{job.maxAttempts} · retry {runtimeRetryCount(job)} · exit {job.exitCode ?? "running"}</em>
+                <em>
+                  {job.startedAt} · {runtimeDurationSeconds(job)}s · {interfaceLanguage === "zh" ? "尝试" : "attempt"} {job.attempt}/{job.maxAttempts} · {interfaceLanguage === "zh" ? "重试" : "retry"} {runtimeRetryCount(job)} · {interfaceLanguage === "zh" ? "退出码" : "exit"} {job.exitCode ?? (interfaceLanguage === "zh" ? "运行中" : "running")}
+                </em>
                 <code>{runtimeLogPath(job) || job.message || runtimeCommandLabel(job)}</code>
                 {job.stdoutTail && <code>stdout: {job.stdoutTail}</code>}
                 {job.stderrTail && <code>stderr: {job.stderrTail}</code>}
                 <div className="history-actions">
-                  <button type="button" onClick={() => runtimeLogPath(job) && openPath(runtimeLogPath(job))} disabled={!runtimeLogPath(job)}><TerminalSquare size={12} />log</button>
-                  <button type="button" onClick={() => handleRetryRuntimeJob(job)} disabled={runtimeRunning || !isRetryableRuntimeStatus(job.status)}><RotateCcw size={12} />retry</button>
+                  <button type="button" onClick={() => runtimeLogPath(job) && openPath(runtimeLogPath(job))} disabled={!runtimeLogPath(job)}><TerminalSquare size={12} />{interfaceLanguage === "zh" ? "日志" : "log"}</button>
+                  <button type="button" onClick={() => handleRetryRuntimeJob(job)} disabled={runtimeRunning || !isRetryableRuntimeStatus(job.status)}><RotateCcw size={12} />{interfaceLanguage === "zh" ? "重试" : "retry"}</button>
                 </div>
               </div>
             ))}
@@ -1960,7 +2033,7 @@ function App() {
           <section className="panel large">
             <div className="section-head">
               <h2>导入结果</h2>
-              <span>{importResults.length} files</span>
+              <span>{importResults.length} {interfaceLanguage === "zh" ? "个文件" : "files"}</span>
             </div>
             <div className="ingest-list">
               {importResults.length === 0 && <p className="empty">暂无本轮导入结果。</p>}
@@ -1968,8 +2041,8 @@ function App() {
                 <button key={`${item.sourcePath}-${item.sha256}`} onClick={() => item.targetPath && openPath(item.targetPath)}>
                   <span className={classNames("status-chip", item.status)}>{item.status}</span>
                   <strong>{item.fileName}</strong>
-                  <em>{item.mime} · {(item.sizeBytes / 1024).toFixed(1)} KB · {item.folderContext || "root"}</em>
-                  <code>{item.sha256.slice(0, 16)} · {item.doi || item.arxivId || item.titleHint || "no metadata"} · {item.duplicateOf || item.approximateDuplicateOf || item.targetPath}</code>
+                  <em>{item.mime} · {(item.sizeBytes / 1024).toFixed(1)} KB · {item.folderContext || (interfaceLanguage === "zh" ? "根目录" : "root")}</em>
+                  <code>{item.sha256.slice(0, 16)} · {item.doi || item.arxivId || item.titleHint || (interfaceLanguage === "zh" ? "无元数据" : "no metadata")} · {item.duplicateOf || item.approximateDuplicateOf || item.targetPath}</code>
                 </button>
               ))}
             </div>
@@ -1977,22 +2050,22 @@ function App() {
 
           <section className="panel large">
             <div className="section-head">
-              <h2>Per-source queue</h2>
-              <span>{jobs.length ? `${progressDone}/${jobs.length} done` : "0 jobs"}</span>
+              <h2>{interfaceLanguage === "zh" ? "逐资料队列" : "Per-source queue"}</h2>
+              <span>{jobs.length ? `${progressDone}/${jobs.length} ${interfaceLanguage === "zh" ? "已完成" : "done"}` : `0 ${interfaceLanguage === "zh" ? "个任务" : "jobs"}`}</span>
             </div>
             <div className="queue-list">
-              {jobs.length === 0 && <p className="empty">暂无 source 任务。</p>}
+              {jobs.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无资料任务。" : "No source jobs yet."}</p>}
               {jobs.map((job) => (
                 <div className="work-item" key={job.jobId}>
                   <span className={classNames("status-chip", job.status)}>{job.status}</span>
                   <strong>{job.sourceId || job.fileName}</strong>
-                  <em>{job.currentStep} · {job.nextAction} · attempt {job.attempt}/{job.maxAttempts}</em>
+                  <em>{job.currentStep} · {job.nextAction} · {interfaceLanguage === "zh" ? "尝试" : "attempt"} {job.attempt}/{job.maxAttempts}</em>
                   <code>{job.lastError || job.reason}</code>
                   <div className="inline-actions">
-                    <button title="打开当前 artifact 或原始 source" onClick={() => openPath(vaultFilePath(job.artifactPath || job.sourcePath))}><FolderOpen size={14} />打开</button>
+                    <button title={interfaceLanguage === "zh" ? "打开当前解析产物或原始资料" : "Open current artifact or raw source"} onClick={() => openPath(vaultFilePath(job.artifactPath || job.sourcePath))}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "打开" : "Open"}</button>
                     <button title="重新排队" onClick={() => handleJobStatus(job.jobId, "queued")} disabled={job.status === "queued"}><RotateCcw size={14} />重试</button>
-                    <button title="取消本 source 的 pipeline 处理" onClick={() => handleJobStatus(job.jobId, "cancelled")} disabled={job.status === "cancelled"}><XCircle size={14} />取消</button>
-                    <button title="打开 job 日志" onClick={() => job.logPath && openPath(vaultFilePath(job.logPath))} disabled={!job.logPath}><TerminalSquare size={14} />日志</button>
+                    <button title={interfaceLanguage === "zh" ? "取消本资料的处理流程" : "Cancel this source pipeline"} onClick={() => handleJobStatus(job.jobId, "cancelled")} disabled={job.status === "cancelled"}><XCircle size={14} />{interfaceLanguage === "zh" ? "取消" : "Cancel"}</button>
+                    <button title={interfaceLanguage === "zh" ? "打开任务日志" : "Open job log"} onClick={() => job.logPath && openPath(vaultFilePath(job.logPath))} disabled={!job.logPath}><TerminalSquare size={14} />{interfaceLanguage === "zh" ? "日志" : "Log"}</button>
                   </div>
                 </div>
               ))}
@@ -2003,8 +2076,8 @@ function App() {
         <div className={classNames("main-grid view-section", pageVisible("traceability", "reviews") && "visible")}>
           <section className="panel large">
             <div className="section-head">
-              <h2>Traceability warnings</h2>
-              <span>{traceabilityWarnings.length} evidence-anchor issues</span>
+              <h2>{interfaceLanguage === "zh" ? "可追踪性警告" : "Traceability warnings"}</h2>
+              <span>{traceabilityWarnings.length} {interfaceLanguage === "zh" ? "个证据锚点问题" : "evidence-anchor issues"}</span>
             </div>
             <div className="impact-list">
               <TraceabilityActionCards
@@ -2019,20 +2092,20 @@ function App() {
 
           <section className="panel large">
             <div className="section-head">
-              <h2>Evidence path</h2>
-              <span>{evidencePaths.length} claims</span>
+              <h2>{interfaceLanguage === "zh" ? "证据路径" : "Evidence path"}</h2>
+              <span>{evidencePaths.length} {interfaceLanguage === "zh" ? "条论断" : "claims"}</span>
             </div>
             <div className="impact-list">
-              {evidencePaths.length === 0 && <p className="empty">暂无可追踪 claim。</p>}
+              {evidencePaths.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无可追踪论断。" : "No traceable claims yet."}</p>}
               {evidencePaths.map((item) => (
                 <div className="work-item" key={item.claimId}>
                   <span className={classNames("status-chip", item.chainStatus)}>{item.chainStatus}</span>
                   <strong>{item.claimText}</strong>
-                  <em>{item.concept || "no concept"} · {item.sourceId || item.sourceUuid || "no source"}</em>
-                  <code>{item.evidenceAnchor || "missing anchor"} · {item.missing.join(", ") || "chain complete"}</code>
+                  <em>{item.concept || (interfaceLanguage === "zh" ? "无概念" : "no concept")} · {item.sourceId || item.sourceUuid || (interfaceLanguage === "zh" ? "无资料" : "no source")}</em>
+                  <code>{item.evidenceAnchor || (interfaceLanguage === "zh" ? "缺失锚点" : "missing anchor")} · {item.missing.join(", ") || (interfaceLanguage === "zh" ? "证据链完整" : "chain complete")}</code>
                   <div className="inline-actions">
-                    <button onClick={() => item.sourcePage && openPath(vaultFilePath(item.sourcePage))} disabled={!item.sourcePage}><FolderOpen size={14} />source</button>
-                    <button onClick={() => item.artifactPath && openPath(vaultFilePath(item.artifactPath))} disabled={!item.artifactPath}><FileInput size={14} />artifact</button>
+                    <button onClick={() => item.sourcePage && openPath(vaultFilePath(item.sourcePage))} disabled={!item.sourcePage}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "资料" : "source"}</button>
+                    <button onClick={() => item.artifactPath && openPath(vaultFilePath(item.artifactPath))} disabled={!item.artifactPath}><FileInput size={14} />{interfaceLanguage === "zh" ? "解析产物" : "artifact"}</button>
                     <button onClick={() => item.qaReportPath && openPath(vaultFilePath(item.qaReportPath))} disabled={!item.qaReportPath}><ShieldCheck size={14} />QA</button>
                   </div>
                 </div>
@@ -2042,13 +2115,13 @@ function App() {
 
           <section className="panel large">
             <div className="section-head">
-              <h2>QA / Review 工作台</h2>
+              <h2>{interfaceLanguage === "zh" ? "QA / 审核工作台" : "QA / Review workspace"}</h2>
               <select className="compact-select" value={reviewFilter} onChange={(event) => setReviewFilter(event.target.value)}>
-                <option value="open">open</option>
-                <option value="approved">approved</option>
-                <option value="rejected">rejected</option>
-                <option value="ignored">ignored</option>
-                <option value="all">all</option>
+                <option value="open">{interfaceLanguage === "zh" ? "未处理" : "open"}</option>
+                <option value="approved">{interfaceLanguage === "zh" ? "已批准" : "approved"}</option>
+                <option value="rejected">{interfaceLanguage === "zh" ? "已拒绝" : "rejected"}</option>
+                <option value="ignored">{interfaceLanguage === "zh" ? "已忽略" : "ignored"}</option>
+                <option value="all">{interfaceLanguage === "zh" ? "全部" : "all"}</option>
               </select>
             </div>
             <div className="action-list">
@@ -2064,7 +2137,7 @@ function App() {
                     <button onClick={() => handleReviewStatus(item.itemId, "approved")} disabled={item.status === "approved"}><Check size={14} />批准</button>
                     <button onClick={() => handleReviewStatus(item.itemId, "rejected")} disabled={item.status === "rejected"}><XCircle size={14} />拒绝</button>
                     <button onClick={() => handleReviewStatus(item.itemId, "ignored")} disabled={item.status === "ignored"}><XCircle size={14} />忽略</button>
-                    <button onClick={() => handleFollowup(item)}><ClipboardList size={14} />follow-up</button>
+                    <button onClick={() => handleFollowup(item)}><ClipboardList size={14} />{interfaceLanguage === "zh" ? "后续动作" : "follow-up"}</button>
                   </div>
                 </div>
               ))}
@@ -2144,10 +2217,10 @@ function App() {
             <div className="section-head">
               <h2>下一步行动</h2>
               <select className="compact-select" value={actionFilter} onChange={(event) => setActionFilter(event.target.value)}>
-                <option value="open">open</option>
-                <option value="resolved">resolved</option>
-                <option value="ignored">ignored</option>
-                <option value="all">all</option>
+                <option value="open">{interfaceLanguage === "zh" ? "未处理" : "open"}</option>
+                <option value="resolved">{interfaceLanguage === "zh" ? "已解决" : "resolved"}</option>
+                <option value="ignored">{interfaceLanguage === "zh" ? "已忽略" : "ignored"}</option>
+                <option value="all">{interfaceLanguage === "zh" ? "全部" : "all"}</option>
               </select>
             </div>
             <div className="action-list">
@@ -2157,7 +2230,7 @@ function App() {
                   <span className={classNames("status-chip", action.severity)}>{action.severity}</span>
                   <strong>{action.title}</strong>
                   <em>{action.body}</em>
-                  <code>{action.status} · {action.recommendedAction} · affected {action.affectedObjects.length} · {action.reason}</code>
+                  <code>{action.status} · {action.recommendedAction} · {interfaceLanguage === "zh" ? "影响对象" : "affected"} {action.affectedObjects.length} · {action.reason}</code>
                   <div className="inline-actions">
                     <button title="打开关联文件" onClick={() => action.links[0] && openPath(vaultFilePath(action.links[0].path))}><FolderOpen size={14} />打开</button>
                     <button title="标记已解决" onClick={() => handleActionStatus(action.actionId, "resolved")} disabled={action.status === "resolved"}><Check size={14} />解决</button>
@@ -2171,26 +2244,26 @@ function App() {
 
           <section className="panel large">
             <div className="section-head">
-              <h2>Claim Ledger</h2>
+              <h2>{interfaceLanguage === "zh" ? "论断台账" : "Claim Ledger"}</h2>
               <select className="compact-select" value={claimFilter} onChange={(event) => setClaimFilter(event.target.value)}>
-                <option value="needs_review">needs_review</option>
-                <option value="stale">stale</option>
-                <option value="contradicted">contradicted</option>
-                <option value="supported">supported</option>
-                <option value="ignored">ignored</option>
-                <option value="all">all</option>
+                <option value="needs_review">{interfaceLanguage === "zh" ? "需审核" : "needs_review"}</option>
+                <option value="stale">{interfaceLanguage === "zh" ? "已失效" : "stale"}</option>
+                <option value="contradicted">{interfaceLanguage === "zh" ? "冲突" : "contradicted"}</option>
+                <option value="supported">{interfaceLanguage === "zh" ? "已支撑" : "supported"}</option>
+                <option value="ignored">{interfaceLanguage === "zh" ? "已忽略" : "ignored"}</option>
+                <option value="all">{interfaceLanguage === "zh" ? "全部" : "all"}</option>
               </select>
             </div>
             <div className="claim-list">
-              {visibleClaims.length === 0 && <p className="empty">暂无匹配 claims。</p>}
+              {visibleClaims.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无匹配论断。" : "No matching claims."}</p>}
               {visibleClaims.map((claim) => (
                 <div className="work-item" key={claim.claimId}>
                   <span className={classNames("status-chip", claim.verdict)}>{claim.verdict}</span>
                   <strong>{claim.claimText}</strong>
-                  <em>{claim.sourceId || claim.sourceUuid || claim.sourcePath || `line ${claim.line}`}</em>
-                  <code>{claim.evidenceHash || "no evidence hash"} · {claim.evidenceQuote || "no quote"}</code>
+                  <em>{claim.sourceId || claim.sourceUuid || claim.sourcePath || `${interfaceLanguage === "zh" ? "第" : "line "}${claim.line}${interfaceLanguage === "zh" ? "行" : ""}`}</em>
+                  <code>{claim.evidenceHash || (interfaceLanguage === "zh" ? "无证据哈希" : "no evidence hash")} · {claim.evidenceQuote || (interfaceLanguage === "zh" ? "无引文" : "no quote")}</code>
                   <div className="inline-actions">
-                    <button onClick={() => selectClaimForDetails(claim)}><PanelRightOpen size={14} />details</button>
+                    <button onClick={() => selectClaimForDetails(claim)}><PanelRightOpen size={14} />{interfaceLanguage === "zh" ? "详情" : "details"}</button>
                     <button onClick={() => openPath(vaultFilePath("claims/claims.jsonl"))}><FolderOpen size={14} />打开</button>
                     <button onClick={() => handleClaimVerdict(claim.claimId, "supported")} disabled={claim.verdict === "supported"}><Check size={14} />支持</button>
                     <button onClick={() => handleClaimVerdict(claim.claimId, "needs_review")} disabled={claim.verdict === "needs_review"}><AlertTriangle size={14} />待审</button>
@@ -2207,17 +2280,17 @@ function App() {
         <div className={classNames("main-grid view-section", pageVisible("concepts") && "visible")}>
           <section className="panel large">
             <div className="section-head">
-              <h2>Source Registry</h2>
-              <span>{registry.length} rows</span>
+              <h2>{interfaceLanguage === "zh" ? "资料登记" : "Source Registry"}</h2>
+              <span>{registry.length} {interfaceLanguage === "zh" ? "行" : "rows"}</span>
             </div>
             <div className="registry-list">
-              {registry.length === 0 && <p className="empty">暂无 registry 投影。</p>}
+              {registry.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无资料登记投影。" : "No registry projection yet."}</p>}
               {registry.map((entry) => (
                 <button key={`${entry.sourceUuid}-${entry.sourcePath}`} onClick={() => openPath(vaultFilePath(entry.sourcePath))}>
                   <span className={classNames("status-chip", entry.status)}>{entry.status}</span>
                   <strong>{entry.sourceId || entry.sourceUuid}</strong>
-                  <em>{entry.sourcePath}{entry.duplicateOf ? ` · duplicate of ${entry.duplicateOf}` : ""}</em>
-                  <code>{entry.sourcePage || "source page pending"} · {entry.artifactSha256 || "no artifact hash"} · {entry.parser || "parser pending"}</code>
+                  <em>{entry.sourcePath}{entry.duplicateOf ? ` · ${interfaceLanguage === "zh" ? "重复于" : "duplicate of"} ${entry.duplicateOf}` : ""}</em>
+                  <code>{entry.sourcePage || (interfaceLanguage === "zh" ? "资料页面待生成" : "source page pending")} · {entry.artifactSha256 || (interfaceLanguage === "zh" ? "无解析产物哈希" : "no artifact hash")} · {entry.parser || (interfaceLanguage === "zh" ? "解析器待定" : "parser pending")}</code>
                 </button>
               ))}
             </div>
@@ -2225,14 +2298,14 @@ function App() {
 
           <section className="panel large">
             <div className="section-head">
-              <h2>Sources / Concepts / Reports</h2>
-              <span>{status?.files.length ?? 0} items</span>
+              <h2>{interfaceLanguage === "zh" ? "资料 / 概念 / 报告" : "Sources / Concepts / Reports"}</h2>
+              <span>{status?.files.length ?? 0} {interfaceLanguage === "zh" ? "项" : "items"}</span>
             </div>
             <div className="browser">
-              <FileColumn title="Inbox" files={grouped.inbox} onSelect={selectFileForDetails} />
-              <FileColumn title="Sources" files={[...grouped.source, ...grouped.draft]} onSelect={selectFileForDetails} />
-              <FileColumn title="Concepts" files={grouped.concept} onSelect={selectFileForDetails} />
-              <FileColumn title="Reports" files={grouped.report} onSelect={selectFileForDetails} />
+              <FileColumn title={interfaceLanguage === "zh" ? "收件箱" : "Inbox"} files={grouped.inbox} onSelect={selectFileForDetails} />
+              <FileColumn title={interfaceLanguage === "zh" ? "资料" : "Sources"} files={[...grouped.source, ...grouped.draft]} onSelect={selectFileForDetails} />
+              <FileColumn title={interfaceLanguage === "zh" ? "概念" : "Concepts"} files={grouped.concept} onSelect={selectFileForDetails} />
+              <FileColumn title={interfaceLanguage === "zh" ? "报告" : "Reports"} files={grouped.report} onSelect={selectFileForDetails} />
             </div>
           </section>
         </div>
@@ -2240,8 +2313,8 @@ function App() {
         <div className={classNames("main-grid view-section", pageVisible("dashboard") && "visible")}>
           <section className="panel large">
             <div className="section-head">
-              <h2>Pipeline 状态</h2>
-              <span>{busy ? `running: ${busy}` : "idle"}</span>
+              <h2>{interfaceLanguage === "zh" ? "处理流程状态" : "Pipeline status"}</h2>
+              <span>{busy ? `${interfaceLanguage === "zh" ? "运行中" : "running"}: ${busy}` : interfaceLanguage === "zh" ? "空闲" : "idle"}</span>
             </div>
             <ol className="pipeline">
               {pipeline.map((stage, index) => (
@@ -2256,7 +2329,7 @@ function App() {
 
           <section className="panel large">
             <div className="section-head">
-              <h2>Ingest plan</h2>
+              <h2>{interfaceLanguage === "zh" ? "导入计划" : "Ingest plan"}</h2>
               <ShieldCheck size={18} />
             </div>
             <div className="ingest-list">
@@ -2270,7 +2343,7 @@ function App() {
                 </button>
               ))}
             </div>
-            {ingestPlan && <p className="note">Plan file: {ingestPlan.planPath}</p>}
+            {ingestPlan && <p className="note">{interfaceLanguage === "zh" ? "计划文件" : "Plan file"}: {ingestPlan.planPath}</p>}
           </section>
         </div>
 
@@ -2285,14 +2358,14 @@ function App() {
               {logs.map((log) => (
                 <button key={log.id} className="log-item" onClick={() => openPath(log.logPath)}>
                   <span>{log.kind}</span>
-                  <strong className={log.exitCode === 0 ? "pass" : "fail"}>exit {log.exitCode}</strong>
+                  <strong className={log.exitCode === 0 ? "pass" : "fail"}>{interfaceLanguage === "zh" ? "退出码" : "exit"} {log.exitCode}</strong>
                   <em>{log.logPath}</em>
                 </button>
               ))}
               {diagnosticPath && (
                 <button className="log-item" onClick={() => openPath(diagnosticPath)}>
-                  <span>diagnostic bundle</span>
-                  <strong className="pass">ready</strong>
+                  <span>{interfaceLanguage === "zh" ? "诊断包" : "diagnostic bundle"}</span>
+                  <strong className="pass">{interfaceLanguage === "zh" ? "就绪" : "ready"}</strong>
                   <em>{diagnosticPath}</em>
                 </button>
               )}
@@ -2301,17 +2374,21 @@ function App() {
 
           <section className="panel">
             <div className="section-head">
-              <h2>Artifact contract</h2>
-              <span>{artifacts.length} artifacts</span>
+              <h2>{interfaceLanguage === "zh" ? "解析产物合约" : "Artifact contract"}</h2>
+              <span>{artifacts.length} {interfaceLanguage === "zh" ? "个解析产物" : "artifacts"}</span>
             </div>
             <div className="contract-list">
-              {artifacts.length === 0 && <p className="empty">暂无 artifact contract。</p>}
+              {artifacts.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无解析产物合约。" : "No artifact contracts yet."}</p>}
               {artifacts.map((artifact) => (
                 <button key={artifact.artifactPath} onClick={() => openPath(vaultFilePath(artifact.manifestPath || artifact.artifactPath))}>
                   <span className={classNames("status-chip", artifact.status)}>{artifact.status}</span>
                   <strong>{artifact.artifactPath}</strong>
-                  <em>{artifact.parser || "legacy parser"} · schema {artifact.schemaVersion || "missing"} · valid {artifact.contractValid ? "yes" : "no"} · chunks {artifact.chunkCount}</em>
-                  <code>pages {artifact.anchorsPages ? "yes" : "no"} · tables {artifact.anchorsTables ? "yes" : "no"} · figures {artifact.anchorsFigures ? "yes" : "no"} · {artifact.parseLogPath || artifact.limitations[0] || "contract complete"}</code>
+                  <em>
+                    {artifact.parser || (interfaceLanguage === "zh" ? "旧解析器" : "legacy parser")} · {interfaceLanguage === "zh" ? "结构" : "schema"} {artifact.schemaVersion || (interfaceLanguage === "zh" ? "缺失" : "missing")} · {interfaceLanguage === "zh" ? "有效" : "valid"} {artifact.contractValid ? (interfaceLanguage === "zh" ? "是" : "yes") : (interfaceLanguage === "zh" ? "否" : "no")} · {interfaceLanguage === "zh" ? "分块" : "chunks"} {artifact.chunkCount}
+                  </em>
+                  <code>
+                    {interfaceLanguage === "zh" ? "页面" : "pages"} {artifact.anchorsPages ? (interfaceLanguage === "zh" ? "是" : "yes") : (interfaceLanguage === "zh" ? "否" : "no")} · {interfaceLanguage === "zh" ? "表格" : "tables"} {artifact.anchorsTables ? (interfaceLanguage === "zh" ? "是" : "yes") : (interfaceLanguage === "zh" ? "否" : "no")} · {interfaceLanguage === "zh" ? "图" : "figures"} {artifact.anchorsFigures ? (interfaceLanguage === "zh" ? "是" : "yes") : (interfaceLanguage === "zh" ? "否" : "no")} · {artifact.parseLogPath || artifact.limitations[0] || (interfaceLanguage === "zh" ? "合约完整" : "contract complete")}
+                  </code>
                 </button>
               ))}
             </div>
@@ -2321,7 +2398,7 @@ function App() {
         <div className={classNames("main-grid view-section", pageVisible("traceability") && "visible")}>
           <section className="panel">
             <div className="section-head">
-              <h2>Contract lint</h2>
+              <h2>{interfaceLanguage === "zh" ? "合约检查" : "Contract lint"}</h2>
               <span>{lintFindings.length} findings</span>
             </div>
             <div className="impact-list">
@@ -2368,7 +2445,7 @@ function App() {
         <section className={classNames("panel view-section", pageVisible("traceability") && "visible")}>
           <div className="section-head">
             <h2>Impact graph</h2>
-            <span>{impactEdges.length} edges</span>
+            <span>{impactEdges.length} {interfaceLanguage === "zh" ? "条边" : "edges"}</span>
           </div>
           <div className="impact-list compact">
             {impactEdges.length === 0 && <p className="empty">暂无影响边。</p>}

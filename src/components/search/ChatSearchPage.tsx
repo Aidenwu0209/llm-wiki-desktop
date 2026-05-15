@@ -25,7 +25,7 @@ const DEFAULT_DEEPSEEK_QUESTIONS = [
   "DeepSeek 的研发思路是什么？",
   "DeepSeek 如何做技术取舍？",
   "DeepSeek 可能如何演进？",
-  "哪些洞察值得写回 wiki？",
+  "哪些洞察值得写回知识库？",
 ];
 
 const DEFAULT_DEEPSEEK_QUESTIONS_EN = [
@@ -108,33 +108,62 @@ const chatCopy = {
     target: "写回目标",
     searchEvidence: "搜索证据",
     draftAnswer: "生成本地证据草稿",
-    createProposal: "创建 proposal",
-    boundaryTitle: "Proposal-first 边界",
-    boundaryBody: "本页面基于 vault evidence 生成本地草稿，不把草稿伪装成模型最终回答，也不会直接写入 source 或 concept。创建 query writeback 仍会先进入 proposal approval gate。",
-    providerLabel: "Provider 配置",
-    providerDraftOnly: "仅用于展示当前 active provider；此页面当前不调用 LLM。",
-    history: "Query 历史",
-    emptyHistory: "生成 evidence draft 或创建 proposal 后，会保存当前 vault 专属的 query history。",
+    createProposal: "创建提案",
+    boundaryTitle: "先提案后写回边界",
+    boundaryBody: "本页面基于知识库证据生成本地草稿，不把草稿伪装成模型最终回答，也不会直接写入资料或概念页。创建问答写回时仍会先进入提案审批门。",
+    providerLabel: "当前提供方",
+    providerDraftOnly: "仅用于展示当前启用的提供方；此页面当前不调用大模型。",
+    history: "查询历史",
+    emptyHistory: "生成证据草稿或创建提案后，会保存当前知识库专属的查询历史。",
     results: "结果",
     shown: "显示",
-    searchPlaceholder: "搜索 source pages、claims、concepts、reviews 和 writeback proposals",
-    noVault: "打开或刷新 generated vault 后即可搜索 wiki 对象。",
-    noMatch: "没有匹配的 vault 对象。",
-    answer: "本地 Evidence Draft",
-    answerKinds: "本地检索 · evidence · inference · hypothesis · forecast",
+    searchPlaceholder: "搜索资料页、论断、概念、审核和写回提案",
+    noVault: "打开或刷新已生成的知识库后即可搜索对象。",
+    noMatch: "没有匹配的知识库对象。",
+    answer: "本地证据草稿",
+    answerKinds: "本地检索 · 证据 · 推断 · 假设 · 预测",
     selected: "选中结果",
-    noSnippet: "没有 snippet。",
+    none: "无",
+    noSnippet: "没有摘要。",
     selectResult: "选择一个结果，检查路径、证据关系和动作。",
     copyDraft: "复制草稿",
-    draftPlaceholder: "先选择问题或执行搜索，再生成本地 evidence draft。此处不调用 LLM，输出保持本地草稿，直到转换为 writeback proposal。",
+    draftPlaceholder: "先选择问题或执行搜索，再生成本地证据草稿。此处不调用大模型，输出保持本地草稿，直到转换为写回提案。",
     evidenceMap: "证据图",
-    references: "references",
+    references: "条引用",
     currentEvidence: "当前回答证据",
     selectedCount: "已选择",
-    evidenceEmpty: "搜索结果会填充 evidence map。",
-    noEvidenceQuote: "没有加载 evidence quote。",
-    writebackProposals: "Writeback proposals",
-    noProposals: "没有加载 query writeback proposals。",
+    evidenceEmpty: "搜索结果会填充证据图。",
+    noEvidenceQuote: "没有加载证据摘录。",
+    writebackProposals: "写回提案",
+    noProposals: "没有加载问答写回提案。",
+    evidenceCount: "条证据",
+    loadedStatus: "已加载",
+    proposalFallback: "提案",
+    filters: {
+      all: "全部类型",
+      source: "资料",
+      claim: "论断",
+      concept: "概念",
+      draft: "草稿",
+      review: "审核",
+      writeback: "写回提案",
+      evidence: "证据路径",
+      traceability: "可追踪性",
+      report: "报告",
+      inbox: "收件箱",
+    },
+    resultTypes: {
+      source: "资料",
+      claim: "论断",
+      concept: "概念",
+      draft: "草稿",
+      review: "审核",
+      writeback: "写回提案",
+      evidence: "证据路径",
+      traceability: "可追踪性",
+      report: "报告",
+      inbox: "收件箱",
+    },
     actions: { open: "打开", reveal: "显示", path: "路径", evidence: "证据", copy: "复制", obsidian: "Obsidian" },
   },
   en: {
@@ -159,6 +188,7 @@ const chatCopy = {
     answer: "Local Evidence Draft",
     answerKinds: "local search · evidence · inference · hypothesis · forecast",
     selected: "Selected result",
+    none: "none",
     noSnippet: "No snippet available.",
     selectResult: "Select a result to inspect its path, evidence relation, and actions.",
     copyDraft: "copy draft",
@@ -171,6 +201,34 @@ const chatCopy = {
     noEvidenceQuote: "No evidence quote loaded.",
     writebackProposals: "Writeback proposals",
     noProposals: "No query writeback proposals loaded.",
+    evidenceCount: "evidence",
+    loadedStatus: "loaded",
+    proposalFallback: "proposal",
+    filters: {
+      all: "all types",
+      source: "sources",
+      claim: "claims",
+      concept: "concepts",
+      draft: "drafts",
+      review: "reviews",
+      writeback: "writebacks",
+      evidence: "evidence paths",
+      traceability: "traceability",
+      report: "reports",
+      inbox: "inbox",
+    },
+    resultTypes: {
+      source: "source",
+      claim: "claim",
+      concept: "concept",
+      draft: "draft",
+      review: "review",
+      writeback: "writeback",
+      evidence: "evidence",
+      traceability: "traceability",
+      report: "report",
+      inbox: "inbox",
+    },
     actions: { open: "open", reveal: "reveal", path: "path", evidence: "evidence", copy: "copy", obsidian: "Obsidian" },
   },
 } as const;
@@ -199,9 +257,63 @@ function compactText(value?: string | null, maxLength = 220) {
   return `${text.slice(0, maxLength - 1).trim()}...`;
 }
 
-function relation(label: string, value?: string | number | boolean | null) {
+const relationCopy = {
+  zh: {
+    kind: "类型",
+    status: "状态",
+    qa: "QA",
+    needsReview: "待审核",
+    updated: "更新",
+    claim: "论断",
+    source: "资料",
+    sourcePath: "资料路径",
+    verdict: "结论",
+    concepts: "概念",
+    line: "行",
+    concept: "概念",
+    semantic: "语义",
+    scienceReview: "科学审核",
+    missing: "缺失",
+    review: "审核",
+    action: "动作",
+    proposal: "提案",
+    target: "目标",
+    applied: "已应用",
+    artifact: "解析产物",
+    missingAnchor: "缺失锚点",
+  },
+  en: {
+    kind: "kind",
+    status: "status",
+    qa: "QA",
+    needsReview: "needs review",
+    updated: "updated",
+    claim: "claim",
+    source: "source",
+    sourcePath: "source path",
+    verdict: "verdict",
+    concepts: "concepts",
+    line: "line",
+    concept: "concept",
+    semantic: "semantic",
+    scienceReview: "science review",
+    missing: "missing",
+    review: "review",
+    action: "action",
+    proposal: "proposal",
+    target: "target",
+    applied: "applied",
+    artifact: "artifact",
+    missingAnchor: "missing anchor",
+  },
+} as const;
+
+type RelationLabels = (typeof relationCopy)[UiLanguage];
+type RelationKey = keyof RelationLabels;
+
+function relation(labels: RelationLabels, label: RelationKey, value?: string | number | boolean | null) {
   if (value === undefined || value === null || value === "" || value === false) return null;
-  return `${label}: ${String(value)}`;
+  return `${labels[label]}: ${String(value)}`;
 }
 
 function normalizeHistoryEvidence(value: unknown): HistoryEvidenceRef[] {
@@ -281,16 +393,21 @@ function saveHistory(vaultPath: string, history: QueryHistoryItem[]) {
   }
 }
 
-function providerSummary(center?: LlmProviderCenterSettings | null) {
+function providerSummary(center?: LlmProviderCenterSettings | null, language: UiLanguage = "en") {
   const activeProviderId = center?.activeProviderId || "codex-cli";
   const activeConfig = center?.providers?.[activeProviderId];
   const model = activeConfig?.customModel?.trim() || activeConfig?.selectedModel || "default";
-  const window = activeConfig?.contextWindow ? `${activeConfig.contextWindow.toLocaleString()} tokens` : "context unset";
+  const window = activeConfig?.contextWindow
+    ? `${activeConfig.contextWindow.toLocaleString()} ${language === "zh" ? "令牌" : "tokens"}`
+    : language === "zh" ? "上下文未设置" : "context unset";
   const reasoning = activeConfig?.reasoningMode || "balanced";
+  const reasoningLabel = language === "zh"
+    ? ({ fast: "快速", balanced: "平衡", deep: "深度思考" } as Record<string, string>)[reasoning] || reasoning
+    : reasoning;
   return {
     name: providerNames[activeProviderId] || activeProviderId,
     model,
-    detail: `${model} · ${window} · ${reasoning}`,
+    detail: `${model} · ${window} · ${reasoningLabel}`,
   };
 }
 
@@ -408,7 +525,8 @@ function buildSearchIndex({
   reviewItems,
   writebacks,
   traceabilityWarnings,
-}: Pick<ChatSearchPageProps, "status" | "claims" | "evidencePaths" | "reviewItems" | "writebacks" | "traceabilityWarnings">) {
+  labels,
+}: Pick<ChatSearchPageProps, "status" | "claims" | "evidencePaths" | "reviewItems" | "writebacks" | "traceabilityWarnings"> & { labels: RelationLabels }) {
   const evidenceByClaim = buildEvidenceIndex(evidencePaths);
   const results: SearchResult[] = [];
   const files = status?.files ?? [];
@@ -417,11 +535,11 @@ function buildSearchIndex({
     const title = file.title || file.name || file.path;
     const status = file.status || file.qaVerdict || (file.needsReview ? "needs_review" : null);
     const relations = unique([
-      relation("kind", file.kind),
-      relation("status", file.status),
-      relation("QA", file.qaVerdict),
-      relation("needs review", file.needsReview ? file.needsReview : null),
-      relation("updated", file.updated),
+      relation(labels, "kind", file.kind),
+      relation(labels, "status", file.status),
+      relation(labels, "qa", file.qaVerdict),
+      relation(labels, "needsReview", file.needsReview ? file.needsReview : null),
+      relation(labels, "updated", file.updated),
     ]);
     const snippet = compactText([status, file.updated, file.path].filter(Boolean).join(" · "));
     results.push({
@@ -443,13 +561,13 @@ function buildSearchIndex({
     const evidence = evidenceItems[0];
     const sourcePath = claim.sourcePath || evidence?.sourcePage || evidence?.rawPath || "";
     const relations = unique([
-      relation("claim", claim.claimId),
-      relation("source", claim.sourceId || claim.sourceUuid || evidence?.sourceId),
-      relation("source path", sourcePath),
-      relation("verdict", claim.verdict),
-      relation("status", claim.status),
-      relation("concepts", claim.concepts.join(", ")),
-      relation("line", claim.line),
+      relation(labels, "claim", claim.claimId),
+      relation(labels, "source", claim.sourceId || claim.sourceUuid || evidence?.sourceId),
+      relation(labels, "sourcePath", sourcePath),
+      relation(labels, "verdict", claim.verdict),
+      relation(labels, "status", claim.status),
+      relation(labels, "concepts", claim.concepts.join(", ")),
+      relation(labels, "line", claim.line),
     ]);
     results.push({
       id: `claim:${claim.claimId}:${claim.line}`,
@@ -479,12 +597,12 @@ function buildSearchIndex({
   for (const item of evidencePaths) {
     const path = item.sourcePage || item.artifactPath || item.qaReportPath || item.rawPath || CLAIM_LEDGER_PATH;
     const relations = unique([
-      relation("claim", item.claimId),
-      relation("source", item.sourceId || item.sourceUuid),
-      relation("concept", item.concept),
-      relation("semantic", item.semanticStatus),
-      relation("science review", item.scienceReviewStatus),
-      relation("missing", item.missing.join(", ")),
+      relation(labels, "claim", item.claimId),
+      relation(labels, "source", item.sourceId || item.sourceUuid),
+      relation(labels, "concept", item.concept),
+      relation(labels, "semantic", item.semanticStatus),
+      relation(labels, "scienceReview", item.scienceReviewStatus),
+      relation(labels, "missing", item.missing.join(", ")),
     ]);
     results.push({
       id: `evidence:${item.claimId}:${path}`,
@@ -517,12 +635,12 @@ function buildSearchIndex({
   for (const item of reviewItems) {
     const path = item.targetPath || item.evidencePath || REVIEW_QUEUE_PATH;
     const relations = unique([
-      relation("review", item.itemId),
-      relation("kind", item.kind),
-      relation("claim", item.claimId),
-      relation("source", item.sourceId),
-      relation("status", item.status),
-      relation("action", item.recommendedAction),
+      relation(labels, "review", item.itemId),
+      relation(labels, "kind", item.kind),
+      relation(labels, "claim", item.claimId),
+      relation(labels, "source", item.sourceId),
+      relation(labels, "status", item.status),
+      relation(labels, "action", item.recommendedAction),
     ]);
     results.push({
       id: `review:${item.itemId}`,
@@ -554,11 +672,11 @@ function buildSearchIndex({
   for (const proposal of writebacks) {
     const path = proposal.targetPath || WRITEBACK_QUEUE_PATH;
     const relations = unique([
-      relation("proposal", proposal.proposalId),
-      relation("status", proposal.status),
-      relation("target", proposal.targetPath),
-      relation("updated", proposal.updatedAt),
-      relation("applied", proposal.appliedAt),
+      relation(labels, "proposal", proposal.proposalId),
+      relation(labels, "status", proposal.status),
+      relation(labels, "target", proposal.targetPath),
+      relation(labels, "updated", proposal.updatedAt),
+      relation(labels, "applied", proposal.appliedAt),
     ]);
     results.push({
       id: `writeback:${proposal.proposalId}`,
@@ -585,12 +703,12 @@ function buildSearchIndex({
   for (const warning of traceabilityWarnings) {
     const path = warning.sourcePath || warning.artifactPath || warning.claimPath || CLAIM_LEDGER_PATH;
     const relations = unique([
-      relation("claim", warning.claimId),
-      relation("source", warning.sourceId),
-      relation("source path", warning.sourcePath),
-      relation("artifact", warning.artifactPath),
-      relation("missing anchor", warning.missingAnchor),
-      relation("action", warning.nextAction || warning.suggestedAction),
+      relation(labels, "claim", warning.claimId),
+      relation(labels, "source", warning.sourceId),
+      relation(labels, "sourcePath", warning.sourcePath),
+      relation(labels, "artifact", warning.artifactPath),
+      relation(labels, "missingAnchor", warning.missingAnchor),
+      relation(labels, "action", warning.nextAction || warning.suggestedAction),
     ]);
     results.push({
       id: `traceability:${warning.warningId}`,
@@ -624,23 +742,58 @@ function buildSearchIndex({
   return results;
 }
 
-function answerTheme(question: string) {
-  if (question.includes("取舍")) return "technical tradeoff";
-  if (question.includes("演进")) return "evolution forecast";
-  if (question.includes("写回")) return "writeback candidate";
+function answerTheme(question: string, language: UiLanguage) {
+  if (language === "zh") {
+    if (question.includes("取舍")) return "技术取舍";
+    if (question.includes("演进")) return "演进预测";
+    if (question.includes("写回")) return "写回候选";
+    return "研发思路";
+  }
+  if (question.includes("tradeoff")) return "technical tradeoff";
+  if (question.includes("evolve")) return "evolution forecast";
+  if (question.includes("write")) return "writeback candidate";
   return "research strategy";
 }
 
-function buildAnswerDraft(question: string, targetPath: string, evidence: SearchResult[]) {
-  const theme = answerTheme(question);
+function buildAnswerDraft(question: string, targetPath: string, evidence: SearchResult[], language: UiLanguage, typeLabel: (type: SearchKind) => string) {
+  const theme = answerTheme(question, language);
+  const claimPrefix = language === "zh" ? "论断:" : "claim:";
+  const sourcePrefix = language === "zh" ? "资料" : "source";
   const evidenceBullets = evidence.length
     ? evidence.map((item, index) => (
-      `- E${index + 1} [${item.type}] ${item.title} (${item.path}): ${item.snippet}${item.evidence ? ` Evidence: ${item.evidence}` : ""}`
+      `- E${index + 1} [${typeLabel(item.type)}] ${item.title} (${item.path}): ${item.snippet}${item.evidence ? ` ${language === "zh" ? "证据" : "Evidence"}: ${item.evidence}` : ""}`
     )).join("\n")
-    : "- No loaded vault evidence matched yet. Refresh the vault or run ingest before turning this into a proposal.";
+    : language === "zh"
+      ? "- 还没有匹配到已加载的知识库证据。请先刷新知识库或运行导入流程，再转成提案。"
+      : "- No loaded vault evidence matched yet. Refresh the vault or run ingest before turning this into a proposal.";
 
-  const claimRefs = unique(evidence.map((item) => item.relations.find((entry) => entry.startsWith("claim:")) ?? null)).slice(0, 5);
-  const sourceRefs = unique(evidence.map((item) => item.relations.find((entry) => entry.startsWith("source")) ?? null)).slice(0, 5);
+  const claimRefs = unique(evidence.map((item) => item.relations.find((entry) => entry.startsWith(claimPrefix)) ?? null)).slice(0, 5);
+  const sourceRefs = unique(evidence.map((item) => item.relations.find((entry) => entry.startsWith(sourcePrefix)) ?? null)).slice(0, 5);
+
+  if (language === "zh") {
+    return [
+      `问题：${question || "未输入问题"}`,
+      "草稿方法：本地确定性证据提纲；未调用大模型提供方。",
+      "",
+      "## 证据",
+      evidenceBullets,
+      "",
+      "## 推断",
+      `- 主题：${theme}。当前回答必须受上方已检索知识库对象约束，尤其是论断、资料页、概念、审核项和写回提案。`,
+      `- 范围内论断引用：${claimRefs.length ? claimRefs.join("; ") : "已加载证据中暂无论断引用"}。`,
+      `- 范围内资料引用：${sourceRefs.length ? sourceRefs.join("; ") : "已加载证据中暂无资料引用"}。`,
+      "",
+      "## 假设",
+      "- 更强的回答需要等待未解决审核项和断裂证据锚点修复后再形成；不要把本节视为已批准的知识库内容。",
+      "",
+      "## 预测",
+      "- 只有当证据图中可见支撑资料或论断链时，预测才应写成可能演进路径。",
+      "",
+      "## 先提案后写回",
+      `- 目标提案路径：${targetPath || "reviews/query-writeback/deepseek-research-insights.md"}。`,
+      "- 下一步：创建问答写回提案供审核。本页面不会应用写入，也不会批准提案。",
+    ].join("\n");
+  }
 
   return [
     `Question: ${question || "No question entered"}`,
@@ -686,6 +839,7 @@ export function ChatSearchPage({
   onCopyText,
 }: ChatSearchPageProps) {
   const text = chatCopy[language];
+  const typeLabel = (type: SearchKind) => (text.resultTypes as Record<SearchKind, string>)[type] || type;
   const defaultQuestions = language === "zh" ? DEFAULT_DEEPSEEK_QUESTIONS : DEFAULT_DEEPSEEK_QUESTIONS_EN;
   const [searchText, setSearchText] = useState("");
   const [typeFilter, setTypeFilter] = useState<SearchFilter>("all");
@@ -694,10 +848,10 @@ export function ChatSearchPage({
   const [answerDraft, setAnswerDraft] = useState("");
   const [selectedResultId, setSelectedResultId] = useState<string | null>(null);
   const [history, setHistory] = useState<QueryHistoryItem[]>(() => loadHistory(vaultPath));
-  const activeProvider = useMemo(() => providerSummary(providerCenter), [providerCenter]);
+  const activeProvider = useMemo(() => providerSummary(providerCenter, language), [providerCenter, language]);
   const index = useMemo(
-    () => buildSearchIndex({ status, claims, evidencePaths, reviewItems, writebacks, traceabilityWarnings }),
-    [claims, evidencePaths, reviewItems, status, traceabilityWarnings, writebacks],
+    () => buildSearchIndex({ status, claims, evidencePaths, reviewItems, writebacks, traceabilityWarnings, labels: relationCopy[language] }),
+    [claims, evidencePaths, language, reviewItems, status, traceabilityWarnings, writebacks],
   );
 
   useEffect(() => {
@@ -762,7 +916,7 @@ export function ChatSearchPage({
     const draftEvidence = pickAnswerEvidence(draftResults, draftSelected);
     setSearchText(draftSearchText);
     setSelectedResultId(draftSelected?.id ?? null);
-    setAnswerDraft(buildAnswerDraft(question, targetPath, draftEvidence));
+    setAnswerDraft(buildAnswerDraft(question, targetPath, draftEvidence, language, typeLabel));
     rememberQuery(question, { searchText: draftSearchText, evidence: draftEvidence });
   };
 
@@ -775,7 +929,7 @@ export function ChatSearchPage({
     setSearchText(proposalSearchText);
     setTargetPath(proposalTarget);
     setSelectedResultId(proposalSelected?.id ?? null);
-    setAnswerDraft(buildAnswerDraft(question, proposalTarget, proposalEvidence));
+    setAnswerDraft(buildAnswerDraft(question, proposalTarget, proposalEvidence, language, typeLabel));
     rememberQuery(question, {
       searchText: proposalSearchText,
       targetPath: proposalTarget,
@@ -872,7 +1026,7 @@ export function ChatSearchPage({
                 <History size={14} />
                 <span>{item.question}</span>
                 <em>
-                  {item.evidence.length} evidence
+                  {item.evidence.length} {text.evidenceCount}
                   {item.proposal ? ` · ${item.proposal.status}` : ""}
                 </em>
                 {item.targetPath && <code>{item.targetPath}</code>}
@@ -894,17 +1048,17 @@ export function ChatSearchPage({
             />
           </label>
           <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value as SearchFilter)}>
-            <option value="all">all types</option>
-            <option value="source">sources</option>
-            <option value="claim">claims</option>
-            <option value="concept">concepts</option>
-            <option value="draft">drafts</option>
-            <option value="review">reviews</option>
-            <option value="writeback">writebacks</option>
-            <option value="evidence">evidence paths</option>
-            <option value="traceability">traceability</option>
-            <option value="report">reports</option>
-            <option value="inbox">inbox</option>
+            <option value="all">{text.filters.all}</option>
+            <option value="source">{text.filters.source}</option>
+            <option value="claim">{text.filters.claim}</option>
+            <option value="concept">{text.filters.concept}</option>
+            <option value="draft">{text.filters.draft}</option>
+            <option value="review">{text.filters.review}</option>
+            <option value="writeback">{text.filters.writeback}</option>
+            <option value="evidence">{text.filters.evidence}</option>
+            <option value="traceability">{text.filters.traceability}</option>
+            <option value="report">{text.filters.report}</option>
+            <option value="inbox">{text.filters.inbox}</option>
           </select>
         </div>
         <div className="search-results">
@@ -921,7 +1075,7 @@ export function ChatSearchPage({
               </span>
               <div className="search-result-body">
                 <strong>{result.title}</strong>
-                <em>{result.type} · {result.path}</em>
+                <em>{typeLabel(result.type)} · {result.path}</em>
                 <p>{result.snippet || text.noSnippet}</p>
                 {result.evidence && <code>{result.evidence}</code>}
                 <div className="relation-list">
@@ -953,7 +1107,7 @@ export function ChatSearchPage({
         <div className="selected-result-panel">
           <div className="section-head compact">
             <h3>{text.selected}</h3>
-            <span>{selectedResult?.type || "none"}</span>
+            <span>{selectedResult ? typeLabel(selectedResult.type) : text.none}</span>
           </div>
           {selectedResult ? (
             <div className="selected-result-detail">
@@ -1012,7 +1166,7 @@ export function ChatSearchPage({
               <button key={`evidence-map-${item.id}`} type="button" onClick={() => openResult(item)}>
                 <span>E{index + 1}</span>
                 <strong>{item.title}</strong>
-                <em>{item.type} · {item.status || "loaded"}</em>
+                <em>{typeLabel(item.type)} · {item.status || text.loadedStatus}</em>
               </button>
             ))}
           </div>
@@ -1053,7 +1207,7 @@ export function ChatSearchPage({
               >
                 <GitCompare size={14} />
                 <span>{proposal.title}</span>
-                <em>{proposal.status || "proposal"} · {proposal.path}</em>
+                <em>{proposal.status || text.proposalFallback} · {proposal.path}</em>
               </button>
             ))}
           </div>

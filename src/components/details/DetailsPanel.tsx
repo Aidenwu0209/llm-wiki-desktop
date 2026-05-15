@@ -35,27 +35,27 @@ type DetailsPanelProps = {
 const detailsCopy = {
   zh: {
     title: "详情",
-    emptyTitle: "选择 evidence 查看详情",
-    emptyBody: "选择 source、claim、warning 或 writeback proposal 后，这里会固定显示路径、证据和可执行动作。",
-    noVault: "未选择 vault",
+    emptyTitle: "选择证据查看详情",
+    emptyBody: "选择资料、论断、警告或写回提案后，这里会固定显示路径、证据和可执行动作。",
+    noVault: "未选择知识库",
     open: "打开",
     reveal: "显示",
     copyPath: "复制路径",
-    source: "Source",
+    source: "资料",
     status: "状态",
     concepts: "概念",
     evidence: "证据",
-    unknown: "unknown",
-    none: "none",
+    unknown: "未知",
+    none: "无",
     notLinked: "未关联",
-    noQuote: "没有记录 direct quote。",
-    copyClaim: "复制 claim text",
-    claim: "claim",
+    noQuote: "没有记录原文引文。",
+    copyClaim: "复制论断文本",
+    claim: "论断",
     missing: "缺失",
-    artifact: "artifact",
-    copyId: "复制 id",
-    log: "log",
-    copyDiff: "复制 diff",
+    artifact: "解析产物",
+    copyId: "复制 ID",
+    log: "日志",
+    copyDiff: "复制差异",
     notUpdated: "未更新",
   },
   en: {
@@ -214,7 +214,7 @@ export function DetailsPanel({
           <h3>{selection.warning.summary || selection.warning.claimId}</h3>
           <p>{selection.warning.nextAction || selection.warning.suggestedAction}</p>
           <dl className="details-facts">
-            <div><dt>Claim</dt><dd>{selection.warning.claimId}</dd></div>
+            <div><dt>{text.claim}</dt><dd>{selection.warning.claimId}</dd></div>
             <div><dt>{text.source}</dt><dd>{selection.warning.sourceId || text.unknown}</dd></div>
             <div><dt>{text.missing}</dt><dd>{selection.warning.missingAnchor || selection.warning.missingHeading}</dd></div>
           </dl>
