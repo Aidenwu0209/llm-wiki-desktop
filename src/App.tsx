@@ -592,7 +592,7 @@ const initialDesktopSettings: DesktopSettings = {
   autoOpenReportsAfterFailures: false,
   skipObsidianPluginDownloads: true,
   llmProviderCenter: {
-    activeProviderId: "codex-cli",
+    activeProviderId: null,
     providers: {},
   },
 };

@@ -247,6 +247,8 @@ const providerNames: Record<string, string> = {
   "kimi-cn": "Kimi China",
 };
 
+const localProviderIds = new Set(["codex-cli", "claude-code"]);
+
 function classNames(...items: Array<string | false | null | undefined>) {
   return items.filter(Boolean).join(" ");
 }
@@ -394,8 +396,16 @@ function saveHistory(vaultPath: string, history: QueryHistoryItem[]) {
 }
 
 function providerSummary(center?: LlmProviderCenterSettings | null, language: UiLanguage = "en") {
-  const activeProviderId = center?.activeProviderId || "codex-cli";
-  const activeConfig = center?.providers?.[activeProviderId];
+  const activeProviderId = center?.activeProviderId || "";
+  const activeConfig = activeProviderId ? center?.providers?.[activeProviderId] : null;
+  const usableProvider = Boolean(activeConfig?.enabled && localProviderIds.has(activeProviderId) && activeConfig.cliAvailable);
+  if (!activeProviderId || !usableProvider) {
+    return {
+      name: language === "zh" ? "未选择提供方" : "No provider selected",
+      model: "",
+      detail: language === "zh" ? "设置 / 大语言模型中尚未启用可用提供方" : "No usable provider is enabled in Settings / LLM Models",
+    };
+  }
   const model = activeConfig?.customModel?.trim() || activeConfig?.selectedModel || "default";
   const window = activeConfig?.contextWindow
     ? `${activeConfig.contextWindow.toLocaleString()} ${language === "zh" ? "令牌" : "tokens"}`

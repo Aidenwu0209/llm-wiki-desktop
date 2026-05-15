@@ -230,7 +230,7 @@ struct DesktopSettings {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct LlmProviderCenterSettings {
-    active_provider_id: String,
+    active_provider_id: Option<String>,
     #[serde(default)]
     providers: HashMap<String, LlmProviderConfig>,
 }
@@ -250,6 +250,14 @@ struct LlmProviderConfig {
     context_window: usize,
     #[serde(default = "default_reasoning_mode")]
     reasoning_mode: String,
+    #[serde(default)]
+    cli_available: bool,
+    #[serde(default)]
+    cli_version: Option<String>,
+    #[serde(default)]
+    cli_path: Option<String>,
+    #[serde(default)]
+    cli_checked_at: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -745,7 +753,7 @@ fn default_reasoning_mode() -> String {
 
 fn default_llm_provider_center() -> LlmProviderCenterSettings {
     LlmProviderCenterSettings {
-        active_provider_id: "codex-cli".to_string(),
+        active_provider_id: None,
         providers: HashMap::new(),
     }
 }

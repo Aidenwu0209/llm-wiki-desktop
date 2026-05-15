@@ -193,10 +193,14 @@ export type LlmProviderConfig = {
   customModel: string;
   contextWindow: number;
   reasoningMode: "fast" | "balanced" | "deep" | string;
+  cliAvailable?: boolean;
+  cliVersion?: string | null;
+  cliPath?: string | null;
+  cliCheckedAt?: string | null;
 };
 
 export type LlmProviderCenterSettings = {
-  activeProviderId: string;
+  activeProviderId?: string | null;
   providers: Record<string, LlmProviderConfig>;
 };
 

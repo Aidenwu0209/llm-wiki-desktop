@@ -3753,6 +3753,11 @@ textarea {
   line-height: 1.45;
 }
 
+.settings-page-head .settings-muted {
+  color: #1f6f45;
+  font-weight: 700;
+}
+
 .provider-card {
   overflow: hidden;
   border: 1px solid #d8ded9;
@@ -3864,6 +3869,11 @@ textarea {
 
 .toggle input:checked + span::after {
   transform: translateX(18px);
+}
+
+.toggle input:disabled + span {
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 .cli-status-grid {

@@ -91,6 +91,10 @@ const settingsCopy = {
     detected: "已检测",
     notFound: "未找到",
     needsCheck: "待检查",
+    noProvider: "未选择提供方",
+    selectAfterCheck: "本地 CLI 需要先检查可用后才能启用。",
+    configurationPlaceholder: "配置占位",
+    apiPlaceholder: "托管 API 提供方当前只是配置占位。桌面端还没有安全密钥存储，因此这里不会启用或保存 API key。",
     local: "本地",
     activeKeyHidden: "已选择，未保存密钥",
     off: "关闭",
@@ -134,6 +138,10 @@ const settingsCopy = {
     detected: "Detected",
     notFound: "Not found",
     needsCheck: "Needs check",
+    noProvider: "No provider selected",
+    selectAfterCheck: "Check the local CLI before enabling it.",
+    configurationPlaceholder: "Configuration placeholder",
+    apiPlaceholder: "Hosted API providers are configuration placeholders. The desktop app does not have secure key storage yet, so API keys are not enabled or saved here.",
     local: "Local",
     activeKeyHidden: "Selected, key not stored",
     off: "Off",
@@ -195,26 +203,39 @@ function classNames(...items: Array<string | false | null | undefined>) {
 function defaultProviderConfig(providerId: string): LlmProviderConfig {
   const provider = providers.find((item) => item.id === providerId);
   return {
-    enabled: providerId === "codex-cli",
-    expanded: providerId === "codex-cli",
+    enabled: false,
+    expanded: false,
     selectedModel: provider?.models[0] ?? "default",
     customModel: "",
     contextWindow: providerId.includes("cli") ? 128000 : 64000,
     reasoningMode: "balanced",
+    cliAvailable: false,
+    cliVersion: null,
+    cliPath: null,
+    cliCheckedAt: null,
   };
 }
 
 function normalizeProviderSettings(settings: DesktopSettings) {
-  const current = settings.llmProviderCenter || { activeProviderId: "codex-cli", providers: {} };
+  const current = settings.llmProviderCenter || { activeProviderId: null, providers: {} };
   const knownProviderIds: string[] = providers.map((item) => item.id);
-  const activeProviderId = knownProviderIds.includes(current.activeProviderId) ? current.activeProviderId : "codex-cli";
+  const activeProviderId = current.activeProviderId && knownProviderIds.includes(current.activeProviderId)
+    ? current.activeProviderId
+    : null;
   const normalized = { ...current.providers };
   for (const provider of providers) {
+    const saved = normalized[provider.id];
+    const savedEnabled = provider.kind === "local"
+      ? Boolean(saved?.enabled && saved?.cliAvailable)
+      : false;
     normalized[provider.id] = {
       ...defaultProviderConfig(provider.id),
-      ...normalized[provider.id],
-      enabled: provider.id === activeProviderId,
+      ...saved,
+      enabled: provider.id === activeProviderId && savedEnabled,
     };
+  }
+  if (activeProviderId && !normalized[activeProviderId]?.enabled) {
+    return { activeProviderId: null, providers: normalized };
   }
   return { activeProviderId, providers: normalized };
 }
@@ -251,11 +272,7 @@ export function RuntimeSettingsPanel({
   };
 
   const toggleProvider = (providerId: string, enabled: boolean) => {
-    const nextActiveProviderId = enabled
-      ? providerId
-      : center.activeProviderId === providerId
-        ? "codex-cli"
-        : center.activeProviderId || "codex-cli";
+    const nextActiveProviderId = enabled ? providerId : center.activeProviderId === providerId ? null : center.activeProviderId || null;
     const nextProviders = Object.fromEntries(
       Object.entries(center.providers).map(([id, value]) => [id, { ...value, enabled: id === nextActiveProviderId }]),
     );
@@ -274,6 +291,34 @@ export function RuntimeSettingsPanel({
     try {
       const result = await checkLocalLlmCli(command);
       setCliChecks((current) => ({ ...current, [providerId]: result }));
+      if (result.available) {
+        const nextProviders = Object.fromEntries(
+          Object.entries(center.providers).map(([id, value]) => [
+            id,
+            {
+              ...value,
+              enabled: id === providerId,
+              ...(id === providerId
+                ? {
+                    cliAvailable: true,
+                    cliVersion: result.version,
+                    cliPath: result.path,
+                    cliCheckedAt: new Date().toISOString(),
+                  }
+                : {}),
+            },
+          ]),
+        );
+        updateCenter({ activeProviderId: providerId, providers: nextProviders });
+      } else {
+        updateProvider(providerId, {
+          enabled: false,
+          cliAvailable: false,
+          cliVersion: result.version,
+          cliPath: result.path,
+          cliCheckedAt: new Date().toISOString(),
+        });
+      }
     } catch (err) {
       setCliChecks((current) => ({
         ...current,
@@ -312,6 +357,7 @@ export function RuntimeSettingsPanel({
               <div>
                 <h2>{text.llmTitle}</h2>
                 <p>{text.llmSubtitle}</p>
+                <p className="settings-muted">{center.activeProviderId ? `${language === "zh" ? "当前提供方" : "Active provider"}: ${providers.find((item) => item.id === center.activeProviderId)?.name ?? center.activeProviderId}` : text.noProvider}</p>
               </div>
               <button onClick={onSaveSettings} disabled={!vaultPath || busy === "save_settings"}>
                 <Check size={15} />
@@ -324,11 +370,13 @@ export function RuntimeSettingsPanel({
                 const config = center.providers[provider.id] ?? defaultProviderConfig(provider.id);
                 const cliCheck = cliChecks[provider.id];
                 const isLocal = provider.kind === "local";
+                const persistedCliAvailable = Boolean(config.cliAvailable);
+                const canEnable = isLocal ? Boolean(cliCheck?.available || persistedCliAvailable) : false;
                 const status = isLocal
                   ? cliCheck
                     ? cliCheck.available ? text.detected : text.notFound
-                    : config.enabled ? text.needsCheck : text.local
-                  : config.enabled ? text.activeKeyHidden : text.off;
+                    : persistedCliAvailable ? text.detected : text.needsCheck
+                  : text.configurationPlaceholder;
                 return (
                   <article key={provider.id} className={classNames("provider-card", config.enabled && "enabled")}>
                     <button className="provider-row" type="button" onClick={() => toggleExpanded(provider.id)}>
@@ -342,6 +390,7 @@ export function RuntimeSettingsPanel({
                         <input
                           type="checkbox"
                           checked={config.enabled}
+                          disabled={!canEnable}
                           onChange={(event) => toggleProvider(provider.id, event.target.checked)}
                         />
                         <span />
@@ -358,11 +407,11 @@ export function RuntimeSettingsPanel({
                             </div>
                             <div>
                               <span>{text.detectedVersion}</span>
-                              <strong>{cliCheck?.version || "unknown"}</strong>
+                              <strong>{cliCheck?.version || config.cliVersion || "unknown"}</strong>
                             </div>
                             <div>
                               <span>{text.path}</span>
-                              <code>{cliCheck?.path ? visiblePath(cliCheck.path) : text.pathPending}</code>
+                              <code>{cliCheck?.path || config.cliPath ? visiblePath(cliCheck?.path || config.cliPath || "") : text.pathPending}</code>
                             </div>
                             <button
                               onClick={() => runCliCheck(provider.id as "codex-cli" | "claude-code", provider.command)}
@@ -375,59 +424,73 @@ export function RuntimeSettingsPanel({
                         ) : (
                           <div className="api-provider-note">
                             <KeyRound size={15} />
-                            {text.apiNote}
+                            {text.apiPlaceholder}
+                          </div>
+                        )}
+                        {isLocal && !canEnable && (
+                          <div className="api-provider-note">
+                            <Info size={15} />
+                            {text.selectAfterCheck}
                           </div>
                         )}
 
-                        <div className="model-chip-row">
-                          {provider.models.map((model) => (
-                            <button
-                              type="button"
-                              key={model}
-                              className={config.selectedModel === model ? "active" : ""}
-                              onClick={() => updateProvider(provider.id, { selectedModel: model })}
-                            >
-                              {model}
-                            </button>
-                          ))}
-                        </div>
+                        {isLocal && (
+                          <>
+                            <div className="model-chip-row">
+                              {provider.models.map((model) => (
+                                <button
+                                  type="button"
+                                  key={model}
+                                  className={config.selectedModel === model ? "active" : ""}
+                                  disabled={!canEnable}
+                                  onClick={() => updateProvider(provider.id, { selectedModel: model })}
+                                >
+                                  {model}
+                                </button>
+                              ))}
+                            </div>
 
-                        <div className="provider-controls">
-                          <label className="field-label">
-                            {text.customModel}
-                            <input
-                              value={config.customModel}
-                              onChange={(event) => updateProvider(provider.id, { customModel: event.target.value })}
-                              placeholder={text.optionalOverride}
-                            />
-                          </label>
-                          <label className="field-label">
-                            {text.contextWindow}: {config.contextWindow.toLocaleString()} {language === "zh" ? "令牌" : "tokens"}
-                            <input
-                              type="range"
-                              min={8192}
-                              max={256000}
-                              step={8192}
-                              value={config.contextWindow}
-                              onChange={(event) => updateProvider(provider.id, { contextWindow: Number(event.target.value) })}
-                            />
-                          </label>
-                          <div className="reasoning-picker" aria-label={text.reasoning}>
-                            <span className="control-caption">{text.reasoning}</span>
-                            {["fast", "balanced", "deep"].map((mode) => (
-                              <button
-                                key={mode}
-                                type="button"
-                                className={config.reasoningMode === mode ? "active" : ""}
-                                onClick={() => updateProvider(provider.id, { reasoningMode: mode })}
-                              >
-                                {language === "zh"
-                                  ? ({ fast: "快速", balanced: "平衡", deep: text.deepThinking } as Record<string, string>)[mode]
-                                  : mode}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
+                            <div className="provider-controls">
+                              <label className="field-label">
+                                {text.customModel}
+                                <input
+                                  value={config.customModel}
+                                  disabled={!canEnable}
+                                  onChange={(event) => updateProvider(provider.id, { customModel: event.target.value })}
+                                  placeholder={text.optionalOverride}
+                                />
+                              </label>
+                              <label className="field-label">
+                                {text.contextWindow}: {config.contextWindow.toLocaleString()} {language === "zh" ? "令牌" : "tokens"}
+                                <input
+                                  type="range"
+                                  min={8192}
+                                  max={256000}
+                                  step={8192}
+                                  value={config.contextWindow}
+                                  disabled={!canEnable}
+                                  onChange={(event) => updateProvider(provider.id, { contextWindow: Number(event.target.value) })}
+                                />
+                              </label>
+                              <div className="reasoning-picker" aria-label={text.reasoning}>
+                                <span className="control-caption">{text.reasoning}</span>
+                                {["fast", "balanced", "deep"].map((mode) => (
+                                  <button
+                                    key={mode}
+                                    type="button"
+                                    className={config.reasoningMode === mode ? "active" : ""}
+                                    disabled={!canEnable}
+                                    onClick={() => updateProvider(provider.id, { reasoningMode: mode })}
+                                  >
+                                    {language === "zh"
+                                      ? ({ fast: "快速", balanced: "平衡", deep: text.deepThinking } as Record<string, string>)[mode]
+                                      : mode}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          </>
+                        )}
                       </div>
                     )}
                   </article>
