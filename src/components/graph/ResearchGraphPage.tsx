@@ -92,6 +92,9 @@ const edgeTypes: Array<ResearchEdgeType | "all"> = [
   "warning_source",
 ];
 
+const VISUAL_NODE_LIMIT = 96;
+const VISUAL_EDGE_LIMIT = 120;
+
 const graphCopy = {
   zh: {
     summaryStats: {
@@ -100,11 +103,11 @@ const graphCopy = {
       keyConcepts: "关键 concepts",
       reviewNodes: "Review 节点",
       traceabilityBreaks: "证据断点",
-      writebackInsights: "Writeback 洞察",
+      writebackInsights: "Writeback proposals",
     },
-    researchSummary: "DeepSeek 研究图谱摘要",
-    vaultSummary: "该图谱连接当前 vault 中的 sources、claims、concepts、reviews、traceability warnings 和 writeback proposals。",
-    noVaultSummary: "打开 generated vault 后即可构建研究图谱。",
+    researchSummary: "Evidence Graph 摘要",
+    vaultSummary: "该 Evidence Graph 连接当前 vault 中的 sources、claims、concepts、reviews、traceability warnings 和 writeback proposals。",
+    noVaultSummary: "打开 generated vault 后即可构建 Evidence Graph。",
     keyConcepts: "关键 concepts",
     noneYet: "暂未生成",
     evidenceBreaks: "Evidence breaks",
@@ -112,9 +115,11 @@ const graphCopy = {
     searchPlaceholder: "搜索 nodes、paths、claims、concepts、proposal targets 和 warning 文本",
     nodeType: "节点类型",
     edgeType: "边类型",
-    relationshipMap: "关系图",
+    relationshipMap: "Evidence Graph",
     nodeDetails: "节点详情",
-    noGraphNodes: "还没有 graph nodes。",
+    noGraphNodes: "当前筛选下没有 graph node。",
+    limitHint: (visibleNodes: number, totalNodes: number, visibleEdges: number, totalEdges: number) =>
+      `画布为性能只显示前 ${visibleNodes}/${totalNodes} 个节点和 ${visibleEdges}/${totalEdges} 条边；请用搜索或筛选缩小 Evidence Graph。`,
     open: "打开",
     reveal: "显示",
     copy: "复制",
@@ -129,9 +134,9 @@ const graphCopy = {
     conceptSourceLocator: "Concept 来源定位",
     noConceptRelationships: "暂无 concept 关系。",
     relationships: "relationships",
-    writebackInsightTargets: "Writeback 洞察目标",
+    writebackInsightTargets: "Writeback proposal targets",
     noWritebacks: "暂无 query writeback proposals。",
-    graphContract: "Graph contract",
+    graphContract: "Evidence Graph contract",
     sourceToClaim: "source -> claim：source registry、claim ledger、evidence paths",
     claimToConcept: "claim -> concept：claim concept tags 和 evidence concepts",
     claimToReview: "claim -> review：review queue 和 needs-review claims",
@@ -163,11 +168,11 @@ const graphCopy = {
       keyConcepts: "Key concepts",
       reviewNodes: "Review nodes",
       traceabilityBreaks: "Traceability breaks",
-      writebackInsights: "Writeback insights",
+      writebackInsights: "Writeback proposals",
     },
-    researchSummary: "DeepSeek research graph summary",
+    researchSummary: "Evidence Graph summary",
     vaultSummary: "This graph links generated sources, claims, concepts, reviews, traceability warnings, and writeback proposals from the selected vault.",
-    noVaultSummary: "Open a generated vault to build the research graph.",
+    noVaultSummary: "Open a generated vault to build the Evidence Graph.",
     keyConcepts: "Key concepts",
     noneYet: "none yet",
     evidenceBreaks: "Evidence breaks",
@@ -175,9 +180,11 @@ const graphCopy = {
     searchPlaceholder: "Search nodes, paths, claims, concepts, proposal targets, and warning text",
     nodeType: "Node type",
     edgeType: "Edge type",
-    relationshipMap: "Relationship map",
+    relationshipMap: "Evidence Graph",
     nodeDetails: "Node details",
-    noGraphNodes: "No graph nodes yet.",
+    noGraphNodes: "No graph node matches the current filter.",
+    limitHint: (visibleNodes: number, totalNodes: number, visibleEdges: number, totalEdges: number) =>
+      `Canvas is performance-limited to the first ${visibleNodes}/${totalNodes} nodes and ${visibleEdges}/${totalEdges} edges; use search or filters to narrow the Evidence Graph.`,
     open: "open",
     reveal: "reveal",
     copy: "copy",
@@ -192,9 +199,9 @@ const graphCopy = {
     conceptSourceLocator: "Concept source locator",
     noConceptRelationships: "No concept relationships yet.",
     relationships: "relationships",
-    writebackInsightTargets: "Writeback insight targets",
+    writebackInsightTargets: "Writeback proposal targets",
     noWritebacks: "No query writeback proposals yet.",
-    graphContract: "Graph contract",
+    graphContract: "Evidence Graph contract",
     sourceToClaim: "source -> claim: source registry, claim ledger, evidence paths",
     claimToConcept: "claim -> concept: claim concept tags and evidence concepts",
     claimToReview: "claim -> review: review queue and needs-review claims",
@@ -706,20 +713,20 @@ function graphPositions(nodes: ResearchGraphNode[]) {
 }
 
 function graphSummaryText(graph: ResearchGraph, language: UiLanguage) {
-  const concepts = graph.summary.keyConcepts.map((node) => node.label).join(", ") || (language === "zh" ? "暂未生成 concept hub" : "no concept hubs yet");
+  const concepts = graph.summary.keyConcepts.map((node) => node.label).join(", ") || (language === "zh" ? "暂无 concept 连接" : "no concept links yet");
   const reviewPressure = graph.summary.reviewNodes + graph.summary.traceabilityBreaks;
   if (language === "zh") {
     return [
       `${graph.summary.sourcesPapers} 个 source 节点支撑 ${graph.summary.sourceBackedClaims} 条 source-to-claim 证据链。`,
-      `Top concept hubs：${concepts}。`,
+      `连接最多的 concepts：${concepts}。`,
       `${reviewPressure} 个 review 或 traceability 节点需要处理后，才能把生成洞察视为稳定内容。`,
       `${graph.summary.writebackInsights} 个 writeback proposal 在批准前保持 proposal-first。`,
     ];
   }
   return [
     `${graph.summary.sourcesPapers} source nodes feed ${graph.summary.sourceBackedClaims} source-to-claim evidence links.`,
-    `Top concept hubs: ${concepts}.`,
-    `${reviewPressure} review or traceability nodes require attention before treating generated insights as stable.`,
+    `Most connected concepts: ${concepts}.`,
+    `${reviewPressure} review or traceability nodes require attention before treating generated proposal content as stable.`,
     `${graph.summary.writebackInsights} writeback proposal nodes remain proposal-first until approved.`,
   ];
 }
@@ -752,12 +759,12 @@ export function ResearchGraphPage({
   );
   const nodeById = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph.nodes]);
   const normalizedQuery = query.trim().toLowerCase();
-  const filteredNodeIds = new Set<string>();
+  const nodeMatchedIds = new Set<string>();
   const typeMatchedNodes = graph.nodes.filter((node) => typeFilter === "all" || node.type === typeFilter);
 
   for (const node of typeMatchedNodes) {
     if (!normalizedQuery || nodeSearchText(node).includes(normalizedQuery)) {
-      filteredNodeIds.add(node.id);
+      nodeMatchedIds.add(node.id);
     }
   }
 
@@ -769,31 +776,33 @@ export function ResearchGraphPage({
     if (!typeMatch) return false;
     if (!normalizedQuery) return true;
     return (
-      filteredNodeIds.has(edge.from)
-      || filteredNodeIds.has(edge.to)
+      nodeMatchedIds.has(edge.from)
+      || nodeMatchedIds.has(edge.to)
       || edgeSearchText(edge, nodeById).includes(normalizedQuery)
     );
   });
 
+  const filteredNodeIds = edgeFilter === "all" ? new Set(nodeMatchedIds) : new Set<string>();
   for (const edge of visibleEdges) {
     filteredNodeIds.add(edge.from);
     filteredNodeIds.add(edge.to);
   }
 
   const filteredNodes = graph.nodes.filter((node) => filteredNodeIds.has(node.id));
-  const visualNodes = filteredNodes.slice(0, 96);
+  const visualNodes = filteredNodes.slice(0, VISUAL_NODE_LIMIT);
   const visualNodeIds = new Set(visualNodes.map((node) => node.id));
-  const visualEdges = visibleEdges.filter((edge) => visualNodeIds.has(edge.from) && visualNodeIds.has(edge.to)).slice(0, 120);
+  const visualEdges = visibleEdges.filter((edge) => visualNodeIds.has(edge.from) && visualNodeIds.has(edge.to)).slice(0, VISUAL_EDGE_LIMIT);
+  const graphIsTruncated = visualNodes.length < filteredNodes.length || visualEdges.length < visibleEdges.length;
   const positions = graphPositions(visualNodes);
-  const selected = graph.nodes.find((node) => node.id === selectedId) || filteredNodes[0] || graph.nodes[0] || null;
-  const relatedEdges = selected ? graph.edges.filter((edge) => edge.from === selected.id || edge.to === selected.id) : [];
+  const selected = (selectedId ? filteredNodes.find((node) => node.id === selectedId) : null) || filteredNodes[0] || null;
+  const relatedEdges = selected ? visibleEdges.filter((edge) => edge.from === selected.id || edge.to === selected.id) : [];
   const summary = graphSummaryText(graph, language);
 
   useEffect(() => {
-    if (!selectedId || !graph.nodes.some((node) => node.id === selectedId)) {
-      setSelectedId(filteredNodes[0]?.id || graph.nodes[0]?.id || null);
+    if (!selectedId || !filteredNodes.some((node) => node.id === selectedId)) {
+      setSelectedId(filteredNodes[0]?.id || null);
     }
-  }, [filteredNodes, graph.nodes, selectedId]);
+  }, [filteredNodes, selectedId]);
 
   const openNodePath = (node: ResearchGraphNode) => {
     if (node.path) onOpenPath(resolveVaultPath(node.path));
@@ -895,7 +904,7 @@ export function ResearchGraphPage({
         <section className="panel graph-panel">
           <div className="section-head">
             <h2>{text.relationshipMap}</h2>
-            <span>{visualNodes.length} nodes · {visualEdges.length} edges</span>
+            <span>{visualNodes.length}/{filteredNodes.length} nodes · {visualEdges.length}/{visibleEdges.length} edges</span>
           </div>
           <svg className="research-graph-svg" viewBox="0 0 860 360" role="img" aria-label="Research relationship graph">
             <defs>
@@ -936,6 +945,9 @@ export function ResearchGraphPage({
               );
             })}
           </svg>
+          {graphIsTruncated && (
+            <p className="empty">{text.limitHint(visualNodes.length, filteredNodes.length, visualEdges.length, visibleEdges.length)}</p>
+          )}
           <div className="graph-legend">
             {(Object.keys(typeColors) as ResearchNodeType[]).map((type) => (
               <span key={type}><i style={{ backgroundColor: typeColors[type] }} />{type}</span>

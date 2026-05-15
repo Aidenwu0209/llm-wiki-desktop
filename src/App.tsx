@@ -152,8 +152,8 @@ const navigationItems = [
   { id: "reviews", label: "Reviews", icon: AlertTriangle },
   { id: "traceability", label: "Traceability", icon: ShieldCheck },
   { id: "writeback", label: "Query / Writeback", icon: GitCompare },
-  { id: "chat", label: "Chat / Search", icon: MessageSquare },
-  { id: "graph", label: "Graph", icon: Network },
+  { id: "chat", label: "Evidence Draft", icon: MessageSquare },
+  { id: "graph", label: "Evidence Graph", icon: Network },
   { id: "activity", label: "Activity", icon: TerminalSquare },
   { id: "settings", label: "Settings", icon: Settings },
 ] as const;
@@ -190,11 +190,11 @@ const pageTitles: Record<ShellPage, { title: string; subtitle: string }> = {
     subtitle: "Evidence-backed insight generation with proposal-first writeback.",
   },
   chat: {
-    title: "Chat / Search",
-    subtitle: "Search the vault, inspect evidence, draft answers, and promote grounded questions into proposals.",
+    title: "Evidence Search / Answer Draft",
+    subtitle: "Search the vault, inspect evidence, draft local answers, and promote grounded questions into proposals.",
   },
   graph: {
-    title: "Graph",
+    title: "Evidence Graph",
     subtitle: "Source, claim, concept, review, warning, and proposal relationships for trusted research.",
   },
   activity: {
@@ -264,8 +264,8 @@ const shellCopy: Record<UiLanguage, {
       reviews: "审核",
       traceability: "可追踪性",
       writeback: "问答 / 写回",
-      chat: "聊天 / 搜索",
-      graph: "关系图",
+      chat: "证据草稿",
+      graph: "Evidence Graph",
       activity: "活动",
       settings: "设置",
     },
@@ -277,8 +277,8 @@ const shellCopy: Record<UiLanguage, {
       reviews: { title: "审核", subtitle: "Science review queue、follow-up actions 和审批边界。" },
       traceability: { title: "可追踪性", subtitle: "断裂证据链、缺失 anchor、contract findings 和 impact graph。" },
       writeback: { title: "问答 / 写回", subtitle: "基于证据生成洞察，并先生成 proposal 再写回。" },
-      chat: { title: "聊天 / 搜索", subtitle: "搜索 vault、检查证据、生成回答草稿，并把可信问题转成 proposal。" },
-      graph: { title: "关系图", subtitle: "展示 source、claim、concept、review、warning 和 proposal 的可信研究关系。" },
+      chat: { title: "证据搜索 / 本地草稿", subtitle: "搜索 vault、检查证据、生成本地 evidence draft，并把可信问题转成 proposal。" },
+      graph: { title: "Evidence Graph", subtitle: "展示 source、claim、concept、review、warning 和 proposal 的可信证据关系。" },
       activity: { title: "活动", subtitle: "Runtime jobs、持久历史、日志、取消、超时和重试。" },
       settings: { title: "设置", subtitle: "Runtime、parser、Obsidian 和 release 相关桌面设置。" },
     },
@@ -2063,6 +2063,7 @@ function App() {
           reviewItems={reviewItems}
           writebacks={writebacks}
           traceabilityWarnings={traceabilityWarnings}
+          providerCenter={desktopSettings.llmProviderCenter}
           busy={busy}
           onOpenPath={openPath}
           resolveVaultPath={vaultFilePath}

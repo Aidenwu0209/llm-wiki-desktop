@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ClipboardCopy,
   FileSearch,
@@ -12,6 +12,7 @@ import {
 import type {
   ClaimLedgerItem,
   EvidencePathItem,
+  LlmProviderCenterSettings,
   ReviewQueueItem,
   TraceabilityWarning,
   VaultFile,
@@ -34,7 +35,7 @@ const DEFAULT_DEEPSEEK_QUESTIONS_EN = [
   "Which insights are worth writing back to the wiki?",
 ];
 
-const HISTORY_KEY = "llm-wiki-desktop.chat-search.history";
+const HISTORY_KEY_PREFIX = "llm-wiki-desktop.chat-search.history";
 const CLAIM_LEDGER_PATH = "claims/claims.jsonl";
 const REVIEW_QUEUE_PATH = "reviews/science-review-queue.md";
 const WRITEBACK_QUEUE_PATH = "reviews/query-writeback/";
@@ -89,6 +90,7 @@ type ChatSearchPageProps = {
   reviewItems: ReviewQueueItem[];
   writebacks: WritebackProposal[];
   traceabilityWarnings: TraceabilityWarning[];
+  providerCenter?: LlmProviderCenterSettings | null;
   busy: string | null;
   onCreateProposal: (question: string, targetPath: string) => void | Promise<void>;
   onOpenPath: (path: string) => void | Promise<void>;
@@ -100,29 +102,31 @@ type ChatSearchPageProps = {
 
 const chatCopy = {
   zh: {
-    title: "聊天 / 搜索",
+    title: "证据搜索 / 本地草稿",
     loaded: (shown: number, total: number) => `${shown}/${total} 个已加载对象`,
     inputPlaceholder: "提问或搜索 DeepSeek 研究证据",
     target: "写回目标",
     searchEvidence: "搜索证据",
-    draftAnswer: "生成回答草稿",
+    draftAnswer: "生成本地证据草稿",
     createProposal: "创建 proposal",
     boundaryTitle: "Proposal-first 边界",
-    boundaryBody: "本页面不会直接写入 source 或 concept。创建 query writeback 仍会先进入 proposal approval gate。",
+    boundaryBody: "本页面基于 vault evidence 生成本地草稿，不把草稿伪装成模型最终回答，也不会直接写入 source 或 concept。创建 query writeback 仍会先进入 proposal approval gate。",
+    providerLabel: "Provider 配置",
+    providerDraftOnly: "仅用于展示当前 active provider；此页面当前不调用 LLM。",
     history: "Query 历史",
-    emptyHistory: "生成回答草稿或创建 proposal 后，会保存带 evidence 的 query history。",
+    emptyHistory: "生成 evidence draft 或创建 proposal 后，会保存当前 vault 专属的 query history。",
     results: "结果",
     shown: "显示",
     searchPlaceholder: "搜索 source pages、claims、concepts、reviews 和 writeback proposals",
     noVault: "打开或刷新 generated vault 后即可搜索 wiki 对象。",
     noMatch: "没有匹配的 vault 对象。",
-    answer: "回答 / 结果",
-    answerKinds: "evidence · inference · hypothesis · forecast",
+    answer: "本地 Evidence Draft",
+    answerKinds: "本地检索 · evidence · inference · hypothesis · forecast",
     selected: "选中结果",
     noSnippet: "没有 snippet。",
     selectResult: "选择一个结果，检查路径、证据关系和动作。",
     copyDraft: "复制草稿",
-    draftPlaceholder: "先选择问题或执行搜索，再生成回答草稿。输出保持本地草稿，直到转换为 writeback proposal。",
+    draftPlaceholder: "先选择问题或执行搜索，再生成本地 evidence draft。此处不调用 LLM，输出保持本地草稿，直到转换为 writeback proposal。",
     evidenceMap: "证据图",
     references: "references",
     currentEvidence: "当前回答证据",
@@ -134,29 +138,31 @@ const chatCopy = {
     actions: { open: "打开", reveal: "显示", path: "路径", evidence: "证据", copy: "复制", obsidian: "Obsidian" },
   },
   en: {
-    title: "Chat / Search",
+    title: "Evidence Search / Answer Draft",
     loaded: (shown: number, total: number) => `${shown}/${total} loaded objects`,
     inputPlaceholder: "Ask or search DeepSeek research evidence",
     target: "Writeback target",
     searchEvidence: "search evidence",
-    draftAnswer: "draft answer",
+    draftAnswer: "draft local evidence brief",
     createProposal: "create proposal",
     boundaryTitle: "Proposal-first boundary",
-    boundaryBody: "No source or concept page is written from this page. Creating a query writeback still routes through the proposal approval gate before any apply.",
+    boundaryBody: "This page drafts from loaded vault evidence. It does not present drafts as final model answers and never writes source or concept pages directly. Creating a query writeback still routes through the proposal approval gate before any apply.",
+    providerLabel: "Provider config",
+    providerDraftOnly: "Shown for active-provider context only; this page does not call an LLM yet.",
     history: "Query history",
-    emptyHistory: "Draft an answer or create a proposal to save evidence-aware query history.",
+    emptyHistory: "Draft from evidence or create a proposal to save vault-scoped query history.",
     results: "Results",
     shown: "shown",
     searchPlaceholder: "Search source pages, claims, concepts, reviews, and writeback proposals",
     noVault: "Open or refresh a generated vault to search loaded wiki objects.",
     noMatch: "No matching vault objects.",
-    answer: "Answer / Result",
-    answerKinds: "evidence · inference · hypothesis · forecast",
+    answer: "Local Evidence Draft",
+    answerKinds: "local search · evidence · inference · hypothesis · forecast",
     selected: "Selected result",
     noSnippet: "No snippet available.",
     selectResult: "Select a result to inspect its path, evidence relation, and actions.",
     copyDraft: "copy draft",
-    draftPlaceholder: "Draft an answer after choosing a question or running a search. The output remains a local draft until converted into a writeback proposal.",
+    draftPlaceholder: "Draft a local evidence brief after choosing a question or running a search. This does not call an LLM, and the output remains local until converted into a writeback proposal.",
     evidenceMap: "Evidence Map",
     references: "references",
     currentEvidence: "Current answer evidence",
@@ -168,6 +174,20 @@ const chatCopy = {
     actions: { open: "open", reveal: "reveal", path: "path", evidence: "evidence", copy: "copy", obsidian: "Obsidian" },
   },
 } as const;
+
+const providerNames: Record<string, string> = {
+  anthropic: "Anthropic Claude",
+  "claude-code": "Claude Code CLI",
+  "codex-cli": "Codex CLI",
+  openai: "OpenAI GPT",
+  google: "Google Gemini",
+  deepseek: "DeepSeek",
+  groq: "Groq",
+  xai: "xAI Grok",
+  nvidia: "NVIDIA NIM",
+  kimi: "Kimi",
+  "kimi-cn": "Kimi China",
+};
 
 function classNames(...items: Array<string | false | null | undefined>) {
   return items.filter(Boolean).join(" ");
@@ -201,9 +221,15 @@ function normalizeHistoryEvidence(value: unknown): HistoryEvidenceRef[] {
     .slice(0, 8);
 }
 
-function loadHistory(): QueryHistoryItem[] {
+function historyStorageKey(vaultPath: string) {
+  const scope = vaultPath || "no-vault";
+  return `${HISTORY_KEY_PREFIX}:${encodeURIComponent(scope)}`;
+}
+
+function loadHistory(vaultPath: string): QueryHistoryItem[] {
   try {
-    const parsed = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+    if (typeof localStorage === "undefined") return [];
+    const parsed = JSON.parse(localStorage.getItem(historyStorageKey(vaultPath)) || "[]");
     if (!Array.isArray(parsed)) return [];
     return parsed
       .map((item, index): QueryHistoryItem | null => {
@@ -246,12 +272,26 @@ function loadHistory(): QueryHistoryItem[] {
   }
 }
 
-function saveHistory(history: QueryHistoryItem[]) {
+function saveHistory(vaultPath: string, history: QueryHistoryItem[]) {
   try {
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, 8)));
+    if (typeof localStorage === "undefined") return;
+    localStorage.setItem(historyStorageKey(vaultPath), JSON.stringify(history.slice(0, 8)));
   } catch {
     // History is convenience state only; ignore private mode or storage quota failures.
   }
+}
+
+function providerSummary(center?: LlmProviderCenterSettings | null) {
+  const activeProviderId = center?.activeProviderId || "codex-cli";
+  const activeConfig = center?.providers?.[activeProviderId];
+  const model = activeConfig?.customModel?.trim() || activeConfig?.selectedModel || "default";
+  const window = activeConfig?.contextWindow ? `${activeConfig.contextWindow.toLocaleString()} tokens` : "context unset";
+  const reasoning = activeConfig?.reasoningMode || "balanced";
+  return {
+    name: providerNames[activeProviderId] || activeProviderId,
+    model,
+    detail: `${model} · ${window} · ${reasoning}`,
+  };
 }
 
 function tokenize(query: string) {
@@ -279,6 +319,29 @@ function scoreResult(result: SearchResult, query: string) {
   return score;
 }
 
+function diversifySearchResults(ranked: SearchResult[], limit: number) {
+  const primaryTypes: SearchKind[] = ["source", "claim", "concept", "review", "writeback", "traceability", "evidence"];
+  const seen = new Set<string>();
+  const diversified: SearchResult[] = [];
+
+  for (const type of primaryTypes) {
+    const match = ranked.find((item) => item.type === type && !seen.has(item.id));
+    if (match) {
+      diversified.push(match);
+      seen.add(match.id);
+    }
+  }
+
+  for (const item of ranked) {
+    if (seen.has(item.id)) continue;
+    diversified.push(item);
+    seen.add(item.id);
+    if (diversified.length >= limit) break;
+  }
+
+  return diversified.slice(0, limit);
+}
+
 function filterSearchResults(index: SearchResult[], typeFilter: SearchFilter, searchText: string) {
   const typed = typeFilter === "all" ? index : index.filter((item) => item.type === typeFilter);
   const ranked = typed
@@ -287,7 +350,10 @@ function filterSearchResults(index: SearchResult[], typeFilter: SearchFilter, se
     .sort((a, b) => b.score - a.score || b.item.priority - a.item.priority)
     .map(({ item }) => item);
 
-  if (ranked.length || !searchText.trim()) return ranked.slice(0, 40);
+  if (ranked.length || !searchText.trim()) {
+    if (typeFilter === "all" && searchText.trim()) return diversifySearchResults(ranked, 40);
+    return ranked.slice(0, 40);
+  }
   return typed.sort((a, b) => b.priority - a.priority).slice(0, 16);
 }
 
@@ -578,6 +644,7 @@ function buildAnswerDraft(question: string, targetPath: string, evidence: Search
 
   return [
     `Question: ${question || "No question entered"}`,
+    "Draft method: local deterministic evidence outline; no LLM provider was called.",
     "",
     "## Evidence",
     evidenceBullets,
@@ -609,6 +676,7 @@ export function ChatSearchPage({
   reviewItems,
   writebacks,
   traceabilityWarnings,
+  providerCenter,
   busy,
   onCreateProposal,
   onOpenPath,
@@ -625,11 +693,16 @@ export function ChatSearchPage({
   const [targetPath, setTargetPath] = useState("reviews/query-writeback/deepseek-research-insights.md");
   const [answerDraft, setAnswerDraft] = useState("");
   const [selectedResultId, setSelectedResultId] = useState<string | null>(null);
-  const [history, setHistory] = useState<QueryHistoryItem[]>(loadHistory);
+  const [history, setHistory] = useState<QueryHistoryItem[]>(() => loadHistory(vaultPath));
+  const activeProvider = useMemo(() => providerSummary(providerCenter), [providerCenter]);
   const index = useMemo(
     () => buildSearchIndex({ status, claims, evidencePaths, reviewItems, writebacks, traceabilityWarnings }),
     [claims, evidencePaths, reviewItems, status, traceabilityWarnings, writebacks],
   );
+
+  useEffect(() => {
+    setHistory(loadHistory(vaultPath));
+  }, [vaultPath]);
 
   const filteredResults = useMemo(() => filterSearchResults(index, typeFilter, searchText), [index, searchText, typeFilter]);
   const selectedResult = useMemo(
@@ -665,7 +738,7 @@ export function ChatSearchPage({
       ...history.filter((item) => item.question !== entry.question || item.targetPath !== entry.targetPath),
     ].slice(0, 8);
     setHistory(next);
-    saveHistory(next);
+    saveHistory(vaultPath, next);
     return entry;
   };
 
@@ -782,6 +855,7 @@ export function ChatSearchPage({
         <div className="proposal-boundary chat-search-boundary">
           <strong>{text.boundaryTitle}</strong>
           <span>{text.boundaryBody}</span>
+          <code>{text.providerLabel}: {activeProvider.name} · {activeProvider.detail}. {text.providerDraftOnly}</code>
         </div>
       </section>
 

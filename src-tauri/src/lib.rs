@@ -829,6 +829,25 @@ fn path_whitespace_suggestion(path: &Path) -> Option<PathBuf> {
     None
 }
 
+fn workspace_root_from_path(start: &Path) -> Option<PathBuf> {
+    let mut current = if start.is_file() {
+        start.parent()?.to_path_buf()
+    } else {
+        start.to_path_buf()
+    };
+    loop {
+        if current.join("deepseek_paper").is_dir()
+            && current.join("vaults").is_dir()
+            && current.join("AGENTS.md").is_file()
+        {
+            return Some(current);
+        }
+        if !current.pop() {
+            return None;
+        }
+    }
+}
+
 fn workspace_root() -> PathBuf {
     if let Ok(path) = std::env::var("LLM_WIKI_WORKSPACE") {
         let candidate = PathBuf::from(path);
@@ -836,26 +855,49 @@ fn workspace_root() -> PathBuf {
             return candidate;
         }
     }
-    let mut current = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    loop {
-        if current.join("deepseek_paper").is_dir()
-            && current.join("vaults").is_dir()
-            && current.join("AGENTS.md").is_file()
-        {
-            return current;
-        }
-        if !current.pop() {
-            break;
-        }
-    }
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    let current = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    workspace_root_from_path(&current).unwrap_or(current)
 }
 
-fn app_state_path() -> PathBuf {
-    workspace_root()
+fn workspace_root_for_vault(vault: &Path) -> PathBuf {
+    workspace_root_from_path(vault).unwrap_or_else(workspace_root)
+}
+
+fn app_state_path_for_workspace(root: &Path) -> PathBuf {
+    root
         .join(".cache")
         .join("llm-wiki-desktop")
         .join("desktop-state.json")
+}
+
+fn app_support_state_path() -> PathBuf {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    home.join("Library")
+        .join("Application Support")
+        .join("LLM Wiki")
+        .join("desktop-state.json")
+}
+
+fn app_state_path() -> PathBuf {
+    let root = workspace_root();
+    if root.join("deepseek_paper").is_dir()
+        && root.join("vaults").is_dir()
+        && root.join("AGENTS.md").is_file()
+    {
+        app_state_path_for_workspace(&root)
+    } else {
+        app_support_state_path()
+    }
+}
+
+fn load_app_state_from_workspace(root: &Path) -> DesktopAppState {
+    let path = app_state_path_for_workspace(root);
+    if !path.is_file() {
+        return DesktopAppState::default();
+    }
+    serde_json::from_str::<DesktopAppState>(&read_text(&path)).unwrap_or_default()
 }
 
 fn load_app_state_from_disk() -> DesktopAppState {
@@ -864,6 +906,27 @@ fn load_app_state_from_disk() -> DesktopAppState {
         return DesktopAppState::default();
     }
     serde_json::from_str::<DesktopAppState>(&read_text(&path)).unwrap_or_default()
+}
+
+fn save_app_state_to_workspace(root: &Path, state: &DesktopAppState) -> Result<(), String> {
+    let path = app_state_path_for_workspace(root);
+    let rendered = serde_json::to_string_pretty(state)
+        .map_err(|e| format!("failed to serialize desktop app state: {e}"))?;
+    write_text(&path, &(rendered + "\n"))
+}
+
+fn mirror_app_state_to_launch_scope(state: &DesktopAppState, workspace: &Path) -> Result<(), String> {
+    if cfg!(test) {
+        return Ok(());
+    }
+    let workspace_path = app_state_path_for_workspace(workspace);
+    let launch_path = app_state_path();
+    if launch_path != workspace_path {
+        let rendered = serde_json::to_string_pretty(state)
+            .map_err(|e| format!("failed to serialize desktop app state: {e}"))?;
+        write_text(&launch_path, &(rendered + "\n"))?;
+    }
+    Ok(())
 }
 
 fn save_app_state_to_disk(state: &DesktopAppState) -> Result<(), String> {
@@ -1537,9 +1600,11 @@ fn save_interface_language(interface_language: String) -> Result<DesktopAppState
 fn save_last_selected_vault(vault_path: String) -> Result<DesktopAppState, String> {
     let vault = PathBuf::from(vault_path);
     require_existing_dir(&vault, "vault")?;
-    let mut state = load_app_state_from_disk();
+    let workspace = workspace_root_for_vault(&vault);
+    let mut state = load_app_state_from_workspace(&workspace);
     push_recent_vault(&mut state, &vault);
-    save_app_state_to_disk(&state)?;
+    save_app_state_to_workspace(&workspace, &state)?;
+    mirror_app_state_to_launch_scope(&state, &workspace)?;
     Ok(state)
 }
 
@@ -7547,6 +7612,27 @@ mod tests {
         assert!(opened.warning.is_some());
 
         let _ = fs::remove_dir_all(vault);
+        let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn selected_vault_state_uses_workspace_cache_when_app_cwd_is_unrelated() {
+        let workspace = test_vault("workspace-state");
+        let _ = fs::remove_dir_all(&workspace);
+        fs::create_dir_all(workspace.join("deepseek_paper")).expect("deepseek dir");
+        fs::create_dir_all(workspace.join("vaults")).expect("vaults dir");
+        write_text(&workspace.join("AGENTS.md"), "rules").expect("agents");
+        let vault = workspace.join("vaults").join("deepseek-vault");
+        create_minimal_vault(&vault).expect("create minimal vault");
+
+        let state = save_last_selected_vault(to_display(&vault)).expect("save selected vault");
+        assert_eq!(state.last_selected_vault.as_deref(), Some(to_display(&vault).as_str()));
+        assert!(workspace
+            .join(".cache")
+            .join("llm-wiki-desktop")
+            .join("desktop-state.json")
+            .is_file());
+
         let _ = fs::remove_dir_all(workspace);
     }
 

@@ -2023,7 +2023,8 @@ textarea {
 .artifact-card,
 .raw-source-empty,
 .linked-objects,
-.traceability-detail {
+.traceability-detail,
+.raw-source-detail-section {
   border: 1px solid #d8ded9;
   border-radius: 8px;
   background: #fbfcfa;
@@ -2168,6 +2169,29 @@ textarea {
 .raw-source-detail-links {
   display: grid;
   gap: 8px;
+}
+
+.raw-source-detail-section summary {
+  cursor: pointer;
+  color: #26312d;
+  font-size: 13px;
+}
+
+.raw-source-detail-section summary strong {
+  font-size: 13px;
+}
+
+.raw-source-detail-section summary span {
+  float: right;
+  max-width: 58%;
+  overflow: hidden;
+  color: #64706a;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.raw-source-detail-section[open] summary {
+  margin-bottom: 9px;
 }
 
 .traceability-detail p,

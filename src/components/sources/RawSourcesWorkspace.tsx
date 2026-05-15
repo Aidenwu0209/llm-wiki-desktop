@@ -184,45 +184,50 @@ function uniqueStrings(values: Array<string | null | undefined>) {
   return Array.from(new Set(values.filter((item): item is string => Boolean(item && item.trim()))));
 }
 
-function samePath(a?: string | null, b?: string | null) {
-  return Boolean(a && b && a === b);
+function normalizeVaultPath(path?: string | null, vaultPath?: string | null) {
+  if (!path) return "";
+  const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "").replace(/^\.\//, "");
+  const vault = vaultPath?.replace(/\\/g, "/").replace(/\/+$/, "");
+  if (vault && normalized === vault) return "";
+  if (vault && normalized.startsWith(`${vault}/`)) return normalized.slice(vault.length + 1);
+  return normalized;
+}
+
+function samePath(a?: string | null, b?: string | null, vaultPath?: string | null) {
+  if (!a || !b) return false;
+  return a === b || normalizeVaultPath(a, vaultPath) === normalizeVaultPath(b, vaultPath);
 }
 
 function isMarkdown(path?: string | null) {
   return Boolean(path && /\.(md|markdown)$/i.test(path));
 }
 
-function recordMatchesValue(record: SourceIdentity, value?: string | null) {
+function recordMatchesValue(record: SourceIdentity, value?: string | null, vaultPath?: string | null) {
   if (!value) return false;
-  return [
-    record.sourceId,
-    record.sourceUuid,
-    record.path,
-    record.rawPath,
-    record.canonicalPath,
-    record.sourcePage,
-    record.artifactPath,
-  ].some((candidate) => candidate === value);
+  if ([record.sourceId, record.sourceUuid].some((candidate) => candidate && candidate === value)) return true;
+  return [record.path, record.rawPath, record.canonicalPath, record.sourcePage, record.artifactPath].some((candidate) =>
+    samePath(candidate, value, vaultPath),
+  );
 }
 
-function fileMatchesRegistry(file: VaultFile, entry: DesktopRegistryEntry) {
+function fileMatchesRegistry(file: VaultFile, entry: DesktopRegistryEntry, vaultPath?: string | null) {
   return [
     entry.sourcePage,
     entry.sourcePath,
     entry.rawPath,
     entry.canonicalPath,
     entry.artifactPath,
-  ].some((path) => samePath(file.path, path));
+  ].some((path) => samePath(file.path, path, vaultPath));
 }
 
-function artifactMatches(record: SourceIdentity, artifact: ArtifactContractSummary) {
+function artifactMatches(record: SourceIdentity, artifact: ArtifactContractSummary, vaultPath?: string | null) {
   return (
-    artifact.sourceUuid === record.sourceUuid ||
-    artifact.sourceId === record.sourceId ||
-    samePath(artifact.sourcePath, record.path) ||
-    samePath(artifact.sourcePath, record.rawPath) ||
-    samePath(artifact.sourcePath, record.sourcePage) ||
-    samePath(artifact.artifactPath, record.artifactPath)
+    Boolean(artifact.sourceUuid && record.sourceUuid && artifact.sourceUuid === record.sourceUuid) ||
+    Boolean(artifact.sourceId && record.sourceId && artifact.sourceId === record.sourceId) ||
+    samePath(artifact.sourcePath, record.path, vaultPath) ||
+    samePath(artifact.sourcePath, record.rawPath, vaultPath) ||
+    samePath(artifact.sourcePath, record.sourcePage, vaultPath) ||
+    samePath(artifact.artifactPath, record.artifactPath, vaultPath)
   );
 }
 
@@ -232,8 +237,9 @@ function hydrateRecord(
   claims: ClaimLedgerItem[],
   evidencePaths: EvidencePathItem[],
   traceabilityWarnings: TraceabilityWarning[],
+  vaultPath?: string | null,
 ): RawSourceRecord {
-  const artifact = artifacts.find((item) => artifactMatches(base, item));
+  const artifact = artifacts.find((item) => artifactMatches(base, item, vaultPath));
   const withArtifact = {
     ...base,
     artifact,
@@ -244,24 +250,24 @@ function hydrateRecord(
   };
 
   const linkedClaims = claims.filter((claim) =>
-    recordMatchesValue(withArtifact, claim.sourceId) ||
-    recordMatchesValue(withArtifact, claim.sourceUuid) ||
-    recordMatchesValue(withArtifact, claim.sourcePath),
+    recordMatchesValue(withArtifact, claim.sourceId, vaultPath) ||
+    recordMatchesValue(withArtifact, claim.sourceUuid, vaultPath) ||
+    recordMatchesValue(withArtifact, claim.sourcePath, vaultPath),
   );
   const claimIds = new Set(linkedClaims.map((claim) => claim.claimId));
   const linkedEvidence = evidencePaths.filter((item) =>
     claimIds.has(item.claimId) ||
-    recordMatchesValue(withArtifact, item.sourceId) ||
-    recordMatchesValue(withArtifact, item.sourceUuid) ||
-    recordMatchesValue(withArtifact, item.sourcePage) ||
-    recordMatchesValue(withArtifact, item.rawPath) ||
-    recordMatchesValue(withArtifact, item.artifactPath),
+    recordMatchesValue(withArtifact, item.sourceId, vaultPath) ||
+    recordMatchesValue(withArtifact, item.sourceUuid, vaultPath) ||
+    recordMatchesValue(withArtifact, item.sourcePage, vaultPath) ||
+    recordMatchesValue(withArtifact, item.rawPath, vaultPath) ||
+    recordMatchesValue(withArtifact, item.artifactPath, vaultPath),
   );
   const warnings = traceabilityWarnings.filter((warning) =>
     claimIds.has(warning.claimId) ||
-    recordMatchesValue(withArtifact, warning.sourceId) ||
-    recordMatchesValue(withArtifact, warning.sourcePath) ||
-    recordMatchesValue(withArtifact, warning.artifactPath),
+    recordMatchesValue(withArtifact, warning.sourceId, vaultPath) ||
+    recordMatchesValue(withArtifact, warning.sourcePath, vaultPath) ||
+    recordMatchesValue(withArtifact, warning.artifactPath, vaultPath),
   );
   const linkedConcepts = uniqueStrings([
     ...linkedClaims.flatMap((claim) => claim.concepts),
@@ -281,6 +287,7 @@ function hydrateRecord(
 }
 
 function buildRawSourceRecords(input: {
+  vaultPath?: string | null;
   status: VaultStatus | null;
   registry: DesktopRegistryEntry[];
   artifacts: ArtifactContractSummary[];
@@ -293,7 +300,7 @@ function buildRawSourceRecords(input: {
   const records = new Map<string, Omit<RawSourceRecord, "linkedClaims" | "linkedConcepts" | "warnings" | "evidencePaths" | "traceabilityStatus" | "artifact">>();
 
   for (const entry of input.registry) {
-    const file = sourceFiles.find((item) => fileMatchesRegistry(item, entry));
+    const file = sourceFiles.find((item) => fileMatchesRegistry(item, entry, input.vaultPath));
     const path = entry.sourcePage || entry.sourcePath || entry.rawPath || entry.canonicalPath || file?.path || "";
     const id = entry.sourceUuid || entry.sourceId || path;
     records.set(id, {
@@ -320,10 +327,10 @@ function buildRawSourceRecords(input: {
 
   for (const file of sourceFiles) {
     const alreadyRegistered = Array.from(records.values()).some((record) =>
-      samePath(record.path, file.path) ||
-      samePath(record.sourcePage, file.path) ||
-      samePath(record.rawPath, file.path) ||
-      samePath(record.canonicalPath, file.path),
+      samePath(record.path, file.path, input.vaultPath) ||
+      samePath(record.sourcePage, file.path, input.vaultPath) ||
+      samePath(record.rawPath, file.path, input.vaultPath) ||
+      samePath(record.canonicalPath, file.path, input.vaultPath),
     );
     if (alreadyRegistered) continue;
     records.set(`file:${file.path}`, {
@@ -345,7 +352,7 @@ function buildRawSourceRecords(input: {
   }
 
   return Array.from(records.values())
-    .map((record) => hydrateRecord(record, input.artifacts, input.claims, input.evidencePaths, input.traceabilityWarnings))
+    .map((record) => hydrateRecord(record, input.artifacts, input.claims, input.evidencePaths, input.traceabilityWarnings, input.vaultPath))
     .sort((a, b) => {
       const statusRank = Number(b.traceabilityStatus !== "ok") - Number(a.traceabilityStatus !== "ok");
       if (statusRank !== 0) return statusRank;
@@ -418,8 +425,8 @@ export function RawSourcesWorkspace({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const records = useMemo(
-    () => buildRawSourceRecords({ status, registry, artifacts, claims, evidencePaths, traceabilityWarnings }),
-    [artifacts, claims, evidencePaths, registry, status, traceabilityWarnings],
+    () => buildRawSourceRecords({ vaultPath, status, registry, artifacts, claims, evidencePaths, traceabilityWarnings }),
+    [artifacts, claims, evidencePaths, registry, status, traceabilityWarnings, vaultPath],
   );
   const filteredRecords = useMemo(() => {
     const query = filter.trim().toLowerCase();
@@ -442,6 +449,7 @@ export function RawSourcesWorkspace({
   }, [filter, records]);
   const selected = filteredRecords.find((record) => record.id === selectedId) || filteredRecords[0] || null;
   const artifact = selected?.artifact;
+  const selectedBrokenEvidence = selected?.evidencePaths.some((item) => item.chainStatus !== "ok") ?? false;
 
   return (
     <section className={classNames("raw-sources-workspace", className)}>
@@ -603,48 +611,38 @@ export function RawSourcesWorkspace({
 
           {selected && (
             <div className="raw-source-details-body">
-              <dl className="raw-source-facts">
-                <div><dt>{text.path}</dt><dd>{selected.path}</dd></div>
-                <div><dt>{text.rawPath}</dt><dd>{compact(selected.rawPath)}</dd></div>
-                <div><dt>{text.sourcePage}</dt><dd>{compact(selected.sourcePage)}</dd></div>
-                <div><dt>{text.hash}</dt><dd>{compact(selected.hash)}</dd></div>
-                <div><dt>{text.parser}</dt><dd>{compact(selected.parser)} {selected.parserVersion || ""}</dd></div>
-                <div><dt>{text.artifact}</dt><dd>{compact(selected.artifactPath)}</dd></div>
-                <div><dt>{text.artifactHash}</dt><dd>{compact(selected.artifactHash)}</dd></div>
-                <div><dt>{text.traceability}</dt><dd>{selected.traceabilityStatus}</dd></div>
-              </dl>
+              <details className="raw-source-detail-section" open>
+                <summary>
+                  <strong>{text.details}</strong>
+                  <span>{selected.sourceId || selected.sourceUuid || selected.fileName}</span>
+                </summary>
+                <dl className="raw-source-facts">
+                  <div><dt>{text.path}</dt><dd>{selected.path}</dd></div>
+                  <div><dt>{text.rawPath}</dt><dd>{compact(selected.rawPath)}</dd></div>
+                  <div><dt>{text.sourcePage}</dt><dd>{compact(selected.sourcePage)}</dd></div>
+                  <div><dt>{text.hash}</dt><dd>{compact(selected.hash)}</dd></div>
+                  <div><dt>{text.parser}</dt><dd>{compact(selected.parser)} {selected.parserVersion || ""}</dd></div>
+                  <div><dt>{text.artifact}</dt><dd>{compact(selected.artifactPath)}</dd></div>
+                  <div><dt>{text.artifactHash}</dt><dd>{compact(selected.artifactHash)}</dd></div>
+                  <div><dt>{text.traceability}</dt><dd>{selected.traceabilityStatus}</dd></div>
+                </dl>
 
-              <SourceActions
-                record={selected}
-                text={text.actions}
-                resolveVaultPath={resolveVaultPath}
-                onOpenPath={onOpenPath}
-                onRevealPath={onRevealPath}
-                onOpenVaultItem={onOpenVaultItem}
-                onCopyText={onCopyText}
-              />
+                <SourceActions
+                  record={selected}
+                  text={text.actions}
+                  resolveVaultPath={resolveVaultPath}
+                  onOpenPath={onOpenPath}
+                  onRevealPath={onRevealPath}
+                  onOpenVaultItem={onOpenVaultItem}
+                  onCopyText={onCopyText}
+                />
+              </details>
 
-              <div className="raw-source-detail-links">
-                <div>
-                  <strong>{text.linkedClaims}</strong>
-                  {selected.linkedClaims.length === 0 && <p className="empty">{text.noClaims}</p>}
-                  {selected.linkedClaims.slice(0, 5).map((claim) => (
-                    <button type="button" key={`detail-${claim.claimId}`} onClick={() => onCopyText("claim id", claim.claimId)}>
-                      <span className={classNames("status-chip inline", claim.verdict)}>{claim.verdict}</span>
-                      <strong>{claim.claimId}</strong>
-                      <em>{claim.claimText}</em>
-                    </button>
-                  ))}
-                </div>
-                <div>
-                  <strong>{text.linkedConcepts}</strong>
-                  {selected.linkedConcepts.length === 0 && <p className="empty">{text.noConcepts}</p>}
-                  {selected.linkedConcepts.slice(0, 8).map((concept) => <code key={`detail-${concept}`}>{concept}</code>)}
-                </div>
-              </div>
-
-              <div className="traceability-detail">
-                <strong>{text.traceability}</strong>
+              <details className="raw-source-detail-section traceability-detail" open={selected.warnings.length > 0 || selectedBrokenEvidence}>
+                <summary>
+                  <strong>{text.traceability}</strong>
+                  <span>{selected.traceabilityStatus}</span>
+                </summary>
                 {selected.warnings.length === 0 && selected.evidencePaths.every((item) => item.chainStatus === "ok") && (
                   <p>{text.complete}</p>
                 )}
@@ -664,7 +662,31 @@ export function RawSourcesWorkspace({
                     <code>{item.missing.join(", ") || "needs review"}</code>
                   </div>
                 ))}
-              </div>
+              </details>
+
+              <details className="raw-source-detail-section raw-source-detail-links">
+                <summary>
+                  <strong>{text.linkedClaims}</strong>
+                  <span>{selected.linkedClaims.length}</span>
+                </summary>
+                {selected.linkedClaims.length === 0 && <p className="empty">{text.noClaims}</p>}
+                {selected.linkedClaims.slice(0, 5).map((claim) => (
+                  <button type="button" key={`detail-${claim.claimId}`} onClick={() => onCopyText("claim id", claim.claimId)}>
+                    <span className={classNames("status-chip inline", claim.verdict)}>{claim.verdict}</span>
+                    <strong>{claim.claimId}</strong>
+                    <em>{claim.claimText}</em>
+                  </button>
+                ))}
+              </details>
+
+              <details className="raw-source-detail-section raw-source-detail-links">
+                <summary>
+                  <strong>{text.linkedConcepts}</strong>
+                  <span>{selected.linkedConcepts.length}</span>
+                </summary>
+                {selected.linkedConcepts.length === 0 && <p className="empty">{text.noConcepts}</p>}
+                {selected.linkedConcepts.slice(0, 8).map((concept) => <code key={`detail-${concept}`}>{concept}</code>)}
+              </details>
             </div>
           )}
         </aside>
