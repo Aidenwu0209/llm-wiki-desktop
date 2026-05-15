@@ -75,8 +75,8 @@ textarea {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 76px minmax(0, 1fr) 320px;
-  grid-template-areas: "nav workspace details";
+  grid-template-columns: 76px minmax(0, 1fr);
+  grid-template-areas: "nav workspace";
   height: 100vh;
   min-height: 100vh;
   overflow: hidden;
@@ -100,18 +100,61 @@ textarea {
 }
 
 .sidebar {
-  grid-area: details;
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 80;
   display: flex;
   flex-direction: column;
   gap: 14px;
+  width: min(420px, calc(100vw - 92px));
+  min-width: 0;
   overflow: auto;
   border-left: 1px solid #cbd4cf;
   background: rgba(247, 248, 245, 0.96);
   padding: 18px;
+  box-shadow: -18px 0 42px rgba(20, 31, 27, 0.18);
+  transform: translateX(110%);
+  transition: transform 180ms ease, box-shadow 180ms ease;
 }
 
-.command-sidebar {
-  min-width: 0;
+.sidebar.open {
+  transform: translateX(0);
+}
+
+.drawer-scrim {
+  position: fixed;
+  inset: 0 0 0 76px;
+  z-index: 70;
+  display: block;
+  border: 0;
+  border-radius: 0;
+  background: rgba(13, 23, 20, 0.16);
+  cursor: default;
+}
+
+.drawer-header {
+  position: sticky;
+  top: -18px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: -18px -18px 0;
+  border-bottom: 1px solid #d8ded9;
+  background: rgba(247, 248, 245, 0.98);
+  padding: 12px 14px;
+  color: #40514a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.drawer-header button {
+  width: 32px;
+  min-height: 32px;
+  padding: 0;
 }
 
 .icon-brand {
@@ -293,16 +336,18 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  min-height: 0;
   min-width: 0;
   overflow: auto;
-  padding: 18px;
+  padding: 16px 18px 22px;
 }
 
 .topbar {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 20px;
+  flex-wrap: wrap;
   border-bottom: 1px solid #d8ded9;
   padding-bottom: 14px;
 }
@@ -316,10 +361,11 @@ textarea {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
-  max-width: 760px;
+  max-width: min(980px, 100%);
 }
 
-.language-toggle {
+.language-toggle,
+.sidebar-toggle {
   min-height: 34px;
   border-color: #b9c7c0;
   background: #ffffff;
@@ -329,7 +375,8 @@ textarea {
   font-weight: 800;
 }
 
-.language-toggle:hover:not(:disabled) {
+.language-toggle:hover:not(:disabled),
+.sidebar-toggle:hover:not(:disabled) {
   border-color: #245b93;
   background: #eef5fb;
 }
@@ -1886,15 +1933,17 @@ textarea {
 
 .raw-sources-layout {
   display: grid;
-  grid-template-columns: minmax(260px, 0.72fr) minmax(420px, 1.2fr) minmax(300px, 0.82fr);
+  grid-template-columns: minmax(280px, 0.72fr) minmax(440px, 1.25fr) minmax(320px, 0.82fr);
   gap: 14px;
   align-items: start;
+  min-width: 0;
 }
 
 .raw-source-list,
 .raw-source-preview,
 .raw-source-details {
-  min-height: 570px;
+  min-height: min(570px, calc(100vh - 260px));
+  min-width: 0;
 }
 
 .raw-source-filter {
@@ -1916,7 +1965,7 @@ textarea {
 .raw-source-list-body {
   display: grid;
   gap: 8px;
-  max-height: 484px;
+  max-height: min(560px, calc(100vh - 350px));
   overflow: auto;
 }
 
@@ -2672,6 +2721,7 @@ textarea {
   display: grid;
   grid-template-columns: minmax(420px, 1.35fr) minmax(320px, 0.8fr);
   gap: 14px;
+  min-width: 0;
 }
 
 .graph-panel {
@@ -2855,6 +2905,18 @@ textarea {
   display: grid;
   grid-template-columns: repeat(3, minmax(260px, 1fr));
   gap: 14px;
+}
+
+@media (max-width: 1280px) {
+  .graph-summary-bar,
+  .graph-list-grid {
+    grid-template-columns: repeat(2, minmax(240px, 1fr));
+  }
+
+  .graph-insight-strip,
+  .graph-workspace {
+    grid-template-columns: 1fr;
+  }
 }
 
 .graph-list {
@@ -3988,7 +4050,7 @@ textarea {
   width: min(780px, 100%);
 }
 
-@media (max-width: 1260px) {
+@media (max-width: 1100px) {
   .raw-sources-layout,
   .provider-controls,
   .cli-status-grid {
@@ -4661,7 +4723,7 @@ button.primary:hover:not(:disabled),
   grid-area: actions;
 }
 
-@media (max-width: 1260px) {
+@media (max-width: 1100px) {
   .chat-search-columns {
     grid-template-columns: minmax(300px, 0.9fr) minmax(360px, 1.1fr);
   }

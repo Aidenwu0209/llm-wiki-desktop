@@ -667,6 +667,7 @@ function App() {
   const [runtimeHistory, setRuntimeHistory] = useState<RuntimeJobEvent[]>([]);
   const [liveLogLines, setLiveLogLines] = useState<string[]>([]);
   const [activePage, setActivePage] = useState<ShellPage>("dashboard");
+  const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -706,6 +707,19 @@ function App() {
   const progressDone = jobs.filter((job) => job.status === "succeeded").length;
   const activePageCopy = copy.pages[activePage];
   const pageVisible = (...pages: ShellPage[]) => pages.includes(activePage);
+
+  useEffect(() => {
+    if (detailSelection.kind !== "empty") {
+      setDetailDrawerOpen(true);
+    }
+  }, [detailSelection]);
+
+  useEffect(() => {
+    if (activePage === "settings") {
+      setDetailDrawerOpen(false);
+    }
+  }, [activePage]);
+
   const vaultFilePath = (path?: string | null) => {
     if (!path) return vaultPath;
     if (path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path)) return path;
@@ -1542,7 +1556,12 @@ function App() {
 
   return (
     <main
-      className={classNames("app-shell", activePage === "settings" && "settings-mode", dragActive && "drag-active")}
+      className={classNames(
+        "app-shell",
+        activePage === "settings" && "settings-mode",
+        activePage !== "settings" && detailDrawerOpen && "drawer-open",
+        dragActive && "drag-active",
+      )}
       onDragOver={(event) => {
         event.preventDefault();
         setDragActive(true);
@@ -1575,9 +1594,24 @@ function App() {
         <div className={classNames("rail-status", tone)} title={vaultPath || "No vault selected"} />
       </aside>
 
-      {activePage !== "settings" && (
-      <aside className="sidebar command-sidebar">
-        <div className="brand">
+      {activePage !== "settings" && detailDrawerOpen && (
+        <button
+          type="button"
+          className="drawer-scrim"
+          aria-label={interfaceLanguage === "zh" ? "关闭侧栏" : "Close inspector"}
+          onClick={() => setDetailDrawerOpen(false)}
+        />
+      )}
+
+      {activePage !== "settings" && detailDrawerOpen && (
+        <aside className="sidebar command-sidebar open">
+          <div className="drawer-header">
+            <span>{interfaceLanguage === "zh" ? "Vault / Inspector" : "Vault / Inspector"}</span>
+            <button type="button" onClick={() => setDetailDrawerOpen(false)} aria-label={interfaceLanguage === "zh" ? "关闭侧栏" : "Close inspector"}>
+              <XCircle size={16} />
+            </button>
+          </div>
+          <div className="brand">
           <div className="brand-mark">
             <BrandMark size={42} />
           </div>
@@ -1719,6 +1753,18 @@ function App() {
               <Languages size={15} />
               <span>{copy.languageToggle}</span>
             </button>
+            {activePage !== "settings" && (
+              <button
+                className="sidebar-toggle"
+                type="button"
+                onClick={() => setDetailDrawerOpen((open) => !open)}
+                aria-expanded={detailDrawerOpen}
+                title={interfaceLanguage === "zh" ? "打开 Vault / Inspector 侧栏" : "Open Vault / Inspector sidebar"}
+              >
+                <PanelRightOpen size={15} />
+                <span>{interfaceLanguage === "zh" ? "侧栏" : "Inspector"}</span>
+              </button>
+            )}
           </div>
         </header>
 
