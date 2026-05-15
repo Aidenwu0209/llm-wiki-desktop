@@ -287,7 +287,16 @@ export function RuntimeSettingsPanel({
   };
 
   const toggleExpanded = (providerId: string) => {
-    updateProvider(providerId, { expanded: !center.providers[providerId]?.expanded });
+    const nextExpanded = !center.providers[providerId]?.expanded;
+    updateCenter({
+      ...center,
+      providers: Object.fromEntries(
+        Object.entries(center.providers).map(([id, value]) => [
+          id,
+          { ...value, expanded: id === providerId ? nextExpanded : false },
+        ]),
+      ),
+    });
   };
 
   const runCliCheck = async (providerId: "codex-cli" | "claude-code", command: "codex" | "claude") => {

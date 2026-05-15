@@ -3465,8 +3465,7 @@ textarea {
 .provider-list {
   display: grid;
   gap: 8px;
-  max-height: 760px;
-  overflow: auto;
+  overflow: visible;
 }
 
 .provider-row {
@@ -3553,7 +3552,6 @@ textarea {
 .provider-expanded {
   display: grid;
   gap: 10px;
-  min-height: 150px;
   border-top: 1px solid #e4e8e4;
   padding: 10px 12px 12px;
 }
@@ -3827,16 +3825,6 @@ textarea {
 .provider-card.enabled {
   border-color: #91b79d;
   box-shadow: inset 3px 0 0 #1f6f45;
-}
-
-.provider-card.expanded {
-  min-height: 232px;
-}
-
-.provider-card.expanded .provider-expanded {
-  display: grid !important;
-  visibility: visible;
-  opacity: 1;
 }
 
 .provider-row {
