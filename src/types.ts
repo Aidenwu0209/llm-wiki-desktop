@@ -193,6 +193,10 @@ export type LlmProviderConfig = {
   customModel: string;
   contextWindow: number;
   reasoningMode: "fast" | "balanced" | "deep" | string;
+  apiBaseUrl?: string;
+  apiKeyEnvVar?: string;
+  apiKeyConfigured?: boolean;
+  apiKeyCheckedAt?: string | null;
   cliAvailable?: boolean;
   cliVersion?: string | null;
   cliPath?: string | null;
@@ -209,6 +213,13 @@ export type LlmCliCheckResult = {
   available: boolean;
   version?: string | null;
   path?: string | null;
+  message: string;
+};
+
+export type LlmApiKeyCheckResult = {
+  providerId: string;
+  envVar: string;
+  available: boolean;
   message: string;
 };
 

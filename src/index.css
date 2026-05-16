@@ -3994,6 +3994,18 @@ textarea {
   font-size: 12px;
 }
 
+.api-config-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.api-config-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(190px, 0.75fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
 .provider-controls {
   display: grid;
   grid-template-columns: minmax(190px, 0.8fr) minmax(240px, 1fr) minmax(170px, auto);

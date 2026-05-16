@@ -22,9 +22,9 @@ import {
   Sparkles,
   TerminalSquare,
 } from "lucide-react";
-import type { DesktopSettings, LlmCliCheckResult, LlmProviderConfig } from "../../types";
+import type { DesktopSettings, LlmApiKeyCheckResult, LlmCliCheckResult, LlmProviderConfig } from "../../types";
 import { languageName, type UiLanguage } from "../../i18n";
-import { checkLocalLlmCli } from "../../tauri";
+import { checkLlmApiKey, checkLocalLlmCli } from "../../tauri";
 import { BrandMark } from "../brand/BrandMark";
 
 type RuntimeSettingsPanelProps = {
@@ -91,10 +91,18 @@ const settingsCopy = {
     detected: "已检测",
     notFound: "未找到",
     needsCheck: "待检查",
+    needsConfig: "待配置",
     noProvider: "未选择提供方",
     selectAfterCheck: "本地 CLI 需要先检查可用后才能启用。",
-    configurationPlaceholder: "配置占位",
-    apiPlaceholder: "托管 API 提供方当前只是配置占位。桌面端还没有安全密钥存储，因此这里不会启用或保存 API key。",
+    configurable: "可配置",
+    enabled: "已启用",
+    keyPresent: "密钥已检测",
+    keyMissing: "未检测到密钥",
+    apiPlaceholder: "托管 API 提供方可用。这里保存 Base URL 和 API key 环境变量名，不保存 API key 明文。",
+    apiBaseUrl: "API Base URL",
+    apiKeyEnvVar: "API Key 环境变量",
+    checkKeyAndEnable: "检查并启用",
+    apiKeyHint: "请把密钥放在系统环境变量、本地运行时或启动脚本中；桌面设置只保存变量名。",
     local: "本地",
     activeKeyHidden: "已选择，未保存密钥",
     off: "关闭",
@@ -107,7 +115,7 @@ const settingsCopy = {
     pathPending: "等待 PATH 检查",
     recheck: "重新检查",
     checkAndEnable: "检查并启用",
-    temporarilyUnavailable: "暂不可启用",
+    temporarilyUnavailable: "未配置",
     apiNote: "API 密钥不在此界面中保存或明文显示。请使用环境变量、系统钥匙串或本地运行时配置。",
     customModel: "自定义模型",
     optionalOverride: "可选覆盖",
@@ -140,10 +148,18 @@ const settingsCopy = {
     detected: "Detected",
     notFound: "Not found",
     needsCheck: "Needs check",
+    needsConfig: "Needs config",
     noProvider: "No provider selected",
     selectAfterCheck: "Check the local CLI before enabling it.",
-    configurationPlaceholder: "Configuration placeholder",
-    apiPlaceholder: "Hosted API providers are configuration placeholders. The desktop app does not have secure key storage yet, so API keys are not enabled or saved here.",
+    configurable: "Configurable",
+    enabled: "Enabled",
+    keyPresent: "Key detected",
+    keyMissing: "Key not detected",
+    apiPlaceholder: "Hosted API providers are usable. This saves the Base URL and API key environment variable name, never the API key value.",
+    apiBaseUrl: "API Base URL",
+    apiKeyEnvVar: "API key environment variable",
+    checkKeyAndEnable: "Check and enable",
+    apiKeyHint: "Put the secret in an environment variable, local runtime config, or launch script. Desktop settings only save the variable name.",
     local: "Local",
     activeKeyHidden: "Selected, key not stored",
     off: "Off",
@@ -156,7 +172,7 @@ const settingsCopy = {
     pathPending: "PATH lookup pending",
     recheck: "Re-check",
     checkAndEnable: "Check and enable",
-    temporarilyUnavailable: "Unavailable",
+    temporarilyUnavailable: "Not configured",
     apiNote: "API keys are not saved or shown in this UI. Use environment variables, the system keychain, or local runtime config.",
     customModel: "Custom model",
     optionalOverride: "Optional override",
@@ -183,17 +199,17 @@ const settingsCopy = {
 } as const;
 
 const providers = [
-  { id: "anthropic", name: "Anthropic (Claude)", subtitle: "Claude API models for remote research jobs.", subtitleZh: "面向远程研究任务的 Claude API 模型。", kind: "api", models: ["claude-3-7-sonnet", "claude-3-5-haiku"] },
+  { id: "anthropic", name: "Anthropic (Claude)", subtitle: "Claude API models for remote research jobs.", subtitleZh: "面向远程研究任务的 Claude API 模型。", kind: "api", defaultApiBaseUrl: "https://api.anthropic.com/v1", defaultApiKeyEnvVar: "ANTHROPIC_API_KEY", models: ["claude-3-7-sonnet", "claude-3-5-haiku"] },
   { id: "claude-code", name: "Claude Code CLI (local)", subtitle: "Local Claude Code CLI handoff without storing API keys.", subtitleZh: "通过本地 Claude Code 命令行交接任务，不在桌面端保存 API key。", kind: "local", command: "claude" as const, models: ["sonnet", "opus", "default"] },
   { id: "codex-cli", name: "Codex CLI (local)", subtitle: "Local Codex runtime for repo-aware research and automation.", subtitleZh: "本地 Codex 运行时，用于仓库上下文研究和自动化。", kind: "local", command: "codex" as const, models: ["gpt-5.5", "gpt-5.4", "gpt-5.3-codex"] },
-  { id: "openai", name: "OpenAI (GPT)", subtitle: "Hosted GPT models when explicit API use is allowed.", subtitleZh: "仅在明确允许 API 使用时启用的托管 GPT 模型。", kind: "api", models: ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"] },
-  { id: "google", name: "Google (Gemini)", subtitle: "Gemini API provider for external model runs.", subtitleZh: "用于外部模型运行的 Gemini API 提供方。", kind: "api", models: ["gemini-2.5-pro", "gemini-2.5-flash"] },
-  { id: "deepseek", name: "DeepSeek", subtitle: "DeepSeek hosted models for approved remote inference.", subtitleZh: "用于已批准远程推理的 DeepSeek 托管模型。", kind: "api", models: ["deepseek-reasoner", "deepseek-chat"] },
-  { id: "groq", name: "Groq", subtitle: "Fast hosted inference for low-latency checks.", subtitleZh: "用于低延迟检查的快速托管推理。", kind: "api", models: ["llama-3.3-70b", "mixtral"] },
-  { id: "xai", name: "xAI (Grok)", subtitle: "Grok provider for approved hosted research tasks.", subtitleZh: "用于已批准托管研究任务的 Grok 提供方。", kind: "api", models: ["grok-3", "grok-3-mini"] },
-  { id: "nvidia", name: "NVIDIA NIM", subtitle: "NIM endpoints for enterprise or local gateway use.", subtitleZh: "用于企业端点或本地网关的 NIM 配置。", kind: "api", models: ["nemotron", "llama-nemotron"] },
-  { id: "kimi", name: "Kimi (Moonshot)", subtitle: "Moonshot API models outside China region.", subtitleZh: "中国区外 Moonshot API 模型配置。", kind: "api", models: ["kimi-k2", "moonshot-v1"] },
-  { id: "kimi-cn", name: "Kimi (Moonshot, 中国)", subtitle: "Moonshot China endpoint profile.", subtitleZh: "Moonshot 中国区端点配置。", kind: "api", models: ["kimi-k2-cn", "moonshot-v1-cn"] },
+  { id: "openai", name: "OpenAI (GPT)", subtitle: "Hosted GPT models when explicit API use is allowed.", subtitleZh: "仅在明确允许 API 使用时启用的托管 GPT 模型。", kind: "api", defaultApiBaseUrl: "https://api.openai.com/v1", defaultApiKeyEnvVar: "OPENAI_API_KEY", models: ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"] },
+  { id: "google", name: "Google (Gemini)", subtitle: "Gemini API provider for external model runs.", subtitleZh: "用于外部模型运行的 Gemini API 提供方。", kind: "api", defaultApiBaseUrl: "https://generativelanguage.googleapis.com/v1beta", defaultApiKeyEnvVar: "GEMINI_API_KEY", models: ["gemini-2.5-pro", "gemini-2.5-flash"] },
+  { id: "deepseek", name: "DeepSeek", subtitle: "DeepSeek hosted models for approved remote inference.", subtitleZh: "用于已批准远程推理的 DeepSeek 托管模型。", kind: "api", defaultApiBaseUrl: "https://api.deepseek.com/v1", defaultApiKeyEnvVar: "DEEPSEEK_API_KEY", models: ["deepseek-reasoner", "deepseek-chat"] },
+  { id: "groq", name: "Groq", subtitle: "Fast hosted inference for low-latency checks.", subtitleZh: "用于低延迟检查的快速托管推理。", kind: "api", defaultApiBaseUrl: "https://api.groq.com/openai/v1", defaultApiKeyEnvVar: "GROQ_API_KEY", models: ["llama-3.3-70b", "mixtral"] },
+  { id: "xai", name: "xAI (Grok)", subtitle: "Grok provider for approved hosted research tasks.", subtitleZh: "用于已批准托管研究任务的 Grok 提供方。", kind: "api", defaultApiBaseUrl: "https://api.x.ai/v1", defaultApiKeyEnvVar: "XAI_API_KEY", models: ["grok-3", "grok-3-mini"] },
+  { id: "nvidia", name: "NVIDIA NIM", subtitle: "NIM endpoints for enterprise or local gateway use.", subtitleZh: "用于企业端点或本地网关的 NIM 配置。", kind: "api", defaultApiBaseUrl: "https://integrate.api.nvidia.com/v1", defaultApiKeyEnvVar: "NVIDIA_API_KEY", models: ["nemotron", "llama-nemotron"] },
+  { id: "kimi", name: "Kimi (Moonshot)", subtitle: "Moonshot API models outside China region.", subtitleZh: "中国区外 Moonshot API 模型配置。", kind: "api", defaultApiBaseUrl: "https://api.moonshot.ai/v1", defaultApiKeyEnvVar: "MOONSHOT_API_KEY", models: ["kimi-k2", "moonshot-v1"] },
+  { id: "kimi-cn", name: "Kimi (Moonshot, 中国)", subtitle: "Moonshot China endpoint profile.", subtitleZh: "Moonshot 中国区端点配置。", kind: "api", defaultApiBaseUrl: "https://api.moonshot.cn/v1", defaultApiKeyEnvVar: "MOONSHOT_CN_API_KEY", models: ["kimi-k2-cn", "moonshot-v1-cn"] },
 ] as const;
 
 function visiblePath(path: string) {
@@ -213,6 +229,10 @@ function defaultProviderConfig(providerId: string): LlmProviderConfig {
     customModel: "",
     contextWindow: providerId.includes("cli") ? 128000 : 64000,
     reasoningMode: "balanced",
+    apiBaseUrl: provider && "defaultApiBaseUrl" in provider ? provider.defaultApiBaseUrl : "",
+    apiKeyEnvVar: provider && "defaultApiKeyEnvVar" in provider ? provider.defaultApiKeyEnvVar : "",
+    apiKeyConfigured: false,
+    apiKeyCheckedAt: null,
     cliAvailable: false,
     cliVersion: null,
     cliPath: null,
@@ -229,12 +249,20 @@ function normalizeProviderSettings(settings: DesktopSettings) {
   const normalized = { ...current.providers };
   for (const provider of providers) {
     const saved = normalized[provider.id];
-    const savedEnabled = provider.kind === "local"
-      ? Boolean(saved?.enabled && saved?.cliAvailable)
-      : false;
-    normalized[provider.id] = {
-      ...defaultProviderConfig(provider.id),
+    const defaults = defaultProviderConfig(provider.id);
+    const merged = {
+      ...defaults,
       ...saved,
+    };
+    if (provider.kind === "api") {
+      merged.apiBaseUrl = merged.apiBaseUrl?.trim() || defaults.apiBaseUrl;
+      merged.apiKeyEnvVar = merged.apiKeyEnvVar?.trim() || defaults.apiKeyEnvVar;
+    }
+    const savedEnabled = provider.kind === "local"
+      ? Boolean(merged.enabled && merged.cliAvailable)
+      : Boolean(merged.enabled && (merged.apiKeyEnvVar || merged.apiBaseUrl));
+    normalized[provider.id] = {
+      ...merged,
       enabled: provider.id === activeProviderId && savedEnabled,
     };
   }
@@ -258,7 +286,9 @@ export function RuntimeSettingsPanel({
   const text = settingsCopy[language];
   const [section, setSection] = useState<SettingsSection>("llm");
   const [cliChecks, setCliChecks] = useState<Record<string, LlmCliCheckResult | null>>({});
+  const [apiChecks, setApiChecks] = useState<Record<string, LlmApiKeyCheckResult | null>>({});
   const [checkingCli, setCheckingCli] = useState<string | null>(null);
+  const [checkingApi, setCheckingApi] = useState<string | null>(null);
   const center = useMemo(() => normalizeProviderSettings(settings), [settings]);
 
   const updateCenter = (nextCenter: typeof center) => {
@@ -339,6 +369,46 @@ export function RuntimeSettingsPanel({
       }));
     } finally {
       setCheckingCli(null);
+    }
+  };
+
+  const runApiKeyCheck = async (providerId: string) => {
+    const config = center.providers[providerId] ?? defaultProviderConfig(providerId);
+    setCheckingApi(providerId);
+    try {
+      const result = await checkLlmApiKey(providerId, config.apiKeyEnvVar || "");
+      setApiChecks((current) => ({ ...current, [providerId]: result }));
+      const nextProviders = Object.fromEntries(
+        Object.entries(center.providers).map(([id, value]) => [
+          id,
+          {
+            ...value,
+            enabled: result.available ? id === providerId : id === center.activeProviderId,
+            ...(id === providerId
+              ? {
+                  apiKeyEnvVar: result.envVar,
+                  apiKeyConfigured: result.available,
+                  apiKeyCheckedAt: new Date().toISOString(),
+                }
+              : {}),
+          },
+        ]),
+      );
+      updateCenter({
+        activeProviderId: result.available ? providerId : center.activeProviderId,
+        providers: nextProviders,
+      });
+    } catch (err) {
+      setApiChecks((current) => ({
+        ...current,
+        [providerId]: { providerId, envVar: config.apiKeyEnvVar || "", available: false, message: String(err) },
+      }));
+      updateProvider(providerId, {
+        apiKeyConfigured: false,
+        apiKeyCheckedAt: new Date().toISOString(),
+      });
+    } finally {
+      setCheckingApi(null);
     }
   };
 
@@ -661,7 +731,7 @@ export function RuntimeSettingsPanel({
               <div className="settings-block-title"><Sparkles size={15} /><span>{isZh ? "最近更新" : "Recent changes"}</span></div>
               <ul className="settings-change-list">
                 <li>{isZh ? "大语言模型不再默认启用 Codex；本地 CLI 需要检查后才能启用。" : "LLM provider no longer defaults to Codex; local CLIs must be checked before enabling."}</li>
-                <li>{isZh ? "托管 API provider 标记为配置占位，不保存或明文显示 API key。" : "Hosted API providers are marked as configuration placeholders and do not save or show API keys."}</li>
+                <li>{isZh ? "托管 API provider 可配置和启用；只保存 Base URL 与环境变量名，不保存 API key 明文。" : "Hosted API providers can be configured and enabled; only Base URL and environment variable names are saved, never API key values."}</li>
                 <li>{isZh ? "设置分区拆分为对应页面；未实现能力明确显示为预留。" : "Settings sections now show distinct pages; unavailable capabilities are clearly marked reserved."}</li>
               </ul>
             </div>
@@ -709,14 +779,19 @@ export function RuntimeSettingsPanel({
               {providers.map((provider) => {
                 const config = center.providers[provider.id] ?? defaultProviderConfig(provider.id);
                 const cliCheck = cliChecks[provider.id];
+                const apiCheck = apiChecks[provider.id];
                 const isLocal = provider.kind === "local";
                 const persistedCliAvailable = Boolean(config.cliAvailable);
-                const canEnable = isLocal ? Boolean(cliCheck?.available || persistedCliAvailable) : false;
+                const canEnable = isLocal ? Boolean(cliCheck?.available || persistedCliAvailable) : Boolean(config.apiKeyEnvVar?.trim() || config.apiBaseUrl?.trim());
                 const status = isLocal
                   ? cliCheck
                     ? cliCheck.available ? text.detected : text.notFound
                     : persistedCliAvailable ? text.detected : text.needsCheck
-                  : text.configurationPlaceholder;
+                  : config.enabled
+                    ? text.enabled
+                    : apiCheck
+                      ? apiCheck.available ? text.keyPresent : text.keyMissing
+                      : config.apiKeyConfigured ? text.keyPresent : text.configurable;
                 return (
                   <article key={provider.id} className={classNames("provider-card", config.enabled && "enabled", config.expanded && "expanded")}>
                     <button className="provider-row" type="button" onClick={() => toggleExpanded(provider.id)}>
@@ -725,20 +800,16 @@ export function RuntimeSettingsPanel({
                         <strong>{provider.name}</strong>
                         <em>{language === "zh" ? provider.subtitleZh : provider.subtitle}</em>
                       </span>
-                      <span className={classNames("provider-status", config.enabled && "active", cliCheck && !cliCheck.available && "danger")}>{status}</span>
-                      {isLocal ? (
-                        <label className="toggle" onClick={(event) => event.stopPropagation()}>
-                          <input
-                            type="checkbox"
-                            checked={config.enabled}
-                            disabled={!canEnable}
-                            onChange={(event) => toggleProvider(provider.id, event.target.checked)}
-                          />
-                          <span />
-                        </label>
-                      ) : (
-                        <span className="provider-lockout">{text.temporarilyUnavailable}</span>
-                      )}
+                      <span className={classNames("provider-status", config.enabled && "active", ((cliCheck && !cliCheck.available) || (apiCheck && !apiCheck.available)) && "danger")}>{status}</span>
+                      <label className="toggle" onClick={(event) => event.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={config.enabled}
+                          disabled={!canEnable}
+                          onChange={(event) => toggleProvider(provider.id, event.target.checked)}
+                        />
+                        <span />
+                      </label>
                     </button>
 
                     {config.expanded && (
@@ -766,9 +837,40 @@ export function RuntimeSettingsPanel({
                             </button>
                           </div>
                         ) : (
-                          <div className="api-provider-note">
-                            <KeyRound size={15} />
-                            {text.apiPlaceholder}
+                          <div className="api-config-panel">
+                            <div className="api-provider-note">
+                              <KeyRound size={15} />
+                              {text.apiPlaceholder}
+                            </div>
+                            <div className="api-config-grid">
+                              <label className="field-label">
+                                {text.apiBaseUrl}
+                                <input
+                                  value={config.apiBaseUrl || ""}
+                                  onChange={(event) => updateProvider(provider.id, { apiBaseUrl: event.target.value })}
+                                  placeholder={"defaultApiBaseUrl" in provider ? provider.defaultApiBaseUrl : "https://api.example.com/v1"}
+                                />
+                              </label>
+                              <label className="field-label">
+                                {text.apiKeyEnvVar}
+                                <input
+                                  value={config.apiKeyEnvVar || ""}
+                                  onChange={(event) => updateProvider(provider.id, { apiKeyEnvVar: event.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "") })}
+                                  placeholder={"defaultApiKeyEnvVar" in provider ? provider.defaultApiKeyEnvVar : "PROVIDER_API_KEY"}
+                                />
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => runApiKeyCheck(provider.id)}
+                                disabled={checkingApi === provider.id || !config.apiKeyEnvVar?.trim()}
+                              >
+                                <RefreshCw size={14} />
+                                {text.checkKeyAndEnable}
+                              </button>
+                            </div>
+                            <div className={classNames("settings-notice", apiCheck && !apiCheck.available && "danger")}>
+                              {apiCheck?.message || text.apiKeyHint}
+                            </div>
                           </div>
                         )}
                         {isLocal && !canEnable && (

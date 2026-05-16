@@ -251,6 +251,14 @@ struct LlmProviderConfig {
     #[serde(default = "default_reasoning_mode")]
     reasoning_mode: String,
     #[serde(default)]
+    api_base_url: String,
+    #[serde(default)]
+    api_key_env_var: String,
+    #[serde(default)]
+    api_key_configured: bool,
+    #[serde(default)]
+    api_key_checked_at: Option<String>,
+    #[serde(default)]
     cli_available: bool,
     #[serde(default)]
     cli_version: Option<String>,
@@ -267,6 +275,15 @@ struct LlmCliCheckResult {
     available: bool,
     version: Option<String>,
     path: Option<String>,
+    message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LlmApiKeyCheckResult {
+    provider_id: String,
+    env_var: String,
+    available: bool,
     message: String,
 }
 
@@ -4677,6 +4694,53 @@ fn check_local_llm_cli(command: String) -> Result<LlmCliCheckResult, String> {
     })
 }
 
+fn sanitize_env_var_name(value: &str) -> Result<String, String> {
+    let name = value.trim();
+    if name.is_empty() {
+        return Err("API key environment variable is required".to_string());
+    }
+    if name.len() > 128 {
+        return Err("API key environment variable is too long".to_string());
+    }
+    if !name
+        .chars()
+        .all(|ch| ch == '_' || ch.is_ascii_uppercase() || ch.is_ascii_digit())
+    {
+        return Err(
+            "API key environment variable must use uppercase letters, digits, or underscore"
+                .to_string(),
+        );
+    }
+    Ok(name.to_string())
+}
+
+#[tauri::command]
+fn check_llm_api_key(
+    provider_id: String,
+    api_key_env_var: String,
+) -> Result<LlmApiKeyCheckResult, String> {
+    let provider_id = provider_id.trim().to_string();
+    if provider_id.is_empty() {
+        return Err("provider id is required".to_string());
+    }
+    let env_var = sanitize_env_var_name(&api_key_env_var)?;
+    let available = std::env::var(&env_var)
+        .ok()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    let message = if available {
+        format!("{env_var} is configured for {provider_id}")
+    } else {
+        format!("{env_var} is not visible to this desktop process")
+    };
+    Ok(LlmApiKeyCheckResult {
+        provider_id,
+        env_var,
+        available,
+        message,
+    })
+}
+
 fn qa_report_for_source(
     vault: &Path,
     source_id: Option<&str>,
@@ -8554,6 +8618,7 @@ pub fn run() {
             load_desktop_settings,
             save_desktop_settings,
             check_local_llm_cli,
+            check_llm_api_key,
             plan_ingest,
             run_ingest_lint,
             set_dashboard_action_status,

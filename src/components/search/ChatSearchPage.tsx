@@ -112,7 +112,7 @@ const chatCopy = {
     boundaryTitle: "先提案后写回边界",
     boundaryBody: "本页面基于知识库证据生成本地草稿，不把草稿伪装成模型最终回答，也不会直接写入资料或概念页。创建问答写回时仍会先进入提案审批门。",
     providerLabel: "当前提供方",
-    providerDraftOnly: "仅用于展示当前启用的提供方；此页面当前不调用大模型。",
+    providerDraftOnly: "当前草稿仍保持 evidence-first；启用的提供方会作为后续模型交接配置。",
     history: "查询历史",
     emptyHistory: "生成证据草稿或创建提案后，会保存当前知识库专属的查询历史。",
     results: "结果",
@@ -177,7 +177,7 @@ const chatCopy = {
     boundaryTitle: "Proposal-first boundary",
     boundaryBody: "This page drafts from loaded vault evidence. It does not present drafts as final model answers and never writes source or concept pages directly. Creating a query writeback still routes through the proposal approval gate before any apply.",
     providerLabel: "Provider config",
-    providerDraftOnly: "Shown for active-provider context only; this page does not call an LLM yet.",
+    providerDraftOnly: "Drafts remain evidence-first; the active provider is available as the model handoff configuration.",
     history: "Query history",
     emptyHistory: "Draft from evidence or create a proposal to save vault-scoped query history.",
     results: "Results",
@@ -398,7 +398,12 @@ function saveHistory(vaultPath: string, history: QueryHistoryItem[]) {
 function providerSummary(center?: LlmProviderCenterSettings | null, language: UiLanguage = "en") {
   const activeProviderId = center?.activeProviderId || "";
   const activeConfig = activeProviderId ? center?.providers?.[activeProviderId] : null;
-  const usableProvider = Boolean(activeConfig?.enabled && localProviderIds.has(activeProviderId) && activeConfig.cliAvailable);
+  const usableProvider = Boolean(
+    activeConfig?.enabled
+      && (localProviderIds.has(activeProviderId)
+        ? activeConfig.cliAvailable
+        : activeConfig.apiKeyEnvVar || activeConfig.apiBaseUrl),
+  );
   if (!activeProviderId || !usableProvider) {
     return {
       name: language === "zh" ? "未选择提供方" : "No provider selected",
@@ -417,7 +422,7 @@ function providerSummary(center?: LlmProviderCenterSettings | null, language: Ui
   return {
     name: providerNames[activeProviderId] || activeProviderId,
     model,
-    detail: `${model} · ${window} · ${reasoningLabel}`,
+    detail: `${model} · ${window} · ${reasoningLabel}${localProviderIds.has(activeProviderId) ? "" : ` · ${activeConfig?.apiBaseUrl || activeConfig?.apiKeyEnvVar || "API"}`}`,
   };
 }
 

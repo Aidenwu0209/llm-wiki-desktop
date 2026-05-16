@@ -8,6 +8,7 @@ import type {
   ImportBatchResult,
   ImportResult,
   IngestPipelineResult,
+  LlmApiKeyCheckResult,
   LlmCliCheckResult,
   IngestPlan,
   QueryWritebackDraft,
@@ -94,6 +95,10 @@ export function saveDesktopSettings(vaultPath: string, settings: DesktopSettings
 
 export function checkLocalLlmCli(command: "codex" | "claude"): Promise<LlmCliCheckResult> {
   return invoke("check_local_llm_cli", { command });
+}
+
+export function checkLlmApiKey(providerId: string, apiKeyEnvVar: string): Promise<LlmApiKeyCheckResult> {
+  return invoke("check_llm_api_key", { providerId, apiKeyEnvVar });
 }
 
 export function planIngest(vaultPath: string): Promise<IngestPlan> {
