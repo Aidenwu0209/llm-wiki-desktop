@@ -352,16 +352,28 @@ textarea {
   padding-bottom: 14px;
 }
 
+.topbar > div:first-child {
+  flex: 0 1 460px;
+  min-width: 240px;
+}
+
 .topbar h2 {
   font-size: 22px;
 }
 
+.topbar p {
+  max-width: 560px;
+  line-height: 1.35;
+}
+
 .topbar-status {
   display: flex;
+  flex: 1 1 760px;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
-  max-width: min(980px, 100%);
+  min-width: 0;
+  max-width: none;
 }
 
 .language-toggle,
@@ -385,7 +397,7 @@ textarea {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  max-width: 210px;
+  max-width: 190px;
   min-height: 34px;
   border: 1px solid #cbd4cf;
   border-radius: 999px;
@@ -397,6 +409,7 @@ textarea {
 }
 
 .status-pill span {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -448,6 +461,7 @@ textarea {
   align-items: center;
   gap: 8px;
   min-width: 150px;
+  max-width: 190px;
   justify-content: center;
   border-radius: 999px;
   border: 1px solid #cbd4cf;
@@ -455,6 +469,16 @@ textarea {
   font-weight: 700;
   font-size: 13px;
   background: #ffffff;
+}
+
+.health svg {
+  flex: 0 0 auto;
+}
+
+.health {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .health.ok {
@@ -1353,7 +1377,7 @@ textarea {
 
 .deepseek-home {
   display: grid;
-  grid-template-columns: minmax(240px, 0.8fr) minmax(360px, 1.4fr);
+  grid-template-columns: minmax(260px, 0.82fr) minmax(0, 1.18fr);
   gap: 12px;
   border: 1px solid #cbd4cf;
   border-radius: 8px;
@@ -1372,6 +1396,8 @@ textarea {
   margin: 5px 0 6px;
   color: #17201d;
   font-size: 22px;
+  line-height: 1.12;
+  overflow-wrap: anywhere;
 }
 
 .deepseek-home-copy p {
@@ -1383,8 +1409,9 @@ textarea {
 
 .deepseek-home-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  grid-template-columns: repeat(3, minmax(132px, 1fr));
   gap: 8px;
+  min-width: 0;
 }
 
 .deepseek-home-grid button,
@@ -1418,6 +1445,7 @@ textarea {
 .deepseek-home-note span {
   display: block;
   max-width: 100%;
+  min-width: 0;
 }
 
 .deepseek-home-grid span {
@@ -3198,6 +3226,7 @@ textarea {
   border-radius: 8px;
   background: #ffffff;
   padding: 14px;
+  min-width: 0;
 }
 
 .hero-meta,
@@ -3212,6 +3241,7 @@ textarea {
 }
 
 .hero-meta span {
+  max-width: 100%;
   border: 1px solid #d8ded9;
   border-radius: 999px;
   background: #fbfcfa;
@@ -3219,11 +3249,15 @@ textarea {
   color: #40514a;
   font-size: 11px;
   font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .hero-actions {
   align-content: start;
   justify-content: flex-end;
+  min-width: 0;
 }
 
 .readiness-grid,
@@ -3241,6 +3275,7 @@ textarea {
   border-radius: 8px;
   background: #ffffff;
   padding: 12px;
+  min-width: 0;
 }
 
 .readiness-card > div {
@@ -3261,6 +3296,7 @@ textarea {
 .readiness-card strong {
   color: #17201d;
   font-size: 15px;
+  overflow-wrap: anywhere;
 }
 
 .readiness-card em {
@@ -3336,6 +3372,65 @@ textarea {
   border-radius: 8px;
   background: #ffffff;
   padding: 10px;
+  min-width: 0;
+}
+
+.interface-en .status-pill {
+  max-width: 176px;
+}
+
+.interface-en .topbar-status .status-pill:first-child {
+  max-width: 230px;
+}
+
+.interface-en .health {
+  min-width: 120px;
+}
+
+.interface-en .language-toggle,
+.interface-en .sidebar-toggle {
+  padding: 0 10px;
+}
+
+.interface-en .dashboard-hero h2 {
+  font-size: 22px;
+}
+
+.interface-en .deepseek-home-copy h3 {
+  font-size: 21px;
+}
+
+@media (max-width: 1280px) {
+  .topbar {
+    gap: 12px;
+  }
+
+  .topbar > div:first-child {
+    flex-basis: 360px;
+  }
+
+  .topbar-status {
+    flex-basis: 640px;
+  }
+
+  .deepseek-home {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1500px) {
+  .topbar {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .topbar > div:first-child {
+    max-width: 720px;
+  }
+
+  .topbar-status {
+    justify-content: flex-start;
+  }
 }
 
 .mini-metric strong {

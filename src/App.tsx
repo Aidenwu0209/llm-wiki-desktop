@@ -163,7 +163,7 @@ type ShellPage = (typeof navigationItems)[number]["id"];
 const pageTitles: Record<ShellPage, { title: string; subtitle: string }> = {
   dashboard: {
     title: "Dashboard",
-    subtitle: "Vault state, next actions, and the ingest path users should take next.",
+    subtitle: "Vault health, next actions, and ingest path.",
   },
   sources: {
     title: "Raw Sources",
@@ -521,13 +521,13 @@ const shellCopy: Record<UiLanguage, {
       allowed: "allowed",
       notSelected: "not selected",
       inspecting: "Inspecting vault",
-      schemaValid: "Schema valid",
-      schemaInvalid: "Schema invalid",
-      runtimeReady: "Runtime ready",
+      schemaValid: "Schema",
+      schemaInvalid: "Schema issue",
+      runtimeReady: "Runtime",
       runtimeMissing: "Runtime missing",
-      obsidianEnabled: "Obsidian enabled",
+      obsidianEnabled: "Obsidian",
       obsidianOff: "Obsidian off",
-      dashboardReady: "Dashboard ready",
+      dashboardReady: "Dashboard",
       dashboardMissing: "Dashboard missing",
     },
     stateLabels: {
@@ -1662,6 +1662,7 @@ function App() {
     <main
       className={classNames(
         "app-shell",
+        `interface-${interfaceLanguage}`,
         activePage === "settings" && "settings-mode",
         activePage !== "settings" && detailDrawerOpen && "drawer-open",
         dragActive && "drag-active",
