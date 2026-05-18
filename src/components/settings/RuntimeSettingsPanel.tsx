@@ -101,6 +101,11 @@ const settingsCopy = {
     apiPlaceholder: "托管 API 提供方可用。这里保存 Base URL 和 API key 环境变量名，不保存 API key 明文。",
     apiBaseUrl: "API Base URL",
     apiKeyEnvVar: "API Key 环境变量",
+    apiProtocol: "API 协议",
+    openaiCompatible: "OpenAI 兼容",
+    anthropicCompatible: "Anthropic 兼容",
+    nativeProtocol: "原生协议",
+    protocolHint: "协议信息会保存到桌面设置，供后续 Chat/Search 调用模型时选择正确 wire format。",
     checkKeyAndEnable: "检查并启用",
     apiKeyHint: "请把密钥放在系统环境变量、本地运行时或启动脚本中；桌面设置只保存变量名。",
     local: "本地",
@@ -158,6 +163,11 @@ const settingsCopy = {
     apiPlaceholder: "Hosted API providers are usable. This saves the Base URL and API key environment variable name, never the API key value.",
     apiBaseUrl: "API Base URL",
     apiKeyEnvVar: "API key environment variable",
+    apiProtocol: "API protocol",
+    openaiCompatible: "OpenAI-compatible",
+    anthropicCompatible: "Anthropic-compatible",
+    nativeProtocol: "Native",
+    protocolHint: "The protocol is saved so later Chat/Search model calls can use the correct wire format.",
     checkKeyAndEnable: "Check and enable",
     apiKeyHint: "Put the secret in an environment variable, local runtime config, or launch script. Desktop settings only save the variable name.",
     local: "Local",
@@ -199,17 +209,31 @@ const settingsCopy = {
 } as const;
 
 const providers = [
-  { id: "anthropic", name: "Anthropic (Claude)", subtitle: "Claude API models for remote research jobs.", subtitleZh: "面向远程研究任务的 Claude API 模型。", kind: "api", defaultApiBaseUrl: "https://api.anthropic.com/v1", defaultApiKeyEnvVar: "ANTHROPIC_API_KEY", models: ["claude-3-7-sonnet", "claude-3-5-haiku"] },
+  { id: "anthropic", name: "Anthropic (Claude)", subtitle: "Claude API models for remote research jobs.", subtitleZh: "面向远程研究任务的 Claude API 模型。", kind: "api", defaultApiBaseUrl: "https://api.anthropic.com/v1", defaultApiKeyEnvVar: "ANTHROPIC_API_KEY", defaultApiProtocol: "native", defaultContextWindow: 200000, models: ["claude-sonnet-4-5", "claude-3-7-sonnet", "claude-3-5-haiku"] },
   { id: "claude-code", name: "Claude Code CLI (local)", subtitle: "Local Claude Code CLI handoff without storing API keys.", subtitleZh: "通过本地 Claude Code 命令行交接任务，不在桌面端保存 API key。", kind: "local", command: "claude" as const, models: ["sonnet", "opus", "default"] },
   { id: "codex-cli", name: "Codex CLI (local)", subtitle: "Local Codex runtime for repo-aware research and automation.", subtitleZh: "本地 Codex 运行时，用于仓库上下文研究和自动化。", kind: "local", command: "codex" as const, models: ["gpt-5.5", "gpt-5.4", "gpt-5.3-codex"] },
-  { id: "openai", name: "OpenAI (GPT)", subtitle: "Hosted GPT models when explicit API use is allowed.", subtitleZh: "仅在明确允许 API 使用时启用的托管 GPT 模型。", kind: "api", defaultApiBaseUrl: "https://api.openai.com/v1", defaultApiKeyEnvVar: "OPENAI_API_KEY", models: ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"] },
-  { id: "google", name: "Google (Gemini)", subtitle: "Gemini API provider for external model runs.", subtitleZh: "用于外部模型运行的 Gemini API 提供方。", kind: "api", defaultApiBaseUrl: "https://generativelanguage.googleapis.com/v1beta", defaultApiKeyEnvVar: "GEMINI_API_KEY", models: ["gemini-2.5-pro", "gemini-2.5-flash"] },
-  { id: "deepseek", name: "DeepSeek", subtitle: "DeepSeek hosted models for approved remote inference.", subtitleZh: "用于已批准远程推理的 DeepSeek 托管模型。", kind: "api", defaultApiBaseUrl: "https://api.deepseek.com/v1", defaultApiKeyEnvVar: "DEEPSEEK_API_KEY", models: ["deepseek-reasoner", "deepseek-chat"] },
-  { id: "groq", name: "Groq", subtitle: "Fast hosted inference for low-latency checks.", subtitleZh: "用于低延迟检查的快速托管推理。", kind: "api", defaultApiBaseUrl: "https://api.groq.com/openai/v1", defaultApiKeyEnvVar: "GROQ_API_KEY", models: ["llama-3.3-70b", "mixtral"] },
-  { id: "xai", name: "xAI (Grok)", subtitle: "Grok provider for approved hosted research tasks.", subtitleZh: "用于已批准托管研究任务的 Grok 提供方。", kind: "api", defaultApiBaseUrl: "https://api.x.ai/v1", defaultApiKeyEnvVar: "XAI_API_KEY", models: ["grok-3", "grok-3-mini"] },
-  { id: "nvidia", name: "NVIDIA NIM", subtitle: "NIM endpoints for enterprise or local gateway use.", subtitleZh: "用于企业端点或本地网关的 NIM 配置。", kind: "api", defaultApiBaseUrl: "https://integrate.api.nvidia.com/v1", defaultApiKeyEnvVar: "NVIDIA_API_KEY", models: ["nemotron", "llama-nemotron"] },
-  { id: "kimi", name: "Kimi (Moonshot)", subtitle: "Moonshot API models outside China region.", subtitleZh: "中国区外 Moonshot API 模型配置。", kind: "api", defaultApiBaseUrl: "https://api.moonshot.ai/v1", defaultApiKeyEnvVar: "MOONSHOT_API_KEY", models: ["kimi-k2", "moonshot-v1"] },
-  { id: "kimi-cn", name: "Kimi (Moonshot, 中国)", subtitle: "Moonshot China endpoint profile.", subtitleZh: "Moonshot 中国区端点配置。", kind: "api", defaultApiBaseUrl: "https://api.moonshot.cn/v1", defaultApiKeyEnvVar: "MOONSHOT_CN_API_KEY", models: ["kimi-k2-cn", "moonshot-v1-cn"] },
+  { id: "openai", name: "OpenAI (GPT)", subtitle: "Hosted GPT models when explicit API use is allowed.", subtitleZh: "仅在明确允许 API 使用时启用的托管 GPT 模型。", kind: "api", defaultApiBaseUrl: "https://api.openai.com/v1", defaultApiKeyEnvVar: "OPENAI_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 128000, models: ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"] },
+  { id: "google", name: "Google (Gemini)", subtitle: "Gemini API provider for external model runs.", subtitleZh: "用于外部模型运行的 Gemini API 提供方。", kind: "api", defaultApiBaseUrl: "https://generativelanguage.googleapis.com/v1beta", defaultApiKeyEnvVar: "GEMINI_API_KEY", defaultApiProtocol: "native", defaultContextWindow: 1000000, models: ["gemini-2.5-pro", "gemini-2.5-flash"] },
+  { id: "deepseek", name: "DeepSeek", subtitle: "OpenAI-compatible DeepSeek endpoint.", subtitleZh: "OpenAI 兼容的 DeepSeek 端点。", kind: "api", defaultApiBaseUrl: "https://api.deepseek.com/v1", defaultApiKeyEnvVar: "DEEPSEEK_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 64000, models: ["deepseek-reasoner", "deepseek-chat"] },
+  { id: "kimi", name: "Kimi (Moonshot)", subtitle: "Moonshot international endpoint.", subtitleZh: "Moonshot 国际区端点。", kind: "api", defaultApiBaseUrl: "https://api.moonshot.ai/v1", defaultApiKeyEnvVar: "MOONSHOT_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 256000, models: ["kimi-k2.6", "kimi-k2.5", "kimi-k2-thinking", "kimi-for-coding"] },
+  { id: "kimi-cn", name: "Kimi (Moonshot, 中国)", subtitle: "Moonshot China endpoint profile.", subtitleZh: "Moonshot 中国区端点配置。", kind: "api", defaultApiBaseUrl: "https://api.moonshot.cn/v1", defaultApiKeyEnvVar: "MOONSHOT_CN_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 256000, models: ["kimi-k2.6", "kimi-k2.5", "kimi-k2-thinking", "kimi-for-coding"] },
+  { id: "qwen-dashscope", name: "通义千问 / DashScope", subtitle: "Alibaba Cloud DashScope OpenAI-compatible endpoint.", subtitleZh: "阿里云 DashScope OpenAI 兼容端点。", kind: "api", defaultApiBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", defaultApiKeyEnvVar: "DASHSCOPE_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 131072, models: ["qwen-plus", "qwen-max", "qwen-turbo", "qwen-long", "qwen3-coder-plus"] },
+  { id: "bailian-coding", name: "阿里百炼 Coding Plan", subtitle: "Alibaba Bailian coding endpoint for Qwen/Kimi/GLM/MiniMax presets.", subtitleZh: "阿里百炼 Coding Plan，覆盖 Qwen/Kimi/GLM/MiniMax 等模型。", kind: "api", defaultApiBaseUrl: "https://coding.dashscope.aliyuncs.com/v1", defaultApiKeyEnvVar: "BAILIAN_CODING_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 131072, models: ["qwen3.6-plus", "qwen3-coder-plus", "kimi-k2.5", "glm-5", "MiniMax-M2.5"] },
+  { id: "zhipu", name: "智谱 GLM (Zhipu)", subtitle: "BigModel GLM OpenAI-compatible endpoint.", subtitleZh: "智谱 BigModel GLM OpenAI 兼容端点。", kind: "api", defaultApiBaseUrl: "https://open.bigmodel.cn/api/paas/v4", defaultApiKeyEnvVar: "ZHIPU_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 128000, models: ["glm-4.6", "glm-4.5", "glm-4.5-air", "glm-4-plus", "glm-4-flash"] },
+  { id: "minimax-global", name: "MiniMax (Global)", subtitle: "MiniMax Anthropic-compatible global endpoint.", subtitleZh: "MiniMax 国际区 Anthropic 兼容端点。", kind: "api", defaultApiBaseUrl: "https://api.minimax.io/anthropic", defaultApiKeyEnvVar: "MINIMAX_API_KEY", defaultApiProtocol: "anthropic-compatible", defaultContextWindow: 200000, models: ["MiniMax-M2.7", "MiniMax-M2.5"] },
+  { id: "minimax-cn", name: "MiniMax (中国)", subtitle: "MiniMax China Anthropic-compatible endpoint.", subtitleZh: "MiniMax 中国区 Anthropic 兼容端点。", kind: "api", defaultApiBaseUrl: "https://api.minimaxi.com/anthropic", defaultApiKeyEnvVar: "MINIMAX_CN_API_KEY", defaultApiProtocol: "anthropic-compatible", defaultContextWindow: 200000, models: ["MiniMax-M2.7", "MiniMax-M2.5"] },
+  { id: "volcengine-ark", name: "火山引擎 Ark / 豆包", subtitle: "Volcengine Ark OpenAI-compatible endpoint.", subtitleZh: "火山引擎 Ark / 豆包 OpenAI 兼容端点。", kind: "api", defaultApiBaseUrl: "https://ark.cn-beijing.volces.com/api/v3", defaultApiKeyEnvVar: "VOLCENGINE_ARK_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 128000, models: ["doubao-seed-1-6", "doubao-1-5-pro-32k", "deepseek-v3", "Doubao-Seed-2.0-pro"] },
+  { id: "baidu-qianfan", name: "百度千帆 / 文心", subtitle: "Baidu Qianfan OpenAI-compatible endpoint.", subtitleZh: "百度千帆 / 文心 OpenAI 兼容端点。", kind: "api", defaultApiBaseUrl: "https://qianfan.baidubce.com/v2", defaultApiKeyEnvVar: "QIANFAN_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 128000, models: ["ernie-4.5-turbo-128k", "ernie-4.5-8k", "ernie-x1-turbo-32k"] },
+  { id: "tencent-hunyuan", name: "腾讯混元 (Hunyuan)", subtitle: "Tencent Hunyuan OpenAI-compatible endpoint.", subtitleZh: "腾讯混元 OpenAI 兼容端点。", kind: "api", defaultApiBaseUrl: "https://api.hunyuan.cloud.tencent.com/v1", defaultApiKeyEnvVar: "HUNYUAN_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 128000, models: ["hunyuan-t1-latest", "hunyuan-turbos-latest", "hunyuan-large"] },
+  { id: "siliconflow", name: "硅基流动 (SiliconFlow)", subtitle: "OpenAI-compatible model gateway for Chinese and open-weight models.", subtitleZh: "硅基流动 OpenAI 兼容模型网关，覆盖国产和开源模型。", kind: "api", defaultApiBaseUrl: "https://api.siliconflow.cn/v1", defaultApiKeyEnvVar: "SILICONFLOW_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 128000, models: ["deepseek-ai/DeepSeek-V3", "Qwen/Qwen3-235B-A22B", "THUDM/GLM-4-32B-0414"] },
+  { id: "baichuan", name: "百川智能 (Baichuan)", subtitle: "Baichuan OpenAI-compatible endpoint.", subtitleZh: "百川智能 OpenAI 兼容端点。", kind: "api", defaultApiBaseUrl: "https://api.baichuan-ai.com/v1", defaultApiKeyEnvVar: "BAICHUAN_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 128000, models: ["Baichuan4-Turbo", "Baichuan4-Air", "Baichuan3-Turbo"] },
+  { id: "yi", name: "零一万物 Yi", subtitle: "01.AI Yi OpenAI-compatible endpoint.", subtitleZh: "零一万物 Yi OpenAI 兼容端点。", kind: "api", defaultApiBaseUrl: "https://api.lingyiwanwu.com/v1", defaultApiKeyEnvVar: "YI_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 128000, models: ["yi-large", "yi-medium", "yi-vision"] },
+  { id: "iflytek-spark", name: "讯飞星火 (Spark)", subtitle: "iFlytek Spark OpenAI-compatible endpoint.", subtitleZh: "讯飞星火 OpenAI 兼容端点。", kind: "api", defaultApiBaseUrl: "https://spark-api-open.xf-yun.com/v1", defaultApiKeyEnvVar: "SPARK_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 128000, models: ["4.0Ultra", "generalv3.5", "generalv3"] },
+  { id: "groq", name: "Groq", subtitle: "Fast hosted inference for low-latency checks.", subtitleZh: "用于低延迟检查的快速托管推理。", kind: "api", defaultApiBaseUrl: "https://api.groq.com/openai/v1", defaultApiKeyEnvVar: "GROQ_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 128000, models: ["llama-3.3-70b", "mixtral"] },
+  { id: "xai", name: "xAI (Grok)", subtitle: "Grok provider for approved hosted research tasks.", subtitleZh: "用于已批准托管研究任务的 Grok 提供方。", kind: "api", defaultApiBaseUrl: "https://api.x.ai/v1", defaultApiKeyEnvVar: "XAI_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 131072, models: ["grok-4", "grok-3", "grok-3-mini"] },
+  { id: "nvidia", name: "NVIDIA NIM", subtitle: "NIM endpoints for enterprise or local gateway use.", subtitleZh: "用于企业端点或本地网关的 NIM 配置。", kind: "api", defaultApiBaseUrl: "https://integrate.api.nvidia.com/v1", defaultApiKeyEnvVar: "NVIDIA_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 128000, models: ["meta/llama-3.3-70b-instruct", "nvidia/llama-3.3-nemotron-super-49b-v1.5", "deepseek-ai/deepseek-v3.2"] },
+  { id: "ollama-local", name: "Ollama (Local)", subtitle: "Local OpenAI-compatible endpoint.", subtitleZh: "本地 OpenAI 兼容模型端点。", kind: "api", defaultApiBaseUrl: "http://localhost:11434/v1", defaultApiKeyEnvVar: "OLLAMA_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 32768, models: ["qwen3", "llama3.3", "deepseek-r1"] },
+  { id: "custom-openai", name: "Custom OpenAI-Compatible", subtitle: "Any OpenAI-compatible gateway, relay, vLLM, LM Studio, or LocalAI endpoint.", subtitleZh: "任意 OpenAI 兼容网关、转发、vLLM、LM Studio 或 LocalAI 端点。", kind: "api", defaultApiBaseUrl: "https://your-gateway.example.com/v1", defaultApiKeyEnvVar: "CUSTOM_LLM_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 128000, models: ["custom-model"] },
 ] as const;
 
 function visiblePath(path: string) {
@@ -227,10 +251,11 @@ function defaultProviderConfig(providerId: string): LlmProviderConfig {
     expanded: false,
     selectedModel: provider?.models[0] ?? "default",
     customModel: "",
-    contextWindow: providerId.includes("cli") ? 128000 : 64000,
+    contextWindow: provider && "defaultContextWindow" in provider ? provider.defaultContextWindow : providerId.includes("cli") ? 128000 : 64000,
     reasoningMode: "balanced",
     apiBaseUrl: provider && "defaultApiBaseUrl" in provider ? provider.defaultApiBaseUrl : "",
     apiKeyEnvVar: provider && "defaultApiKeyEnvVar" in provider ? provider.defaultApiKeyEnvVar : "",
+    apiProtocol: provider && "defaultApiProtocol" in provider ? provider.defaultApiProtocol : "",
     apiKeyConfigured: false,
     apiKeyCheckedAt: null,
     cliAvailable: false,
@@ -257,6 +282,7 @@ function normalizeProviderSettings(settings: DesktopSettings) {
     if (provider.kind === "api") {
       merged.apiBaseUrl = merged.apiBaseUrl?.trim() || defaults.apiBaseUrl;
       merged.apiKeyEnvVar = merged.apiKeyEnvVar?.trim() || defaults.apiKeyEnvVar;
+      merged.apiProtocol = merged.apiProtocol?.trim() || defaults.apiProtocol;
     }
     const savedEnabled = provider.kind === "local"
       ? Boolean(merged.enabled && merged.cliAvailable)
@@ -741,6 +767,7 @@ export function RuntimeSettingsPanel({
               <ul className="settings-change-list">
                 <li>{isZh ? "大语言模型不再默认启用 Codex；本地 CLI 需要检查后才能启用。" : "LLM provider no longer defaults to Codex; local CLIs must be checked before enabling."}</li>
                 <li>{isZh ? "托管 API provider 可配置和启用；只保存 Base URL 与环境变量名，不保存 API key 明文。" : "Hosted API providers can be configured and enabled; only Base URL and environment variable names are saved, never API key values."}</li>
+                <li>{isZh ? "Provider 目录补齐国内主流厂商，并保存 OpenAI / Anthropic / Native 协议类型。" : "The provider catalog now covers major China-region vendors and saves OpenAI / Anthropic / Native protocol types."}</li>
                 <li>{isZh ? "设置分区拆分为对应页面；未实现能力明确显示为预留。" : "Settings sections now show distinct pages; unavailable capabilities are clearly marked reserved."}</li>
               </ul>
             </div>
@@ -865,6 +892,23 @@ export function RuntimeSettingsPanel({
                               <KeyRound size={15} />
                               {text.apiPlaceholder}
                             </div>
+                            <div className="api-protocol-row">
+                              <span>{text.apiProtocol}</span>
+                              {[
+                                ["openai-compatible", text.openaiCompatible],
+                                ["anthropic-compatible", text.anthropicCompatible],
+                                ["native", text.nativeProtocol],
+                              ].map(([value, label]) => (
+                                <button
+                                  key={value}
+                                  type="button"
+                                  className={config.apiProtocol === value ? "active" : ""}
+                                  onClick={() => updateProvider(provider.id, { apiProtocol: value })}
+                                >
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
                             <div className="api-config-grid">
                               <label className="field-label">
                                 {text.apiBaseUrl}
@@ -892,7 +936,7 @@ export function RuntimeSettingsPanel({
                               </button>
                             </div>
                             <div className={classNames("settings-notice", apiCheck && !apiCheck.available && "danger")}>
-                              {apiCheck?.message || text.apiKeyHint}
+                              {apiCheck?.message || `${text.apiKeyHint} ${text.protocolHint}`}
                             </div>
                           </div>
                         )}

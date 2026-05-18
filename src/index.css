@@ -4035,6 +4035,33 @@ textarea {
   gap: 10px;
 }
 
+.api-protocol-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.api-protocol-row span {
+  margin-right: 2px;
+  color: #64706a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.api-protocol-row button {
+  min-height: 30px;
+  border-radius: 999px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.api-protocol-row button.active {
+  border-color: #245b93;
+  background: #e8eef8;
+  color: #245b93;
+}
+
 .api-config-grid {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) minmax(190px, 0.75fr) auto;

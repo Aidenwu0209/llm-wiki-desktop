@@ -422,7 +422,7 @@ function providerSummary(center?: LlmProviderCenterSettings | null, language: Ui
   return {
     name: providerNames[activeProviderId] || activeProviderId,
     model,
-    detail: `${model} · ${window} · ${reasoningLabel}${localProviderIds.has(activeProviderId) ? "" : ` · ${activeConfig?.apiBaseUrl || activeConfig?.apiKeyEnvVar || "API"}`}`,
+    detail: `${model} · ${window} · ${reasoningLabel}${localProviderIds.has(activeProviderId) ? "" : ` · ${activeConfig?.apiProtocol || "api"} · ${activeConfig?.apiBaseUrl || activeConfig?.apiKeyEnvVar || "API"}`}`,
   };
 }
 

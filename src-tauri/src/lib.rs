@@ -255,6 +255,8 @@ struct LlmProviderConfig {
     #[serde(default)]
     api_key_env_var: String,
     #[serde(default)]
+    api_protocol: String,
+    #[serde(default)]
     api_key_configured: bool,
     #[serde(default)]
     api_key_checked_at: Option<String>,

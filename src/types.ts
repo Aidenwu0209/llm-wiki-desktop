@@ -195,6 +195,7 @@ export type LlmProviderConfig = {
   reasoningMode: "fast" | "balanced" | "deep" | string;
   apiBaseUrl?: string;
   apiKeyEnvVar?: string;
+  apiProtocol?: "openai-compatible" | "anthropic-compatible" | "native" | string;
   apiKeyConfigured?: boolean;
   apiKeyCheckedAt?: string | null;
   cliAvailable?: boolean;
