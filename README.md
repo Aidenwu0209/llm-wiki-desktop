@@ -2,6 +2,97 @@
 
 本仓库是 `open-llm-wiki` 的本地优先桌面端外壳。桌面端负责 vault 管理、导入入口、任务编排、状态展示和错误恢复；知识生成、QA、review queue、writeback approval 等核心边界仍由 `open-llm-wiki` runtime 执行。
 
+## 界面预览
+
+下面的截图来自本地 DeepSeek 论文语料验收流程，已裁掉菜单栏、Dock 和本机绝对路径，只保留软件窗口本身。
+
+![仪表盘](docs/screenshots/dashboard.png)
+
+| 页面 | 作用 |
+| --- | --- |
+| ![原始资料工作台](docs/screenshots/raw-sources.png) | 管理 `raw/inbox/`、source registry、解析 artifact、parser 信息和可追踪性状态。 |
+| ![LLM provider 设置](docs/screenshots/settings-providers.png) | 配置本地 CLI 或远程 provider 的模型、上下文窗口和推理强度；API key 只通过环境变量或安全路径传入。 |
+| ![问答与写回](docs/screenshots/chat-search.png) | 在 vault 内检索 sources、claims、concepts、reviews 和 writeback proposals，并生成 evidence-first answer draft。 |
+| ![证据图谱](docs/screenshots/evidence-graph.png) | 查看 source、claim、concept、review、proposal 和 warning 之间的 evidence graph。 |
+
+## 软件使用教程
+
+### 1. 启动桌面端
+
+开发环境中最直接的启动方式：
+
+```bash
+cd /path/to/llm-wiki-desktop
+npm ci
+npm run desktop:dev
+```
+
+已经完成本地打包时，也可以直接打开 macOS app：
+
+```bash
+open "src-tauri/target/release/bundle/macos/LLM Wiki.app"
+```
+
+### 2. 创建或打开知识库
+
+首次进入 Welcome 页后，有两种入口：
+
+- `新建项目`：选择项目名称、模板、输出语言和父目录，桌面端会创建一个新的 open-llm-wiki vault。
+- `打开项目`：选择已有 vault。不要选择原始 PDF 文件夹，应该选择已经初始化过的 LLM Wiki vault。
+
+创建或打开后会进入 `仪表盘`。仪表盘会显示 schema、runtime、Obsidian、资料数量、概念数量、审核压力和写回状态。
+
+### 3. 导入论文或资料
+
+进入 `原始资料` 页面：
+
+1. 点击 `导入文件`，选择 PDF、Markdown 或 txt。
+2. 文件会进入 vault 的 `raw/inbox/`。
+3. 点击 `规划 ingest` 检查哪些资料可解析、哪些已发布、哪些被阻塞。
+4. 选中任一资料，可以在中间预览 artifact，并在右侧查看 path、hash、parser、claims、concepts 和 traceability。
+
+桌面端会按 SHA-256 跳过重复资料。PDF 默认走本地 parser；除非用户显式启用，不会上传到 cloud OCR、外部 parser 或外部模型服务。
+
+### 4. 运行处理流程
+
+回到 `仪表盘` 或 `原始资料` 页面，点击 `运行 ingest pipeline`。桌面端会串行执行：
+
+```text
+PDF parse -> source discovery -> corpus ingest -> claims -> normalize
+-> semantic QA -> contradictions -> science review -> concept revision
+-> lint -> dashboard refresh
+```
+
+运行期间可以在 `活动` 页面查看任务历史。所有 runtime 日志会写入当前 vault 的：
+
+```text
+log-archive/desktop/
+```
+
+### 5. 浏览结果
+
+处理完成后，常用入口如下：
+
+- `仪表盘`：确认 vault 是否可用、审核压力是否过高、是否存在 P0/P1 阻塞项。
+- `原始资料`：核对每篇论文的解析产物、parser、artifact contract 和证据链。
+- `论断`：查看 claim ledger、QA verdict、needs_review、stale 或 contradicted 状态。
+- `概念`：浏览生成后的知识页面。
+- `审核`：处理 science review queue，但桌面端不会伪造人工批准。
+- `可追踪性`：定位 evidence anchor、claim/source 断链和 schema 风险。
+- `证据图谱`：查看 source -> claim -> concept / review / proposal / warning 的关系。
+- `Obsidian`：从桌面端打开生成后的 vault，适合阅读和人工审查。
+
+### 6. 提问与写回
+
+进入 `问答 / 写回` 页面后：
+
+1. 输入研究问题，例如“整理 DeepSeek 的研发思路和决策依据”。
+2. 先查看 evidence map，确认回答引用的是 vault 内 sources、claims、concepts 或 reviews。
+3. 生成 answer draft。没有调用 active provider 时，它只是 evidence draft，不应视为模型最终答案。
+4. 生成 writeback proposal。proposal 会进入 `reviews/query-writeback/`。
+5. 未批准前不会写入 `concepts/` 或 `sources/`。
+6. 明确批准并 apply 后，再运行 lint / eval 或对应 runtime validation。
+
 ## MVP 能力
 
 - 创建或打开 open-llm-wiki vault。
