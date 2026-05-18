@@ -360,6 +360,7 @@ export function RuntimeSettingsPanel({
           cliVersion: result.version,
           cliPath: result.path,
           cliCheckedAt: new Date().toISOString(),
+          expanded: true,
         });
       }
     } catch (err) {
@@ -367,6 +368,14 @@ export function RuntimeSettingsPanel({
         ...current,
         [providerId]: { command, available: false, message: String(err), version: null, path: null },
       }));
+      updateProvider(providerId, {
+        enabled: false,
+        cliAvailable: false,
+        cliVersion: null,
+        cliPath: null,
+        cliCheckedAt: new Date().toISOString(),
+        expanded: true,
+      });
     } finally {
       setCheckingCli(null);
     }
@@ -794,23 +803,37 @@ export function RuntimeSettingsPanel({
                       : config.apiKeyConfigured ? text.keyPresent : text.configurable;
                 return (
                   <article key={provider.id} className={classNames("provider-card", config.enabled && "enabled", config.expanded && "expanded")}>
-                    <button className="provider-row" type="button" onClick={() => toggleExpanded(provider.id)}>
-                      <span className="provider-chevron">{config.expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</span>
-                      <span>
-                        <strong>{provider.name}</strong>
-                        <em>{language === "zh" ? provider.subtitleZh : provider.subtitle}</em>
-                      </span>
+                    <div className="provider-row">
+                      <button className="provider-row-main-button" type="button" onClick={() => toggleExpanded(provider.id)} aria-expanded={config.expanded}>
+                        <span className="provider-chevron">{config.expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</span>
+                        <span>
+                          <strong>{provider.name}</strong>
+                          <em>{language === "zh" ? provider.subtitleZh : provider.subtitle}</em>
+                        </span>
+                      </button>
                       <span className={classNames("provider-status", config.enabled && "active", ((cliCheck && !cliCheck.available) || (apiCheck && !apiCheck.available)) && "danger")}>{status}</span>
-                      <label className="toggle" onClick={(event) => event.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={config.enabled}
-                          disabled={!canEnable}
-                          onChange={(event) => toggleProvider(provider.id, event.target.checked)}
-                        />
-                        <span />
-                      </label>
-                    </button>
+                      {isLocal && !canEnable ? (
+                        <button
+                          className="provider-inline-action"
+                          type="button"
+                          onClick={() => runCliCheck(provider.id as "codex-cli" | "claude-code", provider.command)}
+                          disabled={checkingCli === provider.id}
+                        >
+                          <RefreshCw size={14} />
+                          {text.checkAndEnable}
+                        </button>
+                      ) : (
+                        <label className="toggle">
+                          <input
+                            type="checkbox"
+                            checked={config.enabled}
+                            disabled={!canEnable}
+                            onChange={(event) => toggleProvider(provider.id, event.target.checked)}
+                          />
+                          <span />
+                        </label>
+                      )}
+                    </div>
 
                     {config.expanded && (
                       <div className="provider-expanded">

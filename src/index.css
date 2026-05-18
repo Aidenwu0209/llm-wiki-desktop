@@ -3829,7 +3829,7 @@ textarea {
 
 .provider-row {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 10px;
   align-items: center;
   width: 100%;
@@ -3841,9 +3841,28 @@ textarea {
   text-align: left;
 }
 
-.provider-row:hover:not(:disabled) {
+.provider-row:hover {
   border-color: transparent;
   background: #fbfcfa;
+}
+
+.provider-row-main-button {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  min-height: 42px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+}
+
+.provider-row-main-button:focus-visible,
+.provider-inline-action:focus-visible {
+  outline: 2px solid #245b93;
+  outline-offset: 2px;
 }
 
 .provider-row strong,
@@ -3895,6 +3914,23 @@ textarea {
   font-size: 11px;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.provider-inline-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  border-color: #91b79d;
+  background: #e7f4ec;
+  color: #1f6f45;
+  white-space: nowrap;
+}
+
+.provider-inline-action:disabled {
+  cursor: progress;
+  opacity: 0.65;
 }
 
 .toggle {
