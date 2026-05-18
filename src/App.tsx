@@ -159,6 +159,11 @@ const navigationItems = [
 ] as const;
 
 type ShellPage = (typeof navigationItems)[number]["id"];
+type NavBadge = {
+  value: string | number;
+  tone?: "neutral" | "warning" | "danger" | "live";
+  title: string;
+};
 
 const pageTitles: Record<ShellPage, { title: string; subtitle: string }> = {
   dashboard: {
@@ -1490,18 +1495,29 @@ function App() {
   const vaultDisplayName = vaultPath ? visiblePath(vaultPath).split("/").filter(Boolean).pop() || visiblePath(vaultPath) : "No vault";
   const contractP0P1 = lintFindings.filter((finding) => finding.severity === "p0" || finding.severity === "p1").length;
   const openReviewCount = reviewItems.filter((item) => !["approved", "resolved", "ignored", "rejected"].includes(item.status)).length;
-  const navBadgeCount = (page: ShellPage): string | number | null => {
+  const navBadgeForPage = (page: ShellPage): NavBadge | null => {
     if (!vaultPath && page !== "settings") return null;
-    if (page === "sources") return (status?.counts.inbox ?? 0) + (status?.counts.sources ?? 0) || null;
-    if (page === "claims") return status?.counts.claimsNeedingReview || null;
-    if (page === "concepts") return status?.counts.concepts || null;
-    if (page === "reviews") return openReviewCount || null;
-    if (page === "traceability") return traceabilityWarnings.length + brokenEvidence + contractP0P1 || null;
-    if (page === "writeback") return writebacks.length || null;
-    if (page === "chat") return claims.length + reviewItems.length + writebacks.length || null;
-    if (page === "graph") return impactEdges.length + claims.length + traceabilityWarnings.length || null;
-    if (page === "activity") return runtimeRunning ? "live" : runtimeHistory.length || null;
-    if (page === "settings") return status && !status.runtimeInstalled ? "!" : null;
+    const sourceWork = (status?.counts.inbox ?? 0) + (planned?.blocked ?? 0);
+    if (page === "sources" && sourceWork > 0) {
+      return { value: sourceWork, tone: "warning", title: `${sourceWork} source item${sourceWork === 1 ? "" : "s"} need import or unblock` };
+    }
+    const claimWork = status?.counts.claimsNeedingReview ?? 0;
+    if (page === "claims" && claimWork > 0) {
+      return { value: claimWork, tone: "warning", title: `${claimWork} claim${claimWork === 1 ? "" : "s"} need review` };
+    }
+    if (page === "reviews" && openReviewCount > 0) {
+      return { value: openReviewCount > 99 ? "!" : openReviewCount, tone: "warning", title: `${openReviewCount} review item${openReviewCount === 1 ? "" : "s"} are open` };
+    }
+    const traceabilityWork = traceabilityWarnings.length + brokenEvidence + contractP0P1;
+    if (page === "traceability" && traceabilityWork > 0) {
+      return { value: traceabilityWork > 99 ? "!" : traceabilityWork, tone: "danger", title: `${traceabilityWork} traceability or contract issue${traceabilityWork === 1 ? "" : "s"}` };
+    }
+    const writebackWork = writebacks.filter((proposal) => proposal.status === "proposed" || proposal.status === "rejected").length;
+    if (page === "writeback" && writebackWork > 0) {
+      return { value: writebackWork, tone: "warning", title: `${writebackWork} writeback proposal${writebackWork === 1 ? "" : "s"} need attention` };
+    }
+    if (page === "activity" && runtimeRunning) return { value: "live", tone: "live", title: "Runtime job is running" };
+    if (page === "settings" && status && !status.runtimeInstalled) return { value: "!", tone: "danger", title: "Runtime path needs setup" };
     return null;
   };
   const pageStatusItems: PageStatusItem[] = (() => {
@@ -1681,17 +1697,18 @@ function App() {
         <nav className="nav-rail">
           {navigationItems.map((item) => {
             const Icon = item.icon;
-            const badge = navBadgeCount(item.id);
+            const badge = navBadgeForPage(item.id);
+            const title = badge ? `${copy.nav[item.id]} · ${badge.title}` : copy.nav[item.id];
             return (
               <button
                 key={item.id}
                 className={classNames("nav-button", activePage === item.id && "active")}
-                title={copy.nav[item.id]}
-                aria-label={copy.nav[item.id]}
+                title={title}
+                aria-label={title}
                 onClick={() => setActivePage(item.id)}
               >
                 <Icon size={19} />
-                {badge !== null && <span className="nav-badge">{typeof badge === "number" && badge > 99 ? "99+" : badge}</span>}
+                {badge !== null && <span className={classNames("nav-badge", badge.tone)}>{badge.value}</span>}
               </button>
             );
           })}
@@ -2161,7 +2178,7 @@ function App() {
               </select>
             </div>
             <div className="action-list">
-              {visibleReviewItems.length === 0 && <p className="empty">暂无审核项。</p>}
+              {visibleReviewItems.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无审核项。" : "No review items."}</p>}
               {visibleReviewItems.map((item) => (
                 <div className="work-item" key={item.itemId}>
                   <span className={classNames("status-chip", item.severity)}>{item.severity}</span>
@@ -2169,10 +2186,10 @@ function App() {
                   <em>{item.kind} · {item.status} · {item.recommendedAction}</em>
                   <code>{item.body}</code>
                   <div className="inline-actions">
-                    <button onClick={() => item.targetPath && openPath(vaultFilePath(item.targetPath))} disabled={!item.targetPath}><FolderOpen size={14} />打开</button>
-                    <button onClick={() => handleReviewStatus(item.itemId, "approved")} disabled={item.status === "approved"}><Check size={14} />批准</button>
-                    <button onClick={() => handleReviewStatus(item.itemId, "rejected")} disabled={item.status === "rejected"}><XCircle size={14} />拒绝</button>
-                    <button onClick={() => handleReviewStatus(item.itemId, "ignored")} disabled={item.status === "ignored"}><XCircle size={14} />忽略</button>
+                    <button onClick={() => item.targetPath && openPath(vaultFilePath(item.targetPath))} disabled={!item.targetPath}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "打开" : "open"}</button>
+                    <button onClick={() => handleReviewStatus(item.itemId, "approved")} disabled={item.status === "approved"}><Check size={14} />{interfaceLanguage === "zh" ? "批准" : "approve"}</button>
+                    <button onClick={() => handleReviewStatus(item.itemId, "rejected")} disabled={item.status === "rejected"}><XCircle size={14} />{interfaceLanguage === "zh" ? "拒绝" : "reject"}</button>
+                    <button onClick={() => handleReviewStatus(item.itemId, "ignored")} disabled={item.status === "ignored"}><XCircle size={14} />{interfaceLanguage === "zh" ? "忽略" : "ignore"}</button>
                     <button onClick={() => handleFollowup(item)}><ClipboardList size={14} />{interfaceLanguage === "zh" ? "后续动作" : "follow-up"}</button>
                   </div>
                 </div>
@@ -2251,7 +2268,7 @@ function App() {
         <div className={classNames("main-grid view-section", pageVisible("dashboard", "claims") && "visible")}>
           <section className="panel large">
             <div className="section-head">
-              <h2>下一步行动</h2>
+              <h2>{interfaceLanguage === "zh" ? "下一步行动" : "Next actions"}</h2>
               <select className="compact-select" value={actionFilter} onChange={(event) => setActionFilter(event.target.value)}>
                 <option value="open">{interfaceLanguage === "zh" ? "未处理" : "open"}</option>
                 <option value="resolved">{interfaceLanguage === "zh" ? "已解决" : "resolved"}</option>
@@ -2260,7 +2277,7 @@ function App() {
               </select>
             </div>
             <div className="action-list">
-              {visibleActions.length === 0 && <p className="empty">暂无待处理行动。</p>}
+              {visibleActions.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无待处理行动。" : "No pending actions."}</p>}
               {visibleActions.map((action) => (
                 <div className="work-item" key={action.actionId}>
                   <span className={classNames("status-chip", action.severity)}>{action.severity}</span>
@@ -2268,10 +2285,10 @@ function App() {
                   <em>{action.body}</em>
                   <code>{action.status} · {action.recommendedAction} · {interfaceLanguage === "zh" ? "影响对象" : "affected"} {action.affectedObjects.length} · {action.reason}</code>
                   <div className="inline-actions">
-                    <button title="打开关联文件" onClick={() => action.links[0] && openPath(vaultFilePath(action.links[0].path))}><FolderOpen size={14} />打开</button>
-                    <button title="标记已解决" onClick={() => handleActionStatus(action.actionId, "resolved")} disabled={action.status === "resolved"}><Check size={14} />解决</button>
-                    <button title="忽略该行动" onClick={() => handleActionStatus(action.actionId, "ignored")} disabled={action.status === "ignored"}><XCircle size={14} />忽略</button>
-                    <button title="重新打开行动" onClick={() => handleActionStatus(action.actionId, "open")} disabled={action.status === "open"}><RotateCcw size={14} />重开</button>
+                    <button title={interfaceLanguage === "zh" ? "打开关联文件" : "Open linked file"} onClick={() => action.links[0] && openPath(vaultFilePath(action.links[0].path))}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "打开" : "open"}</button>
+                    <button title={interfaceLanguage === "zh" ? "标记已解决" : "Mark resolved"} onClick={() => handleActionStatus(action.actionId, "resolved")} disabled={action.status === "resolved"}><Check size={14} />{interfaceLanguage === "zh" ? "解决" : "resolve"}</button>
+                    <button title={interfaceLanguage === "zh" ? "忽略该行动" : "Ignore action"} onClick={() => handleActionStatus(action.actionId, "ignored")} disabled={action.status === "ignored"}><XCircle size={14} />{interfaceLanguage === "zh" ? "忽略" : "ignore"}</button>
+                    <button title={interfaceLanguage === "zh" ? "重新打开行动" : "Reopen action"} onClick={() => handleActionStatus(action.actionId, "open")} disabled={action.status === "open"}><RotateCcw size={14} />{interfaceLanguage === "zh" ? "重开" : "reopen"}</button>
                   </div>
                 </div>
               ))}
@@ -2300,12 +2317,12 @@ function App() {
                   <code>{claim.evidenceHash || (interfaceLanguage === "zh" ? "无证据哈希" : "no evidence hash")} · {claim.evidenceQuote || (interfaceLanguage === "zh" ? "无引文" : "no quote")}</code>
                   <div className="inline-actions">
                     <button onClick={() => selectClaimForDetails(claim)}><PanelRightOpen size={14} />{interfaceLanguage === "zh" ? "详情" : "details"}</button>
-                    <button onClick={() => openPath(vaultFilePath("claims/claims.jsonl"))}><FolderOpen size={14} />打开</button>
-                    <button onClick={() => handleClaimVerdict(claim.claimId, "supported")} disabled={claim.verdict === "supported"}><Check size={14} />支持</button>
-                    <button onClick={() => handleClaimVerdict(claim.claimId, "needs_review")} disabled={claim.verdict === "needs_review"}><AlertTriangle size={14} />待审</button>
-                    <button onClick={() => handleClaimVerdict(claim.claimId, "stale")} disabled={claim.verdict === "stale"}><RotateCcw size={14} />失效</button>
-                    <button onClick={() => handleClaimVerdict(claim.claimId, "contradicted")} disabled={claim.verdict === "contradicted"}><XCircle size={14} />冲突</button>
-                    <button onClick={() => handleClaimVerdict(claim.claimId, "ignored")} disabled={claim.verdict === "ignored"}><XCircle size={14} />忽略</button>
+                    <button onClick={() => openPath(vaultFilePath("claims/claims.jsonl"))}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "打开" : "open"}</button>
+                    <button onClick={() => handleClaimVerdict(claim.claimId, "supported")} disabled={claim.verdict === "supported"}><Check size={14} />{interfaceLanguage === "zh" ? "支持" : "support"}</button>
+                    <button onClick={() => handleClaimVerdict(claim.claimId, "needs_review")} disabled={claim.verdict === "needs_review"}><AlertTriangle size={14} />{interfaceLanguage === "zh" ? "待审" : "review"}</button>
+                    <button onClick={() => handleClaimVerdict(claim.claimId, "stale")} disabled={claim.verdict === "stale"}><RotateCcw size={14} />{interfaceLanguage === "zh" ? "失效" : "stale"}</button>
+                    <button onClick={() => handleClaimVerdict(claim.claimId, "contradicted")} disabled={claim.verdict === "contradicted"}><XCircle size={14} />{interfaceLanguage === "zh" ? "冲突" : "conflict"}</button>
+                    <button onClick={() => handleClaimVerdict(claim.claimId, "ignored")} disabled={claim.verdict === "ignored"}><XCircle size={14} />{interfaceLanguage === "zh" ? "忽略" : "ignore"}</button>
                   </div>
                 </div>
               ))}
@@ -2480,11 +2497,11 @@ function App() {
 
         <section className={classNames("panel view-section", pageVisible("traceability") && "visible")}>
           <div className="section-head">
-            <h2>Impact graph</h2>
+            <h2>{interfaceLanguage === "zh" ? "影响图谱" : "Impact graph"}</h2>
             <span>{impactEdges.length} {interfaceLanguage === "zh" ? "条边" : "edges"}</span>
           </div>
           <div className="impact-list compact">
-            {impactEdges.length === 0 && <p className="empty">暂无影响边。</p>}
+            {impactEdges.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无影响边。" : "No impact edges."}</p>}
             {impactEdges.map((edge) => (
               <button key={edge.edgeId}>
                 <span className={classNames("status-chip", edge.status)}>{edge.status}</span>
@@ -2503,7 +2520,7 @@ function App() {
               <span>{selectedFile.kind} · {selectedFile.status || "no status"} · {selectedFile.updated || "no updated date"} · QA {selectedFile.qaVerdict || "unknown"}</span>
               <code>{selectedFile.path}</code>
             </div>
-            <button onClick={() => openPath(selectedFile.path)}><FolderOpen size={16} />打开</button>
+            <button onClick={() => openPath(selectedFile.path)}><FolderOpen size={16} />{interfaceLanguage === "zh" ? "打开" : "open"}</button>
           </section>
         )}
           </>

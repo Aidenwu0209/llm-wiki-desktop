@@ -193,17 +193,36 @@ textarea {
 
 .nav-badge {
   position: absolute;
-  top: 4px;
-  right: 5px;
-  min-width: 17px;
-  height: 17px;
+  top: 5px;
+  right: 4px;
+  max-width: 28px;
+  min-width: 16px;
+  height: 16px;
+  overflow: hidden;
   border-radius: 999px;
   background: #b7552b;
   color: #fff;
-  padding: 0 4px;
-  font-size: 10px;
+  padding: 0 5px;
+  font-size: 9px;
   font-weight: 800;
-  line-height: 17px;
+  line-height: 16px;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-shadow: 0 0 0 2px #17201d;
+}
+
+.nav-badge.danger {
+  background: #a43131;
+}
+
+.nav-badge.live {
+  max-width: 36px;
+  background: #1f6f45;
+}
+
+.nav-badge.neutral {
+  background: #64706a;
 }
 
 .rail-status {
@@ -1359,6 +1378,7 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
 }
@@ -1366,7 +1386,13 @@ textarea {
 .page-action-button {
   height: 36px;
   min-width: 0;
+  max-width: 220px;
   white-space: nowrap;
+}
+
+.page-action-button {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .page-action-button.primary {
@@ -3429,6 +3455,14 @@ textarea {
   }
 
   .topbar-status {
+    justify-content: flex-start;
+  }
+
+  .page-status-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .page-primary-actions {
     justify-content: flex-start;
   }
 }
