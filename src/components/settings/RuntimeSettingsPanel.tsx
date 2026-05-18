@@ -463,6 +463,11 @@ export function RuntimeSettingsPanel({
     setSettings((current) => ({ ...current, ...patch }));
   };
 
+  const updateNumberSetting = (key: keyof DesktopSettings, value: string, fallback = 0) => {
+    const parsed = Number(value);
+    updateSettings({ [key]: Number.isFinite(parsed) ? parsed : fallback } as Partial<DesktopSettings>);
+  };
+
   const sectionStatus = (label: string, tone: "available" | "reserved" | "disabled" = "reserved") => (
     <span className={classNames("settings-status-pill", tone)}>{label}</span>
   );
@@ -549,19 +554,25 @@ export function RuntimeSettingsPanel({
           <div className="settings-section-page">
             {renderSectionHead(
               text.nav.embeddings,
-              isZh ? "向量检索入口已保留；当前桌面端还没有接入可启用的 embedding 运行链路。" : "Embedding retrieval is reserved; the desktop app has not wired an enableable embedding pipeline yet.",
-              sectionStatus(isZh ? "预留" : "Reserved"),
-            )}
-            {renderReservedBlock(
-              isZh ? "当前状态" : "Current state",
-              isZh ? "这里不会让你开启一个假向量模型。等本地 embedding runtime 和索引路径接好后，才会开放启用开关。" : "This page does not expose a fake embedding switch. Enabling will be added only after a local embedding runtime and index path are wired.",
-              Database,
+              isZh ? "配置语义检索用的 embedding endpoint、模型和切分参数。" : "Configure the embedding endpoint, model, and chunking parameters for semantic retrieval.",
+              sectionStatus(isZh ? "可配置" : "Configurable", "available"),
             )}
             <div className="settings-block">
-              <div className="settings-block-title"><Database size={15} /><span>{isZh ? "预留配置项" : "Reserved fields"}</span></div>
+              <div className="settings-block-title"><Database size={15} /><span>{isZh ? "向量搜索" : "Vector search"}</span></div>
+              <label className="switch-row">
+                <input type="checkbox" checked={settings.embeddingEnabled} onChange={(event) => updateSettings({ embeddingEnabled: event.target.checked })} />
+                <span>{isZh ? "启用向量搜索配置" : "Enable vector search config"}</span>
+              </label>
               <div className="settings-grid">
-                <label>{isZh ? "默认向量模型" : "Default embedding model"}<input value="local-embedding (reserved)" readOnly disabled /></label>
-                <label>{isZh ? "索引位置" : "Index location"}<input value={isZh ? "知识库内 _state/vector-index（未启用）" : "vault _state/vector-index (inactive)"} readOnly disabled /></label>
+                <label>{isZh ? "Endpoint" : "Endpoint"}<input value={settings.embeddingEndpoint} onChange={(event) => updateSettings({ embeddingEndpoint: event.target.value })} placeholder="http://127.0.0.1:1234/v1/embeddings" /></label>
+                <label>{isZh ? "API Key 环境变量" : "API key environment variable"}<input value={settings.embeddingApiKeyEnvVar} onChange={(event) => updateSettings({ embeddingApiKeyEnvVar: event.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "") })} placeholder="EMBEDDING_API_KEY" /></label>
+                <label>{isZh ? "模型" : "Model"}<input value={settings.embeddingModel} onChange={(event) => updateSettings({ embeddingModel: event.target.value })} placeholder="text-embedding-qwen3-embedding-0.6b" /></label>
+                <label>{isZh ? "输出维度（可选）" : "Output dimensions"}<input type="number" min={0} value={settings.embeddingOutputDimensions} onChange={(event) => updateNumberSetting("embeddingOutputDimensions", event.target.value)} placeholder="0 = model default" /></label>
+                <label>{isZh ? "每块最大字符数" : "Max chunk chars"}<input type="number" min={200} value={settings.embeddingMaxChunkChars} onChange={(event) => updateNumberSetting("embeddingMaxChunkChars", event.target.value, 1000)} /></label>
+                <label>{isZh ? "重叠字符数" : "Overlap chars"}<input type="number" min={0} value={settings.embeddingOverlapChunkChars} onChange={(event) => updateNumberSetting("embeddingOverlapChunkChars", event.target.value, 200)} /></label>
+              </div>
+              <div className="settings-notice">
+                {isZh ? "与 nashsu/llm_wiki 一样，这里按 OpenAI-compatible / Gemini native embedding 配置组织；桌面端只保存 endpoint、模型和环境变量名，不保存密钥明文。" : "This follows the nashsu/llm_wiki shape for OpenAI-compatible and Gemini-native embeddings. The desktop app saves endpoint, model, and env var name, not the secret value."}
               </div>
             </div>
           </div>
@@ -571,19 +582,29 @@ export function RuntimeSettingsPanel({
           <div className="settings-section-page">
             {renderSectionHead(
               text.nav.captioning,
-              isZh ? "图片描述会作为 source 辅助证据；当前尚未接入本地 caption runtime。" : "Image captioning will support source evidence, but no local caption runtime is connected yet.",
-              sectionStatus(isZh ? "预留" : "Reserved"),
-            )}
-            {renderReservedBlock(
-              isZh ? "本地优先边界" : "Local-first boundary",
-              isZh ? "不会默认上传图片到外部 API。后续只在明确配置本地模型或用户允许远程服务后才会启用。" : "Images are not uploaded to external APIs by default. This will activate only with an explicit local model or user-approved remote service.",
-              Image,
+              isZh ? "配置导入时的图片/图表 caption 生成，用于后续 source preview 和语义检索。" : "Configure image and figure captions during ingest for source preview and semantic retrieval.",
+              sectionStatus(isZh ? "可配置" : "Configurable", "available"),
             )}
             <div className="settings-block">
-              <div className="settings-block-title"><Image size={15} /><span>{isZh ? "预留配置项" : "Reserved fields"}</span></div>
+              <div className="settings-block-title"><Image size={15} /><span>{isZh ? "图片描述" : "Image captioning"}</span></div>
+              <label className="switch-row">
+                <input type="checkbox" checked={settings.captioningEnabled} onChange={(event) => updateSettings({ captioningEnabled: event.target.checked })} />
+                <span>{isZh ? "导入时生成图片描述" : "Generate captions during ingest"}</span>
+              </label>
+              <label className="switch-row">
+                <input type="checkbox" checked={settings.captioningUseMainProvider} onChange={(event) => updateSettings({ captioningUseMainProvider: event.target.checked })} />
+                <span>{isZh ? "复用主 LLM provider（仅限支持视觉输入的模型）" : "Reuse main LLM provider when it supports vision"}</span>
+              </label>
               <div className="settings-grid">
-                <label>{isZh ? "Caption 引擎" : "Caption engine"}<input value={isZh ? "未接入" : "Not connected"} readOnly disabled /></label>
-                <label>{isZh ? "输出语言" : "Output language"}<input value={settings.aiOutputLanguage || (isZh ? "中文" : "English")} readOnly disabled /></label>
+                <label>{isZh ? "专用视觉 provider" : "Dedicated vision provider"}<select value={settings.captioningProvider} onChange={(event) => updateSettings({ captioningProvider: event.target.value })}><option value="main-llm">{isZh ? "主 LLM" : "Main LLM"}</option><option value="ollama">Ollama / local</option><option value="openai-compatible">OpenAI compatible</option><option value="gemini-native">Gemini native</option></select></label>
+                <label>{isZh ? "Endpoint" : "Endpoint"}<input value={settings.captioningEndpoint} onChange={(event) => updateSettings({ captioningEndpoint: event.target.value })} placeholder="http://127.0.0.1:11434/v1" /></label>
+                <label>{isZh ? "API Key 环境变量" : "API key environment variable"}<input value={settings.captioningApiKeyEnvVar} onChange={(event) => updateSettings({ captioningApiKeyEnvVar: event.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "") })} placeholder="VISION_API_KEY" /></label>
+                <label>{isZh ? "视觉模型" : "Vision model"}<input value={settings.captioningModel} onChange={(event) => updateSettings({ captioningModel: event.target.value })} placeholder="qwen2.5-vl / gpt-4o-mini / gemini-2.5-flash" /></label>
+                <label>{isZh ? "并发请求数" : "Concurrency"}<input type="number" min={1} max={16} value={settings.captioningConcurrency} onChange={(event) => updateNumberSetting("captioningConcurrency", event.target.value, 2)} /></label>
+                <label>{isZh ? "输出语言" : "Output language"}<input value={settings.aiOutputLanguage || (isZh ? "简体中文" : "English")} onChange={(event) => updateSettings({ aiOutputLanguage: event.target.value })} /></label>
+              </div>
+              <div className="settings-notice">
+                {isZh ? "不会默认上传图片。只有你明确启用并配置本地/远程视觉端点后，后续导入流程才可以读取这些配置。" : "Images are not uploaded by default. Later ingest steps can use this only after you explicitly enable and configure a local or remote vision endpoint."}
               </div>
             </div>
           </div>
@@ -593,16 +614,28 @@ export function RuntimeSettingsPanel({
           <div className="settings-section-page">
             {renderSectionHead(
               text.nav["web-search"],
-              isZh ? "网页搜索默认关闭，避免把本地研究流程变成外部联网流程。" : "Web search stays off by default so local research does not silently become an online workflow.",
-              sectionStatus(isZh ? "未启用" : "Disabled", "disabled"),
+              isZh ? "配置 Deep Research 可使用的外部搜索 provider；默认关闭，避免静默联网。" : "Configure external search providers for Deep Research. It stays off by default to avoid silent networking.",
+              sectionStatus(settings.webSearchEnabled ? (isZh ? "已启用" : "Enabled") : (isZh ? "关闭" : "Off"), settings.webSearchEnabled ? "available" : "disabled"),
             )}
-            {renderReservedBlock(
-              isZh ? "联网能力未接入" : "Online search is not wired",
-              isZh ? "Chat/Search 当前应优先使用 vault evidence。网页搜索会在有明确网络授权、来源标注和审计记录后再开放。" : "Chat/Search should currently use vault evidence first. Web search will open only with explicit network permission, source labeling, and audit records.",
-              Search,
-            )}
-            <div className="settings-notice">
-              {isZh ? "当前策略：不调用外部搜索 API；不把论文或查询内容上传到第三方搜索服务。" : "Current policy: no external search API calls and no paper/query upload to third-party search services."}
+            <div className="settings-block">
+              <div className="settings-block-title"><Search size={15} /><span>{isZh ? "Deep Research 搜索" : "Deep Research search"}</span></div>
+              <label className="switch-row">
+                <input type="checkbox" checked={settings.webSearchEnabled} onChange={(event) => updateSettings({ webSearchEnabled: event.target.checked })} />
+                <span>{isZh ? "允许使用外部网页搜索" : "Allow external web search"}</span>
+              </label>
+              <div className="settings-grid">
+                <label>{isZh ? "Provider" : "Provider"}<select value={settings.webSearchProvider} onChange={(event) => updateSettings({ webSearchProvider: event.target.value })}><option value="none">{isZh ? "不使用" : "None"}</option><option value="tavily">Tavily</option><option value="serpapi">SerpApi</option><option value="searxng">SearXNG</option></select></label>
+                <label>{isZh ? "API Key 环境变量" : "API key environment variable"}<input value={settings.webSearchApiKeyEnvVar} onChange={(event) => updateSettings({ webSearchApiKeyEnvVar: event.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "") })} placeholder="TAVILY_API_KEY" /></label>
+                <label>{isZh ? "实例 / Endpoint URL" : "Instance / endpoint URL"}<input value={settings.webSearchEndpoint} onChange={(event) => updateSettings({ webSearchEndpoint: event.target.value })} placeholder="https://search.example.com" /></label>
+                <label>{isZh ? "搜索分类" : "Search categories"}<input value={settings.webSearchCategories} onChange={(event) => updateSettings({ webSearchCategories: event.target.value })} placeholder="general, news, science" /></label>
+              </div>
+              <label className="switch-row">
+                <input type="checkbox" checked={settings.webSearchAuditLog} onChange={(event) => updateSettings({ webSearchAuditLog: event.target.checked })} />
+                <span>{isZh ? "记录来源和审计日志" : "Record sources and audit log"}</span>
+              </label>
+              <div className="settings-notice">
+                {isZh ? "保存配置不等于自动联网；Chat/Search 仍优先使用 vault evidence，只有明确启用的 Deep Research 流程才应读取该设置。" : "Saving this does not silently go online. Chat/Search remains vault-evidence first; only explicitly enabled Deep Research flows should use it."}
+              </div>
             </div>
           </div>
         );
@@ -611,9 +644,20 @@ export function RuntimeSettingsPanel({
           <div className="settings-section-page">
             {renderSectionHead(
               text.nav.network,
-              isZh ? "控制解析 API、云解析开关和网络边界。默认仍然是 local-first。" : "Controls parser API and network boundaries. The default remains local-first.",
+              isZh ? "控制代理、解析 API、云解析开关和网络边界。默认仍然是 local-first。" : "Controls proxy, parser API, cloud parsing, and network boundaries. The default remains local-first.",
               sectionStatus(isZh ? "可配置" : "Configurable", "available"),
             )}
+            <div className="settings-block">
+              <div className="settings-block-title"><Network size={15} /><span>{isZh ? "全局代理" : "Global proxy"}</span></div>
+              <label className="switch-row">
+                <input type="checkbox" checked={settings.proxyEnabled} onChange={(event) => updateSettings({ proxyEnabled: event.target.checked })} />
+                <span>{isZh ? "外部 HTTP 请求走代理" : "Route external HTTP requests through proxy"}</span>
+              </label>
+              <div className="settings-grid">
+                <label>{isZh ? "代理 URL" : "Proxy URL"}<input value={settings.proxyUrl} onChange={(event) => updateSettings({ proxyUrl: event.target.value })} placeholder="http://127.0.0.1:7890" /></label>
+                <label>{isZh ? "本地地址绕过" : "Bypass local"}<select value={settings.proxyBypassLocal ? "yes" : "no"} onChange={(event) => updateSettings({ proxyBypassLocal: event.target.value === "yes" })}><option value="yes">{isZh ? "是" : "Yes"}</option><option value="no">{isZh ? "否" : "No"}</option></select></label>
+              </div>
+            </div>
             <div className="settings-block">
               <div className="settings-block-title"><Network size={15} /><span>{isZh ? "Layout API" : "Layout API"}</span></div>
               <label className="field-label">
@@ -624,14 +668,6 @@ export function RuntimeSettingsPanel({
                   placeholder="http://127.0.0.1:8000"
                 />
               </label>
-              <div className={cloudParserBlocked ? "settings-notice danger" : "settings-notice"}>
-                {text.token}: {settings.layoutParsingTokenPresent ? text.configured : text.notDetected} · {text.cloudParser}:
-                {settings.cloudParsingAllowed ? ` ${text.allowed}` : ` ${text.blocked}`}
-              </div>
-              <label className="switch-row">
-                <input type="checkbox" checked={settings.cloudParsingAllowed} onChange={(event) => updateSettings({ cloudParsingAllowed: event.target.checked })} />
-                <span>{text.allowCloudParser}</span>
-              </label>
             </div>
             {renderParserBlock()}
           </div>
@@ -641,11 +677,19 @@ export function RuntimeSettingsPanel({
           <div className="settings-section-page">
             {renderSectionHead(
               text.nav["source-watch"],
-              isZh ? "控制导入后的默认资料处理方式；后台文件监听尚未接入。" : "Controls default source handling after import; background folder watching is not wired yet.",
-              sectionStatus(isZh ? "部分可配置" : "Partly configurable", "available"),
+              isZh ? "配置资料文件夹监控、允许类型和排除规则。" : "Configure source folder watching, allowed file types, and exclusions.",
+              sectionStatus(isZh ? "可配置" : "Configurable", "available"),
             )}
             <div className="settings-block">
               <div className="settings-block-title"><ShieldCheck size={15} /><span>{isZh ? "导入模式" : "Import mode"}</span></div>
+              <label className="switch-row">
+                <input type="checkbox" checked={settings.sourceWatchEnabled} onChange={(event) => updateSettings({ sourceWatchEnabled: event.target.checked })} />
+                <span>{isZh ? "监控项目资料文件夹" : "Monitor project source folder"}</span>
+              </label>
+              <label className="switch-row">
+                <input type="checkbox" checked={settings.sourceWatchAutoIngest} onChange={(event) => updateSettings({ sourceWatchAutoIngest: event.target.checked })} />
+                <span>{isZh ? "自动导入允许的新增/修改文件" : "Auto-ingest allowed new or changed files"}</span>
+              </label>
               <label className="field-label">
                 {isZh ? "默认导入模式" : "Default ingest mode"}
                 <select value={settings.defaultIngestMode} onChange={(event) => updateSettings({ defaultIngestMode: event.target.value })}>
@@ -657,11 +701,19 @@ export function RuntimeSettingsPanel({
                 {isZh ? "该设置影响后续 Import/Raw Sources 流程；不会修改已经进入 vault 的 raw evidence。" : "This affects future Import/Raw Sources flows and does not mutate raw evidence already in the vault."}
               </p>
             </div>
-            {renderReservedBlock(
-              isZh ? "文件夹监听" : "Folder watching",
-              isZh ? "自动监控目录、去重和计划 ingest 还没有接入后台任务。当前只能通过 Raw Sources / Import 手动触发。" : "Automatic folder watching, dedupe, and planned ingest jobs are not connected yet. Use Raw Sources / Import manually for now.",
-              History,
-            )}
+            <div className="settings-block">
+              <div className="settings-block-title"><History size={15} /><span>{isZh ? "类型和排除规则" : "Types and exclusions"}</span></div>
+              <div className="settings-grid">
+                <label>{isZh ? "允许扩展名" : "Allowed extensions"}<textarea rows={2} value={settings.sourceWatchAllowedExtensions} onChange={(event) => updateSettings({ sourceWatchAllowedExtensions: event.target.value })} /></label>
+                <label>{isZh ? "最大文件大小 MB" : "Max file size MB"}<input type="number" min={1} value={settings.sourceWatchMaxFileSizeMb} onChange={(event) => updateNumberSetting("sourceWatchMaxFileSizeMb", event.target.value, 100)} /></label>
+                <label>{isZh ? "排除文件夹" : "Excluded folders"}<textarea rows={2} value={settings.sourceWatchExcludeDirs} onChange={(event) => updateSettings({ sourceWatchExcludeDirs: event.target.value })} /></label>
+                <label>{isZh ? "排除扩展名" : "Excluded extensions"}<textarea rows={2} value={settings.sourceWatchExcludeExtensions} onChange={(event) => updateSettings({ sourceWatchExcludeExtensions: event.target.value })} /></label>
+                <label>{isZh ? "排除文件名模式" : "Excluded filename patterns"}<textarea rows={2} value={settings.sourceWatchExcludeGlobs} onChange={(event) => updateSettings({ sourceWatchExcludeGlobs: event.target.value })} /></label>
+              </div>
+              <div className="settings-notice">
+                {isZh ? "当前桌面端保存这些规则，Raw Sources/Import 可按这些配置继续接入；不会扫描 vault 外路径或修改 raw evidence。" : "The desktop app saves these rules for Raw Sources/Import integration. It must not scan outside the vault or mutate raw evidence."}
+              </div>
+            </div>
           </div>
         );
       case "scheduled-import":
@@ -669,14 +721,27 @@ export function RuntimeSettingsPanel({
           <div className="settings-section-page">
             {renderSectionHead(
               text.nav["scheduled-import"],
-              isZh ? "定时导入需要后台调度和 vault-scoped 任务队列；当前只保留入口。" : "Scheduled import requires background scheduling and a vault-scoped job queue; this is currently an entry point only.",
-              sectionStatus(isZh ? "预留" : "Reserved"),
+              isZh ? "配置周期扫描目录、导入间隔和手动扫描入口。" : "Configure periodic scan directory, interval, and manual scan entry.",
+              sectionStatus(settings.scheduledImportEnabled ? (isZh ? "已启用配置" : "Config enabled") : (isZh ? "关闭" : "Off"), settings.scheduledImportEnabled ? "available" : "disabled"),
             )}
-            {renderReservedBlock(
-              isZh ? "未启用后台调度" : "Background scheduling is inactive",
-              isZh ? "这里不会创建假定时任务。后续启用时会显示计划、上次运行、下次运行和失败重试记录。" : "This page does not create fake scheduled jobs. When enabled it will show schedule, last run, next run, and retry history.",
-              History,
-            )}
+            <div className="settings-block">
+              <div className="settings-block-title"><History size={15} /><span>{isZh ? "定时导入" : "Scheduled import"}</span></div>
+              <label className="switch-row">
+                <input type="checkbox" checked={settings.scheduledImportEnabled} onChange={(event) => updateSettings({ scheduledImportEnabled: event.target.checked })} />
+                <span>{isZh ? "启用定时导入配置" : "Enable scheduled import config"}</span>
+              </label>
+              <div className="settings-grid">
+                <label>{isZh ? "监控目录" : "Monitor directory"}<input value={settings.scheduledImportPath} onChange={(event) => updateSettings({ scheduledImportPath: event.target.value })} placeholder="raw/inbox" /></label>
+                <label>{isZh ? "扫描间隔（分钟）" : "Scan interval minutes"}<input type="number" min={1} max={1440} value={settings.scheduledImportIntervalMinutes} onChange={(event) => updateNumberSetting("scheduledImportIntervalMinutes", event.target.value, 60)} /></label>
+              </div>
+              <button type="button" disabled>
+                <RefreshCw size={14} />
+                {isZh ? "立即扫描（后台执行器未接入）" : "Scan now (runner not wired)"}
+              </button>
+              <div className="settings-notice">
+                {isZh ? "配置会被保存；自动后台调度仍需接入 vault-scoped 任务队列，因此这里不会假装已经创建系统级定时任务。" : "The config is saved. Automatic background scheduling still needs a vault-scoped job queue, so this does not pretend to create a system scheduler."}
+              </div>
+            </div>
           </div>
         );
       case "output":
@@ -695,6 +760,16 @@ export function RuntimeSettingsPanel({
                   value={settings.aiOutputLanguage}
                   onChange={(event) => updateSettings({ aiOutputLanguage: event.target.value })}
                   placeholder={isZh ? "中文 / English" : "English / Chinese"}
+                />
+              </label>
+              <label className="field-label">
+                {isZh ? "对话历史长度" : "Conversation history length"}
+                <input
+                  type="number"
+                  min={0}
+                  max={50}
+                  value={settings.chatHistoryMessages}
+                  onChange={(event) => updateNumberSetting("chatHistoryMessages", event.target.value, 8)}
                 />
               </label>
               <label className="switch-row">
@@ -725,6 +800,12 @@ export function RuntimeSettingsPanel({
                     <option value="minimal">minimal</option>
                     <option value="research">research</option>
                     <option value="full">full</option>
+                  </select>
+                </label>
+                <label>{isZh ? "界面密度" : "Interface density"}
+                  <select value={settings.interfaceDensity} onChange={(event) => updateSettings({ interfaceDensity: event.target.value })}>
+                    <option value="comfortable">{isZh ? "舒适" : "Comfortable"}</option>
+                    <option value="compact">{isZh ? "紧凑" : "Compact"}</option>
                   </select>
                 </label>
               </div>

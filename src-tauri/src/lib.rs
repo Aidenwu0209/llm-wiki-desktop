@@ -218,6 +218,76 @@ struct DesktopSettings {
     default_pdf_parser: String,
     default_ingest_mode: String,
     default_obsidian_profile: String,
+    #[serde(default)]
+    embedding_enabled: bool,
+    #[serde(default)]
+    embedding_endpoint: String,
+    #[serde(default = "default_embedding_api_key_env_var")]
+    embedding_api_key_env_var: String,
+    #[serde(default)]
+    embedding_model: String,
+    #[serde(default)]
+    embedding_output_dimensions: usize,
+    #[serde(default = "default_embedding_max_chunk_chars")]
+    embedding_max_chunk_chars: usize,
+    #[serde(default = "default_embedding_overlap_chunk_chars")]
+    embedding_overlap_chunk_chars: usize,
+    #[serde(default)]
+    captioning_enabled: bool,
+    #[serde(default = "default_true")]
+    captioning_use_main_provider: bool,
+    #[serde(default = "default_captioning_provider")]
+    captioning_provider: String,
+    #[serde(default)]
+    captioning_endpoint: String,
+    #[serde(default = "default_captioning_api_key_env_var")]
+    captioning_api_key_env_var: String,
+    #[serde(default)]
+    captioning_model: String,
+    #[serde(default = "default_captioning_concurrency")]
+    captioning_concurrency: usize,
+    #[serde(default)]
+    web_search_enabled: bool,
+    #[serde(default = "default_web_search_provider")]
+    web_search_provider: String,
+    #[serde(default = "default_web_search_api_key_env_var")]
+    web_search_api_key_env_var: String,
+    #[serde(default)]
+    web_search_endpoint: String,
+    #[serde(default = "default_web_search_categories")]
+    web_search_categories: String,
+    #[serde(default = "default_true")]
+    web_search_audit_log: bool,
+    #[serde(default)]
+    proxy_enabled: bool,
+    #[serde(default)]
+    proxy_url: String,
+    #[serde(default = "default_true")]
+    proxy_bypass_local: bool,
+    #[serde(default)]
+    source_watch_enabled: bool,
+    #[serde(default)]
+    source_watch_auto_ingest: bool,
+    #[serde(default = "default_source_watch_allowed_extensions")]
+    source_watch_allowed_extensions: String,
+    #[serde(default = "default_source_watch_exclude_dirs")]
+    source_watch_exclude_dirs: String,
+    #[serde(default = "default_source_watch_exclude_extensions")]
+    source_watch_exclude_extensions: String,
+    #[serde(default = "default_source_watch_exclude_globs")]
+    source_watch_exclude_globs: String,
+    #[serde(default = "default_source_watch_max_file_size_mb")]
+    source_watch_max_file_size_mb: usize,
+    #[serde(default)]
+    scheduled_import_enabled: bool,
+    #[serde(default = "default_scheduled_import_path")]
+    scheduled_import_path: String,
+    #[serde(default = "default_scheduled_import_interval_minutes")]
+    scheduled_import_interval_minutes: usize,
+    #[serde(default = "default_chat_history_messages")]
+    chat_history_messages: usize,
+    #[serde(default = "default_interface_density")]
+    interface_density: String,
     retry_count: usize,
     timeout_seconds: usize,
     auto_run_lint_after_writes: bool,
@@ -777,6 +847,82 @@ fn default_llm_provider_center() -> LlmProviderCenterSettings {
     }
 }
 
+fn default_true() -> bool {
+    true
+}
+
+fn default_embedding_api_key_env_var() -> String {
+    "EMBEDDING_API_KEY".to_string()
+}
+
+fn default_embedding_max_chunk_chars() -> usize {
+    1000
+}
+
+fn default_embedding_overlap_chunk_chars() -> usize {
+    200
+}
+
+fn default_captioning_provider() -> String {
+    "main-llm".to_string()
+}
+
+fn default_captioning_api_key_env_var() -> String {
+    "VISION_API_KEY".to_string()
+}
+
+fn default_captioning_concurrency() -> usize {
+    2
+}
+
+fn default_web_search_provider() -> String {
+    "none".to_string()
+}
+
+fn default_web_search_api_key_env_var() -> String {
+    "TAVILY_API_KEY".to_string()
+}
+
+fn default_web_search_categories() -> String {
+    "general".to_string()
+}
+
+fn default_source_watch_allowed_extensions() -> String {
+    "pdf, md, txt, docx, pptx, xlsx, csv".to_string()
+}
+
+fn default_source_watch_exclude_dirs() -> String {
+    ".git, node_modules, .obsidian".to_string()
+}
+
+fn default_source_watch_exclude_extensions() -> String {
+    "tmp, bak, exe, dll, dmg".to_string()
+}
+
+fn default_source_watch_exclude_globs() -> String {
+    "*.draft.*, ~$*, .~lock.*#".to_string()
+}
+
+fn default_source_watch_max_file_size_mb() -> usize {
+    100
+}
+
+fn default_scheduled_import_path() -> String {
+    "raw/inbox".to_string()
+}
+
+fn default_scheduled_import_interval_minutes() -> usize {
+    60
+}
+
+fn default_chat_history_messages() -> usize {
+    8
+}
+
+fn default_interface_density() -> String {
+    "comfortable".to_string()
+}
+
 impl Default for DesktopSettings {
     fn default() -> Self {
         Self {
@@ -802,6 +948,41 @@ impl Default for DesktopSettings {
             default_pdf_parser: default_pdf_parser(),
             default_ingest_mode: "inbox_only".to_string(),
             default_obsidian_profile: "minimal".to_string(),
+            embedding_enabled: false,
+            embedding_endpoint: String::new(),
+            embedding_api_key_env_var: default_embedding_api_key_env_var(),
+            embedding_model: String::new(),
+            embedding_output_dimensions: 0,
+            embedding_max_chunk_chars: default_embedding_max_chunk_chars(),
+            embedding_overlap_chunk_chars: default_embedding_overlap_chunk_chars(),
+            captioning_enabled: false,
+            captioning_use_main_provider: true,
+            captioning_provider: default_captioning_provider(),
+            captioning_endpoint: String::new(),
+            captioning_api_key_env_var: default_captioning_api_key_env_var(),
+            captioning_model: String::new(),
+            captioning_concurrency: default_captioning_concurrency(),
+            web_search_enabled: false,
+            web_search_provider: default_web_search_provider(),
+            web_search_api_key_env_var: default_web_search_api_key_env_var(),
+            web_search_endpoint: String::new(),
+            web_search_categories: default_web_search_categories(),
+            web_search_audit_log: true,
+            proxy_enabled: false,
+            proxy_url: String::new(),
+            proxy_bypass_local: true,
+            source_watch_enabled: false,
+            source_watch_auto_ingest: false,
+            source_watch_allowed_extensions: default_source_watch_allowed_extensions(),
+            source_watch_exclude_dirs: default_source_watch_exclude_dirs(),
+            source_watch_exclude_extensions: default_source_watch_exclude_extensions(),
+            source_watch_exclude_globs: default_source_watch_exclude_globs(),
+            source_watch_max_file_size_mb: default_source_watch_max_file_size_mb(),
+            scheduled_import_enabled: false,
+            scheduled_import_path: default_scheduled_import_path(),
+            scheduled_import_interval_minutes: default_scheduled_import_interval_minutes(),
+            chat_history_messages: default_chat_history_messages(),
+            interface_density: default_interface_density(),
             retry_count: 3,
             timeout_seconds: 1800,
             auto_run_lint_after_writes: true,
