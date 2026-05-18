@@ -111,6 +111,8 @@ import {
   languageName,
   normalizeUiLanguage,
   oppositeLanguage,
+  runtimeLabel,
+  runtimeText,
   type UiLanguage,
 } from "./i18n";
 
@@ -2135,6 +2137,7 @@ function App() {
             <div className="impact-list">
               <TraceabilityActionCards
                 warnings={traceabilityWarnings}
+                language={interfaceLanguage}
                 onOpenClaim={(warning) => openVaultItem(warning.claimPath)}
                 onOpenSource={(warning) => openVaultItem(warning.sourcePath)}
                 onOpenArtifact={(warning) => openVaultItem(warning.artifactPath)}
@@ -2152,14 +2155,14 @@ function App() {
               {evidencePaths.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无可追踪论断。" : "No traceable claims yet."}</p>}
               {evidencePaths.map((item) => (
                 <div className="work-item" key={item.claimId}>
-                  <span className={classNames("status-chip", item.chainStatus)}>{item.chainStatus}</span>
-                  <strong>{item.claimText}</strong>
+                  <span className={classNames("status-chip", item.chainStatus)}>{runtimeLabel(item.chainStatus, interfaceLanguage)}</span>
+                  <strong>{runtimeText(item.claimText, interfaceLanguage)}</strong>
                   <em>{item.concept || (interfaceLanguage === "zh" ? "无概念" : "no concept")} · {item.sourceId || item.sourceUuid || (interfaceLanguage === "zh" ? "无资料" : "no source")}</em>
-                  <code>{item.evidenceAnchor || (interfaceLanguage === "zh" ? "缺失锚点" : "missing anchor")} · {item.missing.join(", ") || (interfaceLanguage === "zh" ? "证据链完整" : "chain complete")}</code>
+                  <code>{item.evidenceAnchor || (interfaceLanguage === "zh" ? "缺失锚点" : "missing anchor")} · {item.missing.map((entry) => runtimeLabel(entry, interfaceLanguage)).join(", ") || (interfaceLanguage === "zh" ? "证据链完整" : "chain complete")}</code>
                   <div className="inline-actions">
                     <button onClick={() => item.sourcePage && openPath(vaultFilePath(item.sourcePage))} disabled={!item.sourcePage}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "资料" : "source"}</button>
                     <button onClick={() => item.artifactPath && openPath(vaultFilePath(item.artifactPath))} disabled={!item.artifactPath}><FileInput size={14} />{interfaceLanguage === "zh" ? "解析产物" : "artifact"}</button>
-                    <button onClick={() => item.qaReportPath && openPath(vaultFilePath(item.qaReportPath))} disabled={!item.qaReportPath}><ShieldCheck size={14} />QA</button>
+                    <button onClick={() => item.qaReportPath && openPath(vaultFilePath(item.qaReportPath))} disabled={!item.qaReportPath}><ShieldCheck size={14} />{interfaceLanguage === "zh" ? "质检" : "QA"}</button>
                   </div>
                 </div>
               ))}
@@ -2168,7 +2171,7 @@ function App() {
 
           <section className="panel large">
             <div className="section-head">
-              <h2>{interfaceLanguage === "zh" ? "QA / 审核工作台" : "QA / Review workspace"}</h2>
+              <h2>{interfaceLanguage === "zh" ? "质检 / 审核工作台" : "QA / Review workspace"}</h2>
               <select className="compact-select" value={reviewFilter} onChange={(event) => setReviewFilter(event.target.value)}>
                 <option value="open">{interfaceLanguage === "zh" ? "未处理" : "open"}</option>
                 <option value="approved">{interfaceLanguage === "zh" ? "已批准" : "approved"}</option>
@@ -2182,9 +2185,9 @@ function App() {
               {visibleReviewItems.map((item) => (
                 <div className="work-item" key={item.itemId}>
                   <span className={classNames("status-chip", item.severity)}>{item.severity}</span>
-                  <strong>{item.title}</strong>
-                  <em>{item.kind} · {item.status} · {item.recommendedAction}</em>
-                  <code>{item.body}</code>
+                  <strong>{runtimeText(item.title, interfaceLanguage)}</strong>
+                  <em>{runtimeLabel(item.kind, interfaceLanguage)} · {runtimeLabel(item.status, interfaceLanguage)} · {runtimeLabel(item.recommendedAction, interfaceLanguage)}</em>
+                  <code>{runtimeText(item.body, interfaceLanguage)}</code>
                   <div className="inline-actions">
                     <button onClick={() => item.targetPath && openPath(vaultFilePath(item.targetPath))} disabled={!item.targetPath}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "打开" : "open"}</button>
                     <button onClick={() => handleReviewStatus(item.itemId, "approved")} disabled={item.status === "approved"}><Check size={14} />{interfaceLanguage === "zh" ? "批准" : "approve"}</button>
@@ -2311,10 +2314,10 @@ function App() {
               {visibleClaims.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无匹配论断。" : "No matching claims."}</p>}
               {visibleClaims.map((claim) => (
                 <div className="work-item" key={claim.claimId}>
-                  <span className={classNames("status-chip", claim.verdict)}>{claim.verdict}</span>
-                  <strong>{claim.claimText}</strong>
+                  <span className={classNames("status-chip", claim.verdict)}>{runtimeLabel(claim.verdict, interfaceLanguage)}</span>
+                  <strong>{runtimeText(claim.claimText, interfaceLanguage)}</strong>
                   <em>{claim.sourceId || claim.sourceUuid || claim.sourcePath || `${interfaceLanguage === "zh" ? "第" : "line "}${claim.line}${interfaceLanguage === "zh" ? "行" : ""}`}</em>
-                  <code>{claim.evidenceHash || (interfaceLanguage === "zh" ? "无证据哈希" : "no evidence hash")} · {claim.evidenceQuote || (interfaceLanguage === "zh" ? "无引文" : "no quote")}</code>
+                  <code>{claim.evidenceHash || (interfaceLanguage === "zh" ? "无证据哈希" : "no evidence hash")} · {runtimeText(claim.evidenceQuote, interfaceLanguage) || (interfaceLanguage === "zh" ? "无引文" : "no quote")}</code>
                   <div className="inline-actions">
                     <button onClick={() => selectClaimForDetails(claim)}><PanelRightOpen size={14} />{interfaceLanguage === "zh" ? "详情" : "details"}</button>
                     <button onClick={() => openPath(vaultFilePath("claims/claims.jsonl"))}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "打开" : "open"}</button>
