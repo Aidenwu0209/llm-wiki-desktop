@@ -572,7 +572,7 @@ export function RuntimeSettingsPanel({
                 <label>{isZh ? "重叠字符数" : "Overlap chars"}<input type="number" min={0} value={settings.embeddingOverlapChunkChars} onChange={(event) => updateNumberSetting("embeddingOverlapChunkChars", event.target.value, 200)} /></label>
               </div>
               <div className="settings-notice">
-                {isZh ? "与 nashsu/llm_wiki 一样，这里按 OpenAI-compatible / Gemini native embedding 配置组织；桌面端只保存 endpoint、模型和环境变量名，不保存密钥明文。" : "This follows the nashsu/llm_wiki shape for OpenAI-compatible and Gemini-native embeddings. The desktop app saves endpoint, model, and env var name, not the secret value."}
+                {isZh ? "向量配置支持 OpenAI-compatible endpoint 和 Gemini native embedding；桌面端只保存 endpoint、模型和环境变量名，不保存密钥明文。" : "Embedding config supports OpenAI-compatible endpoints and Gemini-native embedding. The desktop app saves endpoint, model, and env var name, not the secret value."}
               </div>
             </div>
           </div>
