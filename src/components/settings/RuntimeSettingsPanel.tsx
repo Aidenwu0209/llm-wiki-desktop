@@ -88,8 +88,9 @@ const settingsCopy = {
     llmTitle: "大语言模型",
     llmSubtitle: "选择一个当前启用的模型提供方。本地命令行提供方不会把密钥写入桌面设置文件。",
     save: "保存",
-    detected: "已检测",
-    notFound: "未找到",
+    detected: "检查通过",
+    notFound: "检查失败",
+    checking: "检查中",
     needsCheck: "待检查",
     needsConfig: "待配置",
     noProvider: "未选择提供方",
@@ -150,8 +151,9 @@ const settingsCopy = {
     llmTitle: "LLM Models",
     llmSubtitle: "Choose one active model provider. Local CLI providers keep secrets outside the desktop settings file.",
     save: "Save",
-    detected: "Detected",
-    notFound: "Not found",
+    detected: "Check passed",
+    notFound: "Check failed",
+    checking: "Checking",
     needsCheck: "Needs check",
     needsConfig: "Needs config",
     noProvider: "No provider selected",
@@ -286,7 +288,7 @@ function normalizeProviderSettings(settings: DesktopSettings) {
     }
     const savedEnabled = provider.kind === "local"
       ? Boolean(merged.enabled && merged.cliAvailable)
-      : Boolean(merged.enabled && (merged.apiKeyEnvVar || merged.apiBaseUrl));
+      : Boolean(merged.enabled && merged.apiKeyConfigured);
     normalized[provider.id] = {
       ...merged,
       enabled: provider.id === activeProviderId && savedEnabled,
@@ -418,7 +420,9 @@ export function RuntimeSettingsPanel({
           id,
           {
             ...value,
-            enabled: result.available ? id === providerId : id === center.activeProviderId,
+            enabled: result.available
+              ? id === providerId
+              : id !== providerId && id === center.activeProviderId,
             ...(id === providerId
               ? {
                   apiKeyEnvVar: result.envVar,
@@ -430,7 +434,9 @@ export function RuntimeSettingsPanel({
         ]),
       );
       updateCenter({
-        activeProviderId: result.available ? providerId : center.activeProviderId,
+        activeProviderId: result.available
+          ? providerId
+          : center.activeProviderId === providerId ? null : center.activeProviderId,
         providers: nextProviders,
       });
     } catch (err) {
@@ -439,6 +445,7 @@ export function RuntimeSettingsPanel({
         [providerId]: { providerId, envVar: config.apiKeyEnvVar || "", available: false, message: String(err) },
       }));
       updateProvider(providerId, {
+        enabled: false,
         apiKeyConfigured: false,
         apiKeyCheckedAt: new Date().toISOString(),
       });
@@ -818,16 +825,20 @@ export function RuntimeSettingsPanel({
                 const apiCheck = apiChecks[provider.id];
                 const isLocal = provider.kind === "local";
                 const persistedCliAvailable = Boolean(config.cliAvailable);
-                const canEnable = isLocal ? Boolean(cliCheck?.available || persistedCliAvailable) : Boolean(config.apiKeyEnvVar?.trim() || config.apiBaseUrl?.trim());
+                const canEnable = isLocal ? Boolean(cliCheck?.available || persistedCliAvailable) : Boolean(apiCheck?.available || config.apiKeyConfigured);
                 const status = isLocal
-                  ? cliCheck
+                  ? checkingCli === provider.id
+                    ? text.checking
+                    : cliCheck
                     ? cliCheck.available ? text.detected : text.notFound
                     : persistedCliAvailable ? text.detected : text.needsCheck
-                  : config.enabled
-                    ? text.enabled
+                  : checkingApi === provider.id
+                    ? text.checking
                     : apiCheck
                       ? apiCheck.available ? text.keyPresent : text.keyMissing
-                      : config.apiKeyConfigured ? text.keyPresent : text.configurable;
+                      : config.enabled
+                        ? text.enabled
+                        : config.apiKeyConfigured ? text.keyPresent : text.configurable;
                 return (
                   <article key={provider.id} className={classNames("provider-card", config.enabled && "enabled", config.expanded && "expanded")}>
                     <div className="provider-row">
@@ -868,7 +879,7 @@ export function RuntimeSettingsPanel({
                           <div className="cli-status-grid">
                             <div>
                               <span>{text.cliStatus}</span>
-                              <strong>{cliCheck ? (cliCheck.available ? text.available : text.missing) : text.notChecked}</strong>
+                              <strong>{cliCheck ? (cliCheck.available ? text.available : text.missing) : config.cliAvailable ? text.available : text.notChecked}</strong>
                             </div>
                             <div>
                               <span>{text.detectedVersion}</span>
