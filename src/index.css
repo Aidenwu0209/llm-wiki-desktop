@@ -290,6 +290,7 @@ textarea {
 }
 
 .panel {
+  min-width: 0;
   border: 1px solid #cbd4cf;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.92);
@@ -611,6 +612,10 @@ textarea {
   gap: 14px;
 }
 
+.main-grid > * {
+  min-width: 0;
+}
+
 .section-head {
   display: flex;
   align-items: center;
@@ -727,6 +732,108 @@ textarea {
   border-bottom: 1px solid #e4e8e4;
   padding-bottom: 8px;
   color: #3b4843;
+}
+
+.action-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+  min-width: 0;
+}
+
+.action-summary-strip span {
+  min-height: 42px;
+  border: 1px solid #d8ded9;
+  border-radius: 6px;
+  background: #fbfcfa;
+  padding: 7px 9px;
+  color: #64706a;
+  font-size: 12px;
+}
+
+.action-summary-strip strong {
+  display: block;
+  color: #17201d;
+  font-size: 16px;
+}
+
+.action-focus-panel {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.action-focus-card {
+  min-width: 0;
+  min-height: 128px;
+}
+
+.action-focus-card em,
+.action-focus-card code {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.action-stepper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+  border: 1px solid #d8ded9;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 8px;
+}
+
+.action-stepper button {
+  min-height: 30px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.action-stepper span {
+  min-width: 56px;
+  color: #40514a;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.action-queue-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 6px;
+  min-width: 0;
+}
+
+.action-queue-list.expanded {
+  grid-template-columns: 1fr;
+}
+
+.action-queue-item {
+  justify-content: flex-start;
+  gap: 7px;
+  min-height: 36px;
+  border-color: #d8ded9;
+  background: #ffffff;
+  padding: 5px 7px;
+  color: #17201d;
+  text-align: left;
+}
+
+.action-queue-item.active {
+  border-color: #245b93;
+  background: #eef5fb;
+}
+
+.action-queue-item strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
 }
 
 .ingest-list,

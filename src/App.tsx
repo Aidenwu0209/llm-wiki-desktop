@@ -7,6 +7,8 @@ import {
   BarChart3,
   Check,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   ClipboardList,
   Copy,
   Database,
@@ -87,6 +89,7 @@ import { RuntimeSettingsPanel } from "./components/settings/RuntimeSettingsPanel
 import { BrandMark } from "./components/brand/BrandMark";
 import type {
   ClaimLedgerItem,
+  DashboardAction,
   DesktopAppState,
   DesktopSettings,
   EvidencePathItem,
@@ -145,6 +148,14 @@ const pipeline = [
   "Concept revision",
   "Lint",
 ];
+
+const actionSeverityRank: Record<string, number> = { p0: 0, p1: 1, p2: 2, p3: 3 };
+
+function compareDashboardActions(a: DashboardAction, b: DashboardAction) {
+  const severityDelta = (actionSeverityRank[a.severity.toLowerCase()] ?? 9) - (actionSeverityRank[b.severity.toLowerCase()] ?? 9);
+  if (severityDelta !== 0) return severityDelta;
+  return a.title.localeCompare(b.title);
+}
 
 const navigationItems = [
   { id: "dashboard", label: "Dashboard", icon: SquareStack },
@@ -780,6 +791,8 @@ function App() {
   const [activePage, setActivePage] = useState<ShellPage>("dashboard");
   const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  const [actionFocusIndex, setActionFocusIndex] = useState(0);
+  const [actionListExpanded, setActionListExpanded] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const copy = shellCopy[interfaceLanguage];
@@ -804,6 +817,12 @@ function App() {
   const lintFindings = ingestPlan?.lintFindings ?? [];
   const runtimeRunning = Boolean(activeJob && !activeJob.endedAt && !isTerminalRuntimeStatus(activeJob.status));
   const visibleActions = actions.filter((action) => actionFilter === "all" || action.status === actionFilter);
+  const prioritizedActions = [...visibleActions].sort(compareDashboardActions);
+  const focusedAction = prioritizedActions[actionFocusIndex] ?? prioritizedActions[0] ?? null;
+  const actionQueueStart = actionListExpanded ? 0 : Math.max(0, Math.min(actionFocusIndex - 2, Math.max(prioritizedActions.length - 5, 0)));
+  const actionQueuePreview = actionListExpanded ? prioritizedActions : prioritizedActions.slice(actionQueueStart, actionQueueStart + 5);
+  const openActionCount = actions.filter((action) => action.status === "open").length;
+  const criticalActionCount = actions.filter((action) => action.status === "open" && ["p0", "p1"].includes(action.severity.toLowerCase())).length;
   const visibleClaims = claims.filter((claim) => {
     if (claimFilter === "all") return true;
     if (claimFilter === "needs_review") return claim.needsReview || claim.status === "needs_review" || claim.verdict === "needs_review";
@@ -830,6 +849,15 @@ function App() {
       setDetailDrawerOpen(false);
     }
   }, [activePage]);
+
+  useEffect(() => {
+    setActionFocusIndex(0);
+    setActionListExpanded(false);
+  }, [actionFilter, vaultPath]);
+
+  useEffect(() => {
+    setActionFocusIndex((current) => Math.min(current, Math.max(prioritizedActions.length - 1, 0)));
+  }, [prioritizedActions.length]);
 
   const vaultFilePath = (path?: string | null) => {
     if (!path) return vaultPath;
@@ -2279,23 +2307,56 @@ function App() {
                 <option value="all">{interfaceLanguage === "zh" ? "全部" : "all"}</option>
               </select>
             </div>
-            <div className="action-list">
-              {visibleActions.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无待处理行动。" : "No pending actions."}</p>}
-              {visibleActions.map((action) => (
-                <div className="work-item" key={action.actionId}>
-                  <span className={classNames("status-chip", action.severity)}>{action.severity}</span>
-                  <strong>{action.title}</strong>
-                  <em>{action.body}</em>
-                  <code>{action.status} · {action.recommendedAction} · {interfaceLanguage === "zh" ? "影响对象" : "affected"} {action.affectedObjects.length} · {action.reason}</code>
+            <div className="action-summary-strip">
+              <span><strong>{openActionCount}</strong>{interfaceLanguage === "zh" ? "未处理" : "open"}</span>
+              <span><strong>{criticalActionCount}</strong>{interfaceLanguage === "zh" ? "P0/P1" : "P0/P1"}</span>
+              <span><strong>{prioritizedActions.length}</strong>{interfaceLanguage === "zh" ? "当前筛选" : "filtered"}</span>
+            </div>
+            {prioritizedActions.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无待处理行动。" : "No pending actions."}</p>}
+            {focusedAction && (
+              <div className="action-focus-panel">
+                <div className="work-item action-focus-card" key={focusedAction.actionId}>
+                  <span className={classNames("status-chip", focusedAction.severity)}>{focusedAction.severity}</span>
+                  <strong>{focusedAction.title}</strong>
+                  <em>{focusedAction.body}</em>
+                  <code>{focusedAction.status} · {focusedAction.recommendedAction} · {interfaceLanguage === "zh" ? "影响对象" : "affected"} {focusedAction.affectedObjects.length} · {focusedAction.reason}</code>
                   <div className="inline-actions">
-                    <button title={interfaceLanguage === "zh" ? "打开关联文件" : "Open linked file"} onClick={() => action.links[0] && openPath(vaultFilePath(action.links[0].path))}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "打开" : "open"}</button>
-                    <button title={interfaceLanguage === "zh" ? "标记已解决" : "Mark resolved"} onClick={() => handleActionStatus(action.actionId, "resolved")} disabled={action.status === "resolved"}><Check size={14} />{interfaceLanguage === "zh" ? "解决" : "resolve"}</button>
-                    <button title={interfaceLanguage === "zh" ? "忽略该行动" : "Ignore action"} onClick={() => handleActionStatus(action.actionId, "ignored")} disabled={action.status === "ignored"}><XCircle size={14} />{interfaceLanguage === "zh" ? "忽略" : "ignore"}</button>
-                    <button title={interfaceLanguage === "zh" ? "重新打开行动" : "Reopen action"} onClick={() => handleActionStatus(action.actionId, "open")} disabled={action.status === "open"}><RotateCcw size={14} />{interfaceLanguage === "zh" ? "重开" : "reopen"}</button>
+                    <button title={interfaceLanguage === "zh" ? "打开关联文件" : "Open linked file"} onClick={() => focusedAction.links[0] && openPath(vaultFilePath(focusedAction.links[0].path))} disabled={!focusedAction.links[0]}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "打开" : "open"}</button>
+                    <button title={interfaceLanguage === "zh" ? "标记已解决" : "Mark resolved"} onClick={() => handleActionStatus(focusedAction.actionId, "resolved")} disabled={focusedAction.status === "resolved"}><Check size={14} />{interfaceLanguage === "zh" ? "解决" : "resolve"}</button>
+                    <button title={interfaceLanguage === "zh" ? "忽略该行动" : "Ignore action"} onClick={() => handleActionStatus(focusedAction.actionId, "ignored")} disabled={focusedAction.status === "ignored"}><XCircle size={14} />{interfaceLanguage === "zh" ? "忽略" : "ignore"}</button>
+                    <button title={interfaceLanguage === "zh" ? "重新打开行动" : "Reopen action"} onClick={() => handleActionStatus(focusedAction.actionId, "open")} disabled={focusedAction.status === "open"}><RotateCcw size={14} />{interfaceLanguage === "zh" ? "重开" : "reopen"}</button>
                   </div>
                 </div>
-              ))}
-            </div>
+                <div className="action-stepper">
+                  <button type="button" onClick={() => setActionFocusIndex((current) => Math.max(current - 1, 0))} disabled={actionFocusIndex <= 0}>
+                    <ChevronLeft size={14} />{interfaceLanguage === "zh" ? "上一条" : "Previous"}
+                  </button>
+                  <span>{Math.min(actionFocusIndex + 1, prioritizedActions.length)} / {prioritizedActions.length}</span>
+                  <button type="button" onClick={() => setActionFocusIndex((current) => Math.min(current + 1, prioritizedActions.length - 1))} disabled={actionFocusIndex >= prioritizedActions.length - 1}>
+                    {interfaceLanguage === "zh" ? "下一条" : "Next"}<ChevronRight size={14} />
+                  </button>
+                  <button type="button" onClick={() => setActionListExpanded((current) => !current)}>
+                    {actionListExpanded ? (interfaceLanguage === "zh" ? "收起队列" : "Collapse") : (interfaceLanguage === "zh" ? "展开队列" : "Show queue")}
+                  </button>
+                </div>
+                <div className={classNames("action-queue-list", actionListExpanded && "expanded")}>
+                  {actionQueuePreview.map((action, index) => {
+                    const actualIndex = actionQueueStart + index;
+                    return (
+                      <button
+                        type="button"
+                        className={classNames("action-queue-item", actualIndex === actionFocusIndex && "active")}
+                        key={action.actionId}
+                        onClick={() => setActionFocusIndex(actualIndex)}
+                      >
+                        <span className={classNames("status-chip inline", action.severity)}>{action.severity}</span>
+                        <strong>{action.title}</strong>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </section>
 
           <section className="panel large">
