@@ -123,17 +123,6 @@ textarea {
   transform: translateX(0);
 }
 
-.drawer-scrim {
-  position: fixed;
-  inset: 0 0 0 76px;
-  z-index: 70;
-  display: block;
-  border: 0;
-  border-radius: 0;
-  background: rgba(13, 23, 20, 0.16);
-  cursor: default;
-}
-
 .drawer-header {
   position: sticky;
   top: -18px;

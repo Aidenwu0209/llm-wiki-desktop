@@ -91,6 +91,22 @@ function classNames(...items: Array<string | false | null | undefined>) {
   return items.filter(Boolean).join(" ");
 }
 
+function proposalStatusLabel(status: WritebackProposal["status"], language: UiLanguage) {
+  if (language !== "zh") return status;
+  const labels: Record<string, string> = {
+    proposed: "待审核",
+    approved: "已批准",
+    rejected: "已拒绝",
+    applied: "已应用",
+  };
+  return labels[status] ?? status;
+}
+
+function proposalTitleLabel(title: string, language: UiLanguage) {
+  if (language === "zh" && title === "DeepSeek research insight query") return "DeepSeek 研究洞察提案";
+  return title;
+}
+
 function DetailActions({
   text,
   path,
@@ -245,8 +261,8 @@ export function DetailsPanel({
 
       {selection.kind === "proposal" && (
         <div className="details-body">
-          <span className={classNames("status-chip inline", selection.proposal.status)}>{selection.proposal.status}</span>
-          <h3>{selection.proposal.title}</h3>
+          <span className={classNames("status-chip inline", selection.proposal.status)}>{proposalStatusLabel(selection.proposal.status, language)}</span>
+          <h3>{proposalTitleLabel(selection.proposal.title, language)}</h3>
           <p>{selection.proposal.targetPath}</p>
           <pre className="details-diff">{selection.proposal.diff}</pre>
           <DetailActions

@@ -1376,7 +1376,6 @@ function App() {
         writebackContent,
       );
       setWritebacks((current) => [proposal, ...current.filter((item) => item.proposalId !== proposal.proposalId)]);
-      setDetailSelection({ kind: "proposal", proposal });
       setWritebackApplyStatus(null);
       await refresh();
     } catch (err) {
@@ -1399,7 +1398,6 @@ function App() {
       );
       setQueryDraft(draft);
       setWritebacks((current) => [draft.proposal, ...current.filter((item) => item.proposalId !== draft.proposal.proposalId)]);
-      setDetailSelection({ kind: "proposal", proposal: draft.proposal });
       setWritebackApplyStatus(null);
       await refresh();
     } catch (err) {
@@ -1478,7 +1476,11 @@ function App() {
     try {
       const proposal = await setWritebackStatus(vaultPath, proposalId, status);
       setWritebacks((current) => [proposal, ...current.filter((item) => item.proposalId !== proposalId)]);
-      setDetailSelection({ kind: "proposal", proposal });
+      if (detailDrawerOpen) {
+        setDetailSelection((current) => current.kind === "proposal" && current.proposal.proposalId === proposalId
+          ? { kind: "proposal", proposal }
+          : current);
+      }
       await refresh();
     } catch (err) {
       setError(String(err));
@@ -1515,7 +1517,11 @@ function App() {
       }
       setWritebackApplyStatus(nextStatus);
       setWritebacks((current) => [result.proposal, ...current.filter((item) => item.proposalId !== proposalId)]);
-      setDetailSelection({ kind: "proposal", proposal: result.proposal });
+      if (detailDrawerOpen) {
+        setDetailSelection((current) => current.kind === "proposal" && current.proposal.proposalId === proposalId
+          ? { kind: "proposal", proposal: result.proposal }
+          : current);
+      }
       await refresh();
     } catch (err) {
       setError(String(err));
@@ -1762,15 +1768,6 @@ function App() {
         </nav>
         <div className={classNames("rail-status", tone)} title={vaultPath || "No vault selected"} />
       </aside>
-
-      {activePage !== "settings" && detailDrawerOpen && (
-        <button
-          type="button"
-          className="drawer-scrim"
-          aria-label={interfaceLanguage === "zh" ? "关闭侧栏" : "Close inspector"}
-          onClick={() => setDetailDrawerOpen(false)}
-        />
-      )}
 
       {activePage !== "settings" && detailDrawerOpen && (
         <aside className="sidebar command-sidebar open">
