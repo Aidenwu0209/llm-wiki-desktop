@@ -47,15 +47,30 @@ type QueryWritebackComposerProps = {
 
 const writebackCopy = {
   zh: {
-    title: "问答 / 洞察 / 写回编排器",
+    title: "1. 提问并生成证据提案",
+    guideTitle: "怎么使用",
+    guideBody: "这页不会直接把内容写进知识库。先基于当前知识库生成回答草稿和证据图，再生成可审核提案；只有提案被批准后，才可以应用写回。",
+    workflowSteps: [
+      ["提问", "使用默认 DeepSeek 问题，或改成自己的问题。"],
+      ["生成提案", "点击左侧按钮，系统会生成回答草稿、证据图和差异预览。"],
+      ["审核", "在右侧查看提案详情和 diff，确认风险与证据。"],
+      ["批准并应用", "先点批准，再点应用；未批准前不会写入。"],
+    ],
+    queryLabel: "问题",
+    queryHelp: "这是你要问当前知识库的问题，不是要直接写入的正文。",
+    targetLabel: "提案保存位置",
+    targetHelp: "建议保存在 reviews/query-writeback/，先进入审核区。",
+    generateHelp: "生成后只创建审核提案，不会静默修改资料页、概念页或原始证据。",
     placeholder: "基于当前知识库提问；输出必须区分证据 / 推断 / 假设 / 预测。",
     generate: "生成证据支撑提案",
     noEvidence: "当前草稿没有可引用证据。",
-    manualTitle: "手动写回安全流程",
+    manualTitle: "高级：手动创建提案",
+    manualIntro: "只有在你已经写好正文时才使用这里。它同样只生成审核提案，不会绕过批准流程。",
     manualTarget: "reviews/query-writeback/example.md 或 concepts/example.md",
     manualContent: "提案内容；默认写入 reviews/query-writeback/，不静默修改资料页或概念页。",
     reviewProposal: "生成审核提案",
-    proposalsTitle: "写回提案",
+    proposalsTitle: "2. 审核提案并应用",
+    proposalsHint: "先查看详情或差异预览，再决定批准或拒绝。只有状态为已批准的提案才能应用。",
     empty: "暂无写回提案。",
     approvalNote: "尚未应用。只有提案被明确批准后才能应用。",
     details: "详情",
@@ -78,17 +93,34 @@ const writebackCopy = {
     dashboardRefreshIssue: "仪表盘刷新异常",
     dashboardRefreshFailed: "仪表盘刷新失败",
     dashboardRefreshedAfterApply: "应用后已刷新仪表盘。",
+    sourceUnknown: "资料未知",
+    quoteMissing: "暂无直接引文",
   },
   en: {
-    title: "Query / Insight / Writeback Composer",
+    title: "1. Ask and Generate Evidence Proposal",
+    guideTitle: "How to use this",
+    guideBody: "This page does not write directly into the wiki. Generate an answer draft and evidence map first, then review the proposal; only approved proposals can be applied.",
+    workflowSteps: [
+      ["Ask", "Use the default DeepSeek question or enter your own."],
+      ["Generate", "Create an answer draft, evidence map, and diff preview."],
+      ["Review", "Check proposal details, evidence, risk, and diff."],
+      ["Approve and apply", "Approve first, then apply. Nothing is written before approval."],
+    ],
+    queryLabel: "Question",
+    queryHelp: "This is the question for the current vault, not the text to write directly.",
+    targetLabel: "Proposal path",
+    targetHelp: "Keep proposals under reviews/query-writeback/ for review first.",
+    generateHelp: "Generation only creates a review proposal; it will not silently modify sources, concepts, or raw evidence.",
     placeholder: "Ask from the current vault; output must distinguish evidence / inference / hypothesis / forecast.",
     generate: "Generate evidence-backed proposal",
     noEvidence: "This draft has no citable evidence yet.",
-    manualTitle: "Manual Writeback Safety Flow",
+    manualTitle: "Advanced: create a manual proposal",
+    manualIntro: "Use this only when you already have the writeback text. It still creates a review proposal and does not bypass approval.",
     manualTarget: "reviews/query-writeback/example.md or concepts/example.md",
     manualContent: "Proposal content; writes default to reviews/query-writeback/ and never silently modify source/concept pages.",
     reviewProposal: "Generate review proposal",
-    proposalsTitle: "Writeback proposals",
+    proposalsTitle: "2. Review Proposals and Apply",
+    proposalsHint: "Open details or review the diff before approving or rejecting. Only approved proposals can be applied.",
     empty: "No writeback proposals yet.",
     approvalNote: "Not applied. Apply is disabled until this proposal is explicitly approved.",
     details: "details",
@@ -111,6 +143,8 @@ const writebackCopy = {
     dashboardRefreshIssue: "dashboard refresh issue",
     dashboardRefreshFailed: "Dashboard refresh failed",
     dashboardRefreshedAfterApply: "Dashboard refreshed after apply.",
+    sourceUnknown: "source unknown",
+    quoteMissing: "claim text without direct quote",
   },
 } as const;
 
@@ -124,6 +158,22 @@ function lintSummary(status: WritebackApplyStatus, language: UiLanguage) {
   return language === "zh"
     ? `自动合约检查完成：${status.lint.findingCount ?? 0} 个发现，${status.lint.blockingCount ?? 0} 个 P0/P1`
     : `Auto lint completed: ${status.lint.findingCount ?? 0} findings, ${status.lint.blockingCount ?? 0} P0/P1`;
+}
+
+function proposalStatusLabel(status: WritebackProposal["status"] | QueryWritebackDraft["approvalStatus"], language: UiLanguage) {
+  if (language !== "zh") return status;
+  const labels: Record<string, string> = {
+    proposed: "待审核",
+    approved: "已批准",
+    rejected: "已拒绝",
+    applied: "已应用",
+  };
+  return labels[status] ?? status;
+}
+
+function proposalTitleLabel(title: string, language: UiLanguage) {
+  if (language === "zh" && title === "DeepSeek research insight query") return "DeepSeek 研究洞察提案";
+  return title;
 }
 
 export function QueryWritebackComposer({
@@ -154,23 +204,52 @@ export function QueryWritebackComposer({
 }: QueryWritebackComposerProps) {
   const text = writebackCopy[language];
   return (
-    <div className={classNames("main-grid", className)}>
+    <div className={classNames("main-grid writeback-workspace", className)}>
+      <section className="panel writeback-guide">
+        <div>
+          <h2>{text.guideTitle}</h2>
+          <p>{text.guideBody}</p>
+        </div>
+        <ol className="writeback-steps">
+          {text.workflowSteps.map(([title, body], index) => (
+            <li key={title}>
+              <span>{index + 1}</span>
+              <strong>{title}</strong>
+              <em>{body}</em>
+            </li>
+          ))}
+        </ol>
+      </section>
+
       <section className="panel large">
         <div className="section-head">
           <h2>{text.title}</h2>
           <span>{text.boundary}</span>
         </div>
         <div className="writeback-form">
-          <textarea
-            value={queryText}
-            onChange={(event) => onQueryTextChange(event.target.value)}
-            placeholder={text.placeholder}
-          />
-          <input
-            value={queryTarget}
-            onChange={(event) => onQueryTargetChange(event.target.value)}
-            placeholder="reviews/query-writeback/deepseek-research-insights.md"
-          />
+          <label className="field-group">
+            <span>{text.queryLabel}</span>
+            <small>{text.queryHelp}</small>
+            <textarea
+              className="query-question-box"
+              value={queryText}
+              onChange={(event) => onQueryTextChange(event.target.value)}
+              placeholder={text.placeholder}
+            />
+          </label>
+          <label className="field-group">
+            <span>{text.targetLabel}</span>
+            <small>{text.targetHelp}</small>
+            <input
+              value={queryTarget}
+              onChange={(event) => onQueryTargetChange(event.target.value)}
+              placeholder="reviews/query-writeback/deepseek-research-insights.md"
+            />
+          </label>
+          <div className="writeback-safety-note">
+            <GitCompare size={16} />
+            <span>{text.generateHelp}</span>
+          </div>
           <button onClick={onCreateQueryWriteback} disabled={!vaultPath || busy === "query_writeback"}>
             <GitCompare size={16} />{text.generate}
           </button>
@@ -189,8 +268,8 @@ export function QueryWritebackComposer({
                   >
                     <span className="status-chip proposed">{item.conclusionType}</span>
                     <strong>{item.claimText || item.claimId}</strong>
-                    <em>{item.sourceId || item.sourcePath || "source unknown"} · {item.verdict}/{item.status} · {item.confidence}</em>
-                    <code>{item.quote || item.evidenceHash || "claim text without direct quote"}{item.concepts.length ? ` · ${item.concepts.join(", ")}` : ""}</code>
+                    <em>{item.sourceId || item.sourcePath || text.sourceUnknown} · {item.verdict}/{item.status} · {item.confidence}</em>
+                    <code>{item.quote || item.evidenceHash || text.quoteMissing}{item.concepts.length ? ` · ${item.concepts.join(", ")}` : ""}</code>
                   </button>
                 ))}
               </div>
@@ -221,7 +300,7 @@ export function QueryWritebackComposer({
 
               <strong>{text.approvalStatus}</strong>
               <div className="work-item">
-                <span className={classNames("status-chip", queryDraft.approvalStatus)}>{queryDraft.approvalStatus}</span>
+                <span className={classNames("status-chip", queryDraft.approvalStatus)}>{proposalStatusLabel(queryDraft.approvalStatus, language)}</span>
                 <code>{text.approvalNote}</code>
               </div>
             </div>
@@ -231,36 +310,10 @@ export function QueryWritebackComposer({
 
       <section className="panel large">
         <div className="section-head">
-          <h2>{text.manualTitle}</h2>
-          <GitCompare size={18} />
-        </div>
-        <div className="writeback-form">
-          <input
-            value={writebackTarget}
-            onChange={(event) => onWritebackTargetChange(event.target.value)}
-            placeholder={text.manualTarget}
-          />
-          <input
-            value={writebackTitle}
-            onChange={(event) => onWritebackTitleChange(event.target.value)}
-            placeholder={text.proposalTitle}
-          />
-          <textarea
-            value={writebackContent}
-            onChange={(event) => onWritebackContentChange(event.target.value)}
-            placeholder={text.manualContent}
-          />
-          <button onClick={onCreateWriteback} disabled={!vaultPath || busy === "writeback_proposal"}>
-            <GitCompare size={16} />{text.reviewProposal}
-          </button>
-        </div>
-      </section>
-
-      <section className="panel large">
-        <div className="section-head">
           <h2>{text.proposalsTitle}</h2>
           <span>{writebacks.length} {text.proposalCount}</span>
         </div>
+        <p className="workflow-hint">{text.proposalsHint}</p>
         {applyStatus && (
           <div className="work-item">
             <span className={classNames("status-chip", applyStatus.dashboardRefreshed ? "applied" : "p1")}>
@@ -279,8 +332,8 @@ export function QueryWritebackComposer({
           {writebacks.length === 0 && <p className="empty">{text.empty}</p>}
           {writebacks.map((proposal) => (
             <div className="work-item" key={proposal.proposalId}>
-              <span className={classNames("status-chip", proposal.status)}>{proposal.status}</span>
-              <strong>{proposal.title}</strong>
+              <span className={classNames("status-chip", proposal.status)}>{proposalStatusLabel(proposal.status, language)}</span>
+              <strong>{proposalTitleLabel(proposal.title, language)}</strong>
               <em>{proposal.targetPath} · {proposal.updatedAt}</em>
               <code>{proposal.diff.split("\n").slice(0, 2).join(" | ")}</code>
               <div className="inline-actions">
@@ -299,6 +352,36 @@ export function QueryWritebackComposer({
             </div>
           ))}
         </div>
+      </section>
+
+      <section className="panel writeback-advanced-panel">
+        <details>
+          <summary>
+            <GitCompare size={16} />
+            <span>{text.manualTitle}</span>
+          </summary>
+          <p className="workflow-hint">{text.manualIntro}</p>
+          <div className="writeback-form">
+            <input
+              value={writebackTarget}
+              onChange={(event) => onWritebackTargetChange(event.target.value)}
+              placeholder={text.manualTarget}
+            />
+            <input
+              value={writebackTitle}
+              onChange={(event) => onWritebackTitleChange(event.target.value)}
+              placeholder={text.proposalTitle}
+            />
+            <textarea
+              value={writebackContent}
+              onChange={(event) => onWritebackContentChange(event.target.value)}
+              placeholder={text.manualContent}
+            />
+            <button onClick={onCreateWriteback} disabled={!vaultPath || busy === "writeback_proposal"}>
+              <GitCompare size={16} />{text.reviewProposal}
+            </button>
+          </div>
+        </details>
       </section>
     </div>
   );

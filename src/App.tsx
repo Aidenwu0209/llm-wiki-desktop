@@ -157,6 +157,18 @@ function compareDashboardActions(a: DashboardAction, b: DashboardAction) {
   return a.title.localeCompare(b.title);
 }
 
+const copyLabelZh: Record<string, string> = {
+  "entry path": "入口路径",
+  "Obsidian URI": "Obsidian 链接",
+  "source path": "资料路径",
+  "claim id": "论断 ID",
+  "graph node path": "图谱节点路径",
+  "detail path": "详情路径",
+  "claim text": "论断文本",
+  "warning id": "警告 ID",
+  "proposal diff": "提案差异",
+};
+
 const navigationItems = [
   { id: "dashboard", label: "Dashboard", icon: SquareStack },
   { id: "sources", label: "Sources", icon: FileInput },
@@ -892,16 +904,21 @@ function App() {
     });
   };
   const copyText = async (label: string, text?: string | null) => {
+    const readableLabel = interfaceLanguage === "zh" ? copyLabelZh[label] ?? label : label;
     if (!text) {
-      setRestoreError(`${label} is not available yet. Refresh the vault or choose a generated vault.`);
+      setRestoreError(interfaceLanguage === "zh"
+        ? `${readableLabel}暂不可用。请刷新知识库，或选择已生成的知识库。`
+        : `${readableLabel} is not available yet. Refresh the vault or choose a generated vault.`);
       return;
     }
     try {
       if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
       await navigator.clipboard.writeText(text);
-      setRestoreError(`${label} copied to clipboard.`);
+      setRestoreError(interfaceLanguage === "zh" ? `${readableLabel}已复制到剪贴板。` : `${readableLabel} copied to clipboard.`);
     } catch {
-      setRestoreError(`Clipboard API unavailable. Copy ${label} manually:\n${text}`);
+      setRestoreError(interfaceLanguage === "zh"
+        ? `剪贴板不可用。请手动复制${readableLabel}：\n${text}`
+        : `Clipboard API unavailable. Copy ${readableLabel} manually:\n${text}`);
     }
   };
   const revealEntryOrVault = async () => {
@@ -1378,7 +1395,7 @@ function App() {
         vaultPath,
         queryText,
         queryTarget.trim() || "reviews/query-writeback/deepseek-research-insights.md",
-        "DeepSeek research insight query",
+        interfaceLanguage === "zh" ? "DeepSeek 研究洞察提案" : "DeepSeek research insight query",
       );
       setQueryDraft(draft);
       setWritebacks((current) => [draft.proposal, ...current.filter((item) => item.proposalId !== draft.proposal.proposalId)]);
@@ -1405,7 +1422,7 @@ function App() {
         vaultPath,
         question,
         target,
-        "DeepSeek research insight query",
+        interfaceLanguage === "zh" ? "DeepSeek 研究洞察提案" : "DeepSeek research insight query",
       );
       setQueryDraft(draft);
       setWritebacks((current) => [draft.proposal, ...current.filter((item) => item.proposalId !== draft.proposal.proposalId)]);

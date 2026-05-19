@@ -606,6 +606,146 @@ textarea {
   padding: 0 12px;
 }
 
+.writeback-workspace {
+  align-items: start;
+}
+
+.writeback-workspace.view-section.visible {
+  display: grid !important;
+}
+
+.writeback-guide,
+.writeback-advanced-panel {
+  grid-column: 1 / -1;
+}
+
+.writeback-guide {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.72fr) minmax(420px, 1.28fr);
+  align-items: stretch;
+  gap: 12px;
+}
+
+.writeback-guide h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.writeback-guide p,
+.workflow-hint,
+.field-group small {
+  margin: 4px 0 0;
+  color: #64706a;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.writeback-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.writeback-steps li {
+  min-width: 0;
+  border: 1px solid #d8ded9;
+  border-radius: 6px;
+  background: #fbfcfa;
+  padding: 9px;
+}
+
+.writeback-steps span {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #12364e;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.writeback-steps strong,
+.writeback-steps em {
+  display: block;
+}
+
+.writeback-steps strong {
+  margin-top: 7px;
+  color: #17201d;
+  font-size: 13px;
+}
+
+.writeback-steps em {
+  margin-top: 4px;
+  color: #64706a;
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.45;
+}
+
+.field-group {
+  display: grid;
+  gap: 5px;
+}
+
+.field-group span {
+  color: #3b4843;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.query-question-box {
+  min-height: 210px;
+  line-height: 1.55;
+}
+
+.writeback-safety-note {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #d8ded9;
+  border-radius: 6px;
+  background: #f6f7f4;
+  padding: 9px 10px;
+  color: #40514a;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.writeback-advanced-panel details {
+  display: grid;
+  gap: 10px;
+}
+
+.writeback-advanced-panel summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  min-height: 34px;
+  border: 1px solid #c9d2cc;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 0 12px;
+  color: #17201d;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.writeback-advanced-panel summary::marker {
+  content: "";
+}
+
+.writeback-advanced-panel .writeback-form {
+  margin-top: 10px;
+}
+
 .main-grid {
   display: grid;
   grid-template-columns: minmax(280px, 0.92fr) minmax(420px, 1.35fr);
