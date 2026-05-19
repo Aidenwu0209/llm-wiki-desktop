@@ -853,7 +853,7 @@ export function RuntimeSettingsPanel({
             <div className="settings-block">
               <div className="settings-block-title"><Sparkles size={15} /><span>{isZh ? "最近更新" : "Recent changes"}</span></div>
               <ul className="settings-change-list">
-                <li>{isZh ? "大语言模型不再默认启用 Codex；本地 CLI 需要检查后才能启用。" : "LLM provider no longer defaults to Codex; local CLIs must be checked before enabling."}</li>
+                <li>{isZh ? "大语言模型默认保持关闭；本地 CLI 需要检查通过后才能启用。" : "LLM providers start disabled by default; local CLIs must pass a check before they can be enabled."}</li>
                 <li>{isZh ? "托管 API provider 可配置和启用；只保存 Base URL 与环境变量名，不保存 API key 明文。" : "Hosted API providers can be configured and enabled; only Base URL and environment variable names are saved, never API key values."}</li>
                 <li>{isZh ? "Provider 目录补齐国内主流厂商，并保存 OpenAI / Anthropic / Native 协议类型。" : "The provider catalog now covers major China-region vendors and saves OpenAI / Anthropic / Native protocol types."}</li>
                 <li>{isZh ? "设置分区拆分为对应页面；未实现能力明确显示为预留。" : "Settings sections now show distinct pages; unavailable capabilities are clearly marked reserved."}</li>

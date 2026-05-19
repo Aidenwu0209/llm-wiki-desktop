@@ -157,6 +157,31 @@ function compareDashboardActions(a: DashboardAction, b: DashboardAction) {
   return a.title.localeCompare(b.title);
 }
 
+type WorkflowStep = {
+  title: string;
+  body: string;
+};
+
+function WorkflowGuide({ title, body, steps }: { title: string; body: string; steps: WorkflowStep[] }) {
+  return (
+    <section className="panel workflow-guide">
+      <div>
+        <h2>{title}</h2>
+        <p>{body}</p>
+      </div>
+      <ol className="workflow-steps">
+        {steps.map((step, index) => (
+          <li key={step.title}>
+            <span>{index + 1}</span>
+            <strong>{step.title}</strong>
+            <em>{step.body}</em>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
 const copyLabelZh: Record<string, string> = {
   "entry path": "入口路径",
   "Obsidian URI": "Obsidian 链接",
@@ -1697,6 +1722,194 @@ function App() {
       { label: copy.nav.writeback, icon: <GitCompare size={15} />, onClick: () => setActivePage("writeback") },
     ];
   })();
+  const claimWorkflowStats = {
+    visible: visibleClaims.length,
+    needsReview: claims.filter((claim) => claim.needsReview || claim.status === "needs_review" || claim.verdict === "needs_review").length,
+    supported: claims.filter((claim) => claim.verdict === "supported").length,
+    conflicted: claims.filter((claim) => claim.verdict === "contradicted").length,
+  };
+  const reviewWorkflowStats = {
+    open: openReviewCount,
+    approved: reviewItems.filter((item) => item.status === "approved" || item.status === "resolved").length,
+    rejected: reviewItems.filter((item) => item.status === "rejected").length,
+  };
+  const traceabilityWorkflowStats = {
+    warnings: traceabilityWarnings.length,
+    broken: brokenEvidence,
+    contract: contractP0P1,
+  };
+  const renderDashboardActionPanel = () => (
+    <section className="panel large">
+      <div className="section-head">
+        <h2>{interfaceLanguage === "zh" ? "下一步行动" : "Next actions"}</h2>
+        <select className="compact-select" value={actionFilter} onChange={(event) => setActionFilter(event.target.value)}>
+          <option value="open">{interfaceLanguage === "zh" ? "未处理" : "open"}</option>
+          <option value="resolved">{interfaceLanguage === "zh" ? "已解决" : "resolved"}</option>
+          <option value="ignored">{interfaceLanguage === "zh" ? "已忽略" : "ignored"}</option>
+          <option value="all">{interfaceLanguage === "zh" ? "全部" : "all"}</option>
+        </select>
+      </div>
+      <div className="action-summary-strip">
+        <span><strong>{openActionCount}</strong>{interfaceLanguage === "zh" ? "未处理" : "open"}</span>
+        <span><strong>{criticalActionCount}</strong>{interfaceLanguage === "zh" ? "P0/P1" : "P0/P1"}</span>
+        <span><strong>{prioritizedActions.length}</strong>{interfaceLanguage === "zh" ? "当前筛选" : "filtered"}</span>
+      </div>
+      {prioritizedActions.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无待处理行动。" : "No pending actions."}</p>}
+      {focusedAction && (
+        <div className="action-focus-panel">
+          <div className="work-item action-focus-card" key={focusedAction.actionId}>
+            <span className={classNames("status-chip", focusedAction.severity)}>{focusedAction.severity}</span>
+            <strong>{focusedAction.title}</strong>
+            <em>{focusedAction.body}</em>
+            <code>{focusedAction.status} · {focusedAction.recommendedAction} · {interfaceLanguage === "zh" ? "影响对象" : "affected"} {focusedAction.affectedObjects.length} · {focusedAction.reason}</code>
+            <div className="inline-actions">
+              <button title={interfaceLanguage === "zh" ? "打开关联文件" : "Open linked file"} onClick={() => focusedAction.links[0] && openPath(vaultFilePath(focusedAction.links[0].path))} disabled={!focusedAction.links[0]}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "打开" : "open"}</button>
+              <button title={interfaceLanguage === "zh" ? "标记已解决" : "Mark resolved"} onClick={() => handleActionStatus(focusedAction.actionId, "resolved")} disabled={focusedAction.status === "resolved"}><Check size={14} />{interfaceLanguage === "zh" ? "解决" : "resolve"}</button>
+              <button title={interfaceLanguage === "zh" ? "忽略该行动" : "Ignore action"} onClick={() => handleActionStatus(focusedAction.actionId, "ignored")} disabled={focusedAction.status === "ignored"}><XCircle size={14} />{interfaceLanguage === "zh" ? "忽略" : "ignore"}</button>
+              <button title={interfaceLanguage === "zh" ? "重新打开行动" : "Reopen action"} onClick={() => handleActionStatus(focusedAction.actionId, "open")} disabled={focusedAction.status === "open"}><RotateCcw size={14} />{interfaceLanguage === "zh" ? "重开" : "reopen"}</button>
+            </div>
+          </div>
+          <div className="action-stepper">
+            <button type="button" onClick={() => setActionFocusIndex((current) => Math.max(current - 1, 0))} disabled={actionFocusIndex <= 0}>
+              <ChevronLeft size={14} />{interfaceLanguage === "zh" ? "上一条" : "Previous"}
+            </button>
+            <span>{Math.min(actionFocusIndex + 1, prioritizedActions.length)} / {prioritizedActions.length}</span>
+            <button type="button" onClick={() => setActionFocusIndex((current) => Math.min(current + 1, prioritizedActions.length - 1))} disabled={actionFocusIndex >= prioritizedActions.length - 1}>
+              {interfaceLanguage === "zh" ? "下一条" : "Next"}<ChevronRight size={14} />
+            </button>
+            <button type="button" onClick={() => setActionListExpanded((current) => !current)}>
+              {actionListExpanded ? (interfaceLanguage === "zh" ? "收起队列" : "Collapse") : (interfaceLanguage === "zh" ? "展开队列" : "Show queue")}
+            </button>
+          </div>
+          <div className={classNames("action-queue-list", actionListExpanded && "expanded")}>
+            {actionQueuePreview.map((action, index) => {
+              const actualIndex = actionQueueStart + index;
+              return (
+                <button
+                  type="button"
+                  className={classNames("action-queue-item", actualIndex === actionFocusIndex && "active")}
+                  key={action.actionId}
+                  onClick={() => setActionFocusIndex(actualIndex)}
+                >
+                  <span className={classNames("status-chip inline", action.severity)}>{action.severity}</span>
+                  <strong>{action.title}</strong>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+  const renderClaimLedgerPanel = (className = "panel large") => (
+    <section className={className}>
+      <div className="section-head">
+        <h2>{interfaceLanguage === "zh" ? "论断台账" : "Claim ledger"}</h2>
+        <select className="compact-select" value={claimFilter} onChange={(event) => setClaimFilter(event.target.value)}>
+          <option value="needs_review">{interfaceLanguage === "zh" ? "需审核" : "needs_review"}</option>
+          <option value="stale">{interfaceLanguage === "zh" ? "已失效" : "stale"}</option>
+          <option value="contradicted">{interfaceLanguage === "zh" ? "冲突" : "contradicted"}</option>
+          <option value="supported">{interfaceLanguage === "zh" ? "已支撑" : "supported"}</option>
+          <option value="ignored">{interfaceLanguage === "zh" ? "已忽略" : "ignored"}</option>
+          <option value="all">{interfaceLanguage === "zh" ? "全部" : "all"}</option>
+        </select>
+      </div>
+      <div className="claim-list">
+        {visibleClaims.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无匹配论断。" : "No matching claims."}</p>}
+        {visibleClaims.map((claim) => (
+          <div className="work-item" key={claim.claimId}>
+            <span className={classNames("status-chip", claim.verdict)}>{runtimeLabel(claim.verdict, interfaceLanguage)}</span>
+            <strong>{runtimeText(claim.claimText, interfaceLanguage)}</strong>
+            <em>{claim.sourceId || claim.sourceUuid || claim.sourcePath || `${interfaceLanguage === "zh" ? "第" : "line "}${claim.line}${interfaceLanguage === "zh" ? "行" : ""}`}</em>
+            <code>{claim.evidenceHash || (interfaceLanguage === "zh" ? "无证据哈希" : "no evidence hash")} · {runtimeText(claim.evidenceQuote, interfaceLanguage) || (interfaceLanguage === "zh" ? "无引文" : "no quote")}</code>
+            <div className="inline-actions">
+              <button onClick={() => selectClaimForDetails(claim)}><PanelRightOpen size={14} />{interfaceLanguage === "zh" ? "详情" : "details"}</button>
+              <button onClick={() => openPath(vaultFilePath("claims/claims.jsonl"))}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "打开" : "open"}</button>
+              <button onClick={() => handleClaimVerdict(claim.claimId, "supported")} disabled={claim.verdict === "supported"}><Check size={14} />{interfaceLanguage === "zh" ? "支持" : "support"}</button>
+              <button onClick={() => handleClaimVerdict(claim.claimId, "needs_review")} disabled={claim.verdict === "needs_review"}><AlertTriangle size={14} />{interfaceLanguage === "zh" ? "待审" : "review"}</button>
+              <button onClick={() => handleClaimVerdict(claim.claimId, "stale")} disabled={claim.verdict === "stale"}><RotateCcw size={14} />{interfaceLanguage === "zh" ? "失效" : "stale"}</button>
+              <button onClick={() => handleClaimVerdict(claim.claimId, "contradicted")} disabled={claim.verdict === "contradicted"}><XCircle size={14} />{interfaceLanguage === "zh" ? "冲突" : "conflict"}</button>
+              <button onClick={() => handleClaimVerdict(claim.claimId, "ignored")} disabled={claim.verdict === "ignored"}><XCircle size={14} />{interfaceLanguage === "zh" ? "忽略" : "ignore"}</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+  const renderReviewQueuePanel = (className = "panel large") => (
+    <section className={className}>
+      <div className="section-head">
+        <h2>{interfaceLanguage === "zh" ? "质检 / 审核工作台" : "QA / Review workspace"}</h2>
+        <select className="compact-select" value={reviewFilter} onChange={(event) => setReviewFilter(event.target.value)}>
+          <option value="open">{interfaceLanguage === "zh" ? "未处理" : "open"}</option>
+          <option value="approved">{interfaceLanguage === "zh" ? "已批准" : "approved"}</option>
+          <option value="rejected">{interfaceLanguage === "zh" ? "已拒绝" : "rejected"}</option>
+          <option value="ignored">{interfaceLanguage === "zh" ? "已忽略" : "ignored"}</option>
+          <option value="all">{interfaceLanguage === "zh" ? "全部" : "all"}</option>
+        </select>
+      </div>
+      <div className="action-list">
+        {visibleReviewItems.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无审核项。" : "No review items."}</p>}
+        {visibleReviewItems.map((item) => (
+          <div className="work-item" key={item.itemId}>
+            <span className={classNames("status-chip", item.severity)}>{item.severity}</span>
+            <strong>{runtimeText(item.title, interfaceLanguage)}</strong>
+            <em>{runtimeLabel(item.kind, interfaceLanguage)} · {runtimeLabel(item.status, interfaceLanguage)} · {runtimeLabel(item.recommendedAction, interfaceLanguage)}</em>
+            <code>{runtimeText(item.body, interfaceLanguage)}</code>
+            <div className="inline-actions">
+              <button onClick={() => item.targetPath && openPath(vaultFilePath(item.targetPath))} disabled={!item.targetPath}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "打开" : "open"}</button>
+              <button onClick={() => handleReviewStatus(item.itemId, "approved")} disabled={item.status === "approved"}><Check size={14} />{interfaceLanguage === "zh" ? "批准" : "approve"}</button>
+              <button onClick={() => handleReviewStatus(item.itemId, "rejected")} disabled={item.status === "rejected"}><XCircle size={14} />{interfaceLanguage === "zh" ? "拒绝" : "reject"}</button>
+              <button onClick={() => handleReviewStatus(item.itemId, "ignored")} disabled={item.status === "ignored"}><XCircle size={14} />{interfaceLanguage === "zh" ? "忽略" : "ignore"}</button>
+              <button onClick={() => handleFollowup(item)}><ClipboardList size={14} />{interfaceLanguage === "zh" ? "后续动作" : "follow-up"}</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+  const renderTraceabilityWarningsPanel = () => (
+    <section className="panel large traceability-primary">
+      <div className="section-head">
+        <h2>{interfaceLanguage === "zh" ? "可追踪性警告" : "Traceability warnings"}</h2>
+        <span>{traceabilityWarnings.length} {interfaceLanguage === "zh" ? "个证据锚点问题" : "evidence-anchor issues"}</span>
+      </div>
+      <div className="impact-list">
+        <TraceabilityActionCards
+          warnings={traceabilityWarnings}
+          language={interfaceLanguage}
+          onOpenClaim={(warning) => openVaultItem(warning.claimPath)}
+          onOpenSource={(warning) => openVaultItem(warning.sourcePath)}
+          onOpenArtifact={(warning) => openVaultItem(warning.artifactPath)}
+          onSelectWarning={(warning) => setDetailSelection({ kind: "warning", warning })}
+        />
+      </div>
+    </section>
+  );
+  const renderEvidencePathPanel = () => (
+    <section className="panel large evidence-path-panel">
+      <div className="section-head">
+        <h2>{interfaceLanguage === "zh" ? "证据路径" : "Evidence path"}</h2>
+        <span>{evidencePaths.length} {interfaceLanguage === "zh" ? "条论断" : "claims"}</span>
+      </div>
+      <div className="impact-list">
+        {evidencePaths.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无可追踪论断。" : "No traceable claims yet."}</p>}
+        {evidencePaths.map((item) => (
+          <div className="work-item" key={item.claimId}>
+            <span className={classNames("status-chip", item.chainStatus)}>{runtimeLabel(item.chainStatus, interfaceLanguage)}</span>
+            <strong>{runtimeText(item.claimText, interfaceLanguage)}</strong>
+            <em>{item.concept || (interfaceLanguage === "zh" ? "无概念" : "no concept")} · {item.sourceId || item.sourceUuid || (interfaceLanguage === "zh" ? "无资料" : "no source")}</em>
+            <code>{item.evidenceAnchor || (interfaceLanguage === "zh" ? "缺失锚点" : "missing anchor")} · {item.missing.map((entry) => runtimeLabel(entry, interfaceLanguage)).join(", ") || (interfaceLanguage === "zh" ? "证据链完整" : "chain complete")}</code>
+            <div className="inline-actions">
+              <button onClick={() => item.sourcePage && openPath(vaultFilePath(item.sourcePage))} disabled={!item.sourcePage}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "资料" : "source"}</button>
+              <button onClick={() => item.artifactPath && openPath(vaultFilePath(item.artifactPath))} disabled={!item.artifactPath}><FileInput size={14} />{interfaceLanguage === "zh" ? "解析产物" : "artifact"}</button>
+              <button onClick={() => item.qaReportPath && openPath(vaultFilePath(item.qaReportPath))} disabled={!item.qaReportPath}><ShieldCheck size={14} />{interfaceLanguage === "zh" ? "质检" : "QA"}</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 
   if (!vaultPath) {
     return (
@@ -2170,78 +2383,82 @@ function App() {
           </section>
         </div>
 
-        <div className={classNames("main-grid view-section", pageVisible("traceability", "reviews") && "visible")}>
-          <section className="panel large">
-            <div className="section-head">
-              <h2>{interfaceLanguage === "zh" ? "可追踪性警告" : "Traceability warnings"}</h2>
-              <span>{traceabilityWarnings.length} {interfaceLanguage === "zh" ? "个证据锚点问题" : "evidence-anchor issues"}</span>
+        {pageVisible("traceability") && (
+          <>
+            <WorkflowGuide
+              title={interfaceLanguage === "zh" ? "怎么处理可追踪性问题" : "How to use traceability"}
+              body={interfaceLanguage === "zh"
+                ? "这页只检查证据链和运行时合约。先看断裂原因，再打开论断、资料和解析产物，修复后重新运行可追踪性检查和 lint。"
+                : "This page only inspects evidence chains and runtime contracts. Review the break reason, open the claim/source/artifact, then rerun traceability checks and lint after repair."}
+              steps={interfaceLanguage === "zh" ? [
+                { title: "定位断点", body: "先看警告中的缺失锚点、资料 UUID 或解析产物。" },
+                { title: "打开证据", body: "用资料、解析产物和质检按钮核对实际文件。" },
+                { title: "修复并复检", body: "修复缺口后运行合约检查，确认 P0/P1 清零。" },
+                { title: "再进入审核", body: "证据链稳定后，再去审核页处理批准或拒绝。" },
+              ] : [
+                { title: "Find the break", body: "Start with missing anchors, source UUIDs, or artifacts." },
+                { title: "Open evidence", body: "Use source, artifact, and QA actions to inspect files." },
+                { title: "Fix and recheck", body: "Run contract lint again and clear P0/P1 issues." },
+                { title: "Review later", body: "Approve or reject only after the evidence chain is stable." },
+              ]}
+            />
+            <div className="workflow-metrics traceability-metrics">
+              <span><strong>{traceabilityWorkflowStats.warnings}</strong>{interfaceLanguage === "zh" ? "警告" : "warnings"}</span>
+              <span><strong>{traceabilityWorkflowStats.broken}</strong>{interfaceLanguage === "zh" ? "证据断点" : "broken chains"}</span>
+              <span><strong>{traceabilityWorkflowStats.contract}</strong>{interfaceLanguage === "zh" ? "P0/P1 合约" : "P0/P1 contract"}</span>
             </div>
-            <div className="impact-list">
-              <TraceabilityActionCards
-                warnings={traceabilityWarnings}
-                language={interfaceLanguage}
-                onOpenClaim={(warning) => openVaultItem(warning.claimPath)}
-                onOpenSource={(warning) => openVaultItem(warning.sourcePath)}
-                onOpenArtifact={(warning) => openVaultItem(warning.artifactPath)}
-                onSelectWarning={(warning) => setDetailSelection({ kind: "warning", warning })}
-              />
+            <div className="main-grid traceability-workspace-grid view-section visible">
+              {renderTraceabilityWarningsPanel()}
+              {renderEvidencePathPanel()}
             </div>
-          </section>
+          </>
+        )}
 
-          <section className="panel large">
-            <div className="section-head">
-              <h2>{interfaceLanguage === "zh" ? "证据路径" : "Evidence path"}</h2>
-              <span>{evidencePaths.length} {interfaceLanguage === "zh" ? "条论断" : "claims"}</span>
-            </div>
-            <div className="impact-list">
-              {evidencePaths.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无可追踪论断。" : "No traceable claims yet."}</p>}
-              {evidencePaths.map((item) => (
-                <div className="work-item" key={item.claimId}>
-                  <span className={classNames("status-chip", item.chainStatus)}>{runtimeLabel(item.chainStatus, interfaceLanguage)}</span>
-                  <strong>{runtimeText(item.claimText, interfaceLanguage)}</strong>
-                  <em>{item.concept || (interfaceLanguage === "zh" ? "无概念" : "no concept")} · {item.sourceId || item.sourceUuid || (interfaceLanguage === "zh" ? "无资料" : "no source")}</em>
-                  <code>{item.evidenceAnchor || (interfaceLanguage === "zh" ? "缺失锚点" : "missing anchor")} · {item.missing.map((entry) => runtimeLabel(entry, interfaceLanguage)).join(", ") || (interfaceLanguage === "zh" ? "证据链完整" : "chain complete")}</code>
-                  <div className="inline-actions">
-                    <button onClick={() => item.sourcePage && openPath(vaultFilePath(item.sourcePage))} disabled={!item.sourcePage}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "资料" : "source"}</button>
-                    <button onClick={() => item.artifactPath && openPath(vaultFilePath(item.artifactPath))} disabled={!item.artifactPath}><FileInput size={14} />{interfaceLanguage === "zh" ? "解析产物" : "artifact"}</button>
-                    <button onClick={() => item.qaReportPath && openPath(vaultFilePath(item.qaReportPath))} disabled={!item.qaReportPath}><ShieldCheck size={14} />{interfaceLanguage === "zh" ? "质检" : "QA"}</button>
-                  </div>
+        {pageVisible("reviews") && (
+          <>
+            <WorkflowGuide
+              title={interfaceLanguage === "zh" ? "怎么处理审核" : "How to use reviews"}
+              body={interfaceLanguage === "zh"
+                ? "这页只处理人工审核边界。先打开目标证据，确认论断是否被支持，再批准、拒绝或忽略；需要修证据链时再跳到可追踪性。"
+                : "This page only handles human review boundaries. Open the target evidence first, decide whether the claim is supported, then approve, reject, or ignore; use Traceability when the evidence chain must be repaired."}
+              steps={interfaceLanguage === "zh" ? [
+                { title: "筛选队列", body: "默认只看未处理审核，避免已完成项干扰。" },
+                { title: "打开目标", body: "先打开目标文件和关联证据，不凭摘要批准。" },
+                { title: "作出决定", body: "批准、拒绝或忽略只改变审核状态，不伪造科学结论。" },
+                { title: "生成后续", body: "复杂问题生成后续动作，再回到论断或追踪页处理。" },
+              ] : [
+                { title: "Filter queue", body: "Start with open review items only." },
+                { title: "Open target", body: "Inspect the target and evidence before any approval." },
+                { title: "Decide", body: "Approve, reject, or ignore the review status only." },
+                { title: "Follow up", body: "Create a follow-up and continue in Claims or Traceability." },
+              ]}
+            />
+            <div className="main-grid reviews-workspace-grid view-section visible">
+              {renderReviewQueuePanel("panel large review-queue-primary")}
+              <section className="panel large review-context-panel">
+                <div className="section-head">
+                  <h2>{interfaceLanguage === "zh" ? "审核上下文" : "Review context"}</h2>
+                  <ShieldCheck size={18} />
                 </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="panel large">
-            <div className="section-head">
-              <h2>{interfaceLanguage === "zh" ? "质检 / 审核工作台" : "QA / Review workspace"}</h2>
-              <select className="compact-select" value={reviewFilter} onChange={(event) => setReviewFilter(event.target.value)}>
-                <option value="open">{interfaceLanguage === "zh" ? "未处理" : "open"}</option>
-                <option value="approved">{interfaceLanguage === "zh" ? "已批准" : "approved"}</option>
-                <option value="rejected">{interfaceLanguage === "zh" ? "已拒绝" : "rejected"}</option>
-                <option value="ignored">{interfaceLanguage === "zh" ? "已忽略" : "ignored"}</option>
-                <option value="all">{interfaceLanguage === "zh" ? "全部" : "all"}</option>
-              </select>
-            </div>
-            <div className="action-list">
-              {visibleReviewItems.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无审核项。" : "No review items."}</p>}
-              {visibleReviewItems.map((item) => (
-                <div className="work-item" key={item.itemId}>
-                  <span className={classNames("status-chip", item.severity)}>{item.severity}</span>
-                  <strong>{runtimeText(item.title, interfaceLanguage)}</strong>
-                  <em>{runtimeLabel(item.kind, interfaceLanguage)} · {runtimeLabel(item.status, interfaceLanguage)} · {runtimeLabel(item.recommendedAction, interfaceLanguage)}</em>
-                  <code>{runtimeText(item.body, interfaceLanguage)}</code>
-                  <div className="inline-actions">
-                    <button onClick={() => item.targetPath && openPath(vaultFilePath(item.targetPath))} disabled={!item.targetPath}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "打开" : "open"}</button>
-                    <button onClick={() => handleReviewStatus(item.itemId, "approved")} disabled={item.status === "approved"}><Check size={14} />{interfaceLanguage === "zh" ? "批准" : "approve"}</button>
-                    <button onClick={() => handleReviewStatus(item.itemId, "rejected")} disabled={item.status === "rejected"}><XCircle size={14} />{interfaceLanguage === "zh" ? "拒绝" : "reject"}</button>
-                    <button onClick={() => handleReviewStatus(item.itemId, "ignored")} disabled={item.status === "ignored"}><XCircle size={14} />{interfaceLanguage === "zh" ? "忽略" : "ignore"}</button>
-                    <button onClick={() => handleFollowup(item)}><ClipboardList size={14} />{interfaceLanguage === "zh" ? "后续动作" : "follow-up"}</button>
-                  </div>
+                <div className="workflow-metrics compact">
+                  <span><strong>{reviewWorkflowStats.open}</strong>{interfaceLanguage === "zh" ? "未处理" : "open"}</span>
+                  <span><strong>{reviewWorkflowStats.approved}</strong>{interfaceLanguage === "zh" ? "已完成" : "done"}</span>
+                  <span><strong>{reviewWorkflowStats.rejected}</strong>{interfaceLanguage === "zh" ? "已拒绝" : "rejected"}</span>
                 </div>
-              ))}
+                <p className="workflow-hint">
+                  {interfaceLanguage === "zh"
+                    ? "当审核项涉及缺失锚点、资料 UUID 或解析产物问题时，先去可追踪性页修复，再回到这里审批。"
+                    : "When a review item involves missing anchors, source UUIDs, or artifacts, repair it in Traceability first and return here for approval."}
+                </p>
+                <div className="inline-actions">
+                  <button onClick={() => setActivePage("claims")}><ClipboardList size={14} />{interfaceLanguage === "zh" ? "查看论断" : "Claims"}</button>
+                  <button onClick={() => setActivePage("traceability")}><GitCompare size={14} />{interfaceLanguage === "zh" ? "检查证据链" : "Traceability"}</button>
+                  <button onClick={() => handleRuntime("science_review")} disabled={runtimeRunning || busy === "start:science_review"}><ShieldCheck size={14} />{copy.pageActions.scienceReview}</button>
+                </div>
+              </section>
             </div>
-          </section>
-        </div>
+          </>
+        )}
 
         <QueryWritebackComposer
             className={classNames("view-section", pageVisible("writeback") && "visible")}
@@ -2310,103 +2527,58 @@ function App() {
           resolveVaultPath={vaultFilePath}
         />
 
-        <div className={classNames("main-grid view-section", pageVisible("dashboard", "claims") && "visible")}>
-          <section className="panel large">
-            <div className="section-head">
-              <h2>{interfaceLanguage === "zh" ? "下一步行动" : "Next actions"}</h2>
-              <select className="compact-select" value={actionFilter} onChange={(event) => setActionFilter(event.target.value)}>
-                <option value="open">{interfaceLanguage === "zh" ? "未处理" : "open"}</option>
-                <option value="resolved">{interfaceLanguage === "zh" ? "已解决" : "resolved"}</option>
-                <option value="ignored">{interfaceLanguage === "zh" ? "已忽略" : "ignored"}</option>
-                <option value="all">{interfaceLanguage === "zh" ? "全部" : "all"}</option>
-              </select>
-            </div>
-            <div className="action-summary-strip">
-              <span><strong>{openActionCount}</strong>{interfaceLanguage === "zh" ? "未处理" : "open"}</span>
-              <span><strong>{criticalActionCount}</strong>{interfaceLanguage === "zh" ? "P0/P1" : "P0/P1"}</span>
-              <span><strong>{prioritizedActions.length}</strong>{interfaceLanguage === "zh" ? "当前筛选" : "filtered"}</span>
-            </div>
-            {prioritizedActions.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无待处理行动。" : "No pending actions."}</p>}
-            {focusedAction && (
-              <div className="action-focus-panel">
-                <div className="work-item action-focus-card" key={focusedAction.actionId}>
-                  <span className={classNames("status-chip", focusedAction.severity)}>{focusedAction.severity}</span>
-                  <strong>{focusedAction.title}</strong>
-                  <em>{focusedAction.body}</em>
-                  <code>{focusedAction.status} · {focusedAction.recommendedAction} · {interfaceLanguage === "zh" ? "影响对象" : "affected"} {focusedAction.affectedObjects.length} · {focusedAction.reason}</code>
-                  <div className="inline-actions">
-                    <button title={interfaceLanguage === "zh" ? "打开关联文件" : "Open linked file"} onClick={() => focusedAction.links[0] && openPath(vaultFilePath(focusedAction.links[0].path))} disabled={!focusedAction.links[0]}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "打开" : "open"}</button>
-                    <button title={interfaceLanguage === "zh" ? "标记已解决" : "Mark resolved"} onClick={() => handleActionStatus(focusedAction.actionId, "resolved")} disabled={focusedAction.status === "resolved"}><Check size={14} />{interfaceLanguage === "zh" ? "解决" : "resolve"}</button>
-                    <button title={interfaceLanguage === "zh" ? "忽略该行动" : "Ignore action"} onClick={() => handleActionStatus(focusedAction.actionId, "ignored")} disabled={focusedAction.status === "ignored"}><XCircle size={14} />{interfaceLanguage === "zh" ? "忽略" : "ignore"}</button>
-                    <button title={interfaceLanguage === "zh" ? "重新打开行动" : "Reopen action"} onClick={() => handleActionStatus(focusedAction.actionId, "open")} disabled={focusedAction.status === "open"}><RotateCcw size={14} />{interfaceLanguage === "zh" ? "重开" : "reopen"}</button>
-                  </div>
-                </div>
-                <div className="action-stepper">
-                  <button type="button" onClick={() => setActionFocusIndex((current) => Math.max(current - 1, 0))} disabled={actionFocusIndex <= 0}>
-                    <ChevronLeft size={14} />{interfaceLanguage === "zh" ? "上一条" : "Previous"}
-                  </button>
-                  <span>{Math.min(actionFocusIndex + 1, prioritizedActions.length)} / {prioritizedActions.length}</span>
-                  <button type="button" onClick={() => setActionFocusIndex((current) => Math.min(current + 1, prioritizedActions.length - 1))} disabled={actionFocusIndex >= prioritizedActions.length - 1}>
-                    {interfaceLanguage === "zh" ? "下一条" : "Next"}<ChevronRight size={14} />
-                  </button>
-                  <button type="button" onClick={() => setActionListExpanded((current) => !current)}>
-                    {actionListExpanded ? (interfaceLanguage === "zh" ? "收起队列" : "Collapse") : (interfaceLanguage === "zh" ? "展开队列" : "Show queue")}
-                  </button>
-                </div>
-                <div className={classNames("action-queue-list", actionListExpanded && "expanded")}>
-                  {actionQueuePreview.map((action, index) => {
-                    const actualIndex = actionQueueStart + index;
-                    return (
-                      <button
-                        type="button"
-                        className={classNames("action-queue-item", actualIndex === actionFocusIndex && "active")}
-                        key={action.actionId}
-                        onClick={() => setActionFocusIndex(actualIndex)}
-                      >
-                        <span className={classNames("status-chip inline", action.severity)}>{action.severity}</span>
-                        <strong>{action.title}</strong>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </section>
-
-          <section className="panel large">
-            <div className="section-head">
-              <h2>{interfaceLanguage === "zh" ? "论断台账" : "Claim Ledger"}</h2>
-              <select className="compact-select" value={claimFilter} onChange={(event) => setClaimFilter(event.target.value)}>
-                <option value="needs_review">{interfaceLanguage === "zh" ? "需审核" : "needs_review"}</option>
-                <option value="stale">{interfaceLanguage === "zh" ? "已失效" : "stale"}</option>
-                <option value="contradicted">{interfaceLanguage === "zh" ? "冲突" : "contradicted"}</option>
-                <option value="supported">{interfaceLanguage === "zh" ? "已支撑" : "supported"}</option>
-                <option value="ignored">{interfaceLanguage === "zh" ? "已忽略" : "ignored"}</option>
-                <option value="all">{interfaceLanguage === "zh" ? "全部" : "all"}</option>
-              </select>
-            </div>
-            <div className="claim-list">
-              {visibleClaims.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无匹配论断。" : "No matching claims."}</p>}
-              {visibleClaims.map((claim) => (
-                <div className="work-item" key={claim.claimId}>
-                  <span className={classNames("status-chip", claim.verdict)}>{runtimeLabel(claim.verdict, interfaceLanguage)}</span>
-                  <strong>{runtimeText(claim.claimText, interfaceLanguage)}</strong>
-                  <em>{claim.sourceId || claim.sourceUuid || claim.sourcePath || `${interfaceLanguage === "zh" ? "第" : "line "}${claim.line}${interfaceLanguage === "zh" ? "行" : ""}`}</em>
-                  <code>{claim.evidenceHash || (interfaceLanguage === "zh" ? "无证据哈希" : "no evidence hash")} · {runtimeText(claim.evidenceQuote, interfaceLanguage) || (interfaceLanguage === "zh" ? "无引文" : "no quote")}</code>
-                  <div className="inline-actions">
-                    <button onClick={() => selectClaimForDetails(claim)}><PanelRightOpen size={14} />{interfaceLanguage === "zh" ? "详情" : "details"}</button>
-                    <button onClick={() => openPath(vaultFilePath("claims/claims.jsonl"))}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "打开" : "open"}</button>
-                    <button onClick={() => handleClaimVerdict(claim.claimId, "supported")} disabled={claim.verdict === "supported"}><Check size={14} />{interfaceLanguage === "zh" ? "支持" : "support"}</button>
-                    <button onClick={() => handleClaimVerdict(claim.claimId, "needs_review")} disabled={claim.verdict === "needs_review"}><AlertTriangle size={14} />{interfaceLanguage === "zh" ? "待审" : "review"}</button>
-                    <button onClick={() => handleClaimVerdict(claim.claimId, "stale")} disabled={claim.verdict === "stale"}><RotateCcw size={14} />{interfaceLanguage === "zh" ? "失效" : "stale"}</button>
-                    <button onClick={() => handleClaimVerdict(claim.claimId, "contradicted")} disabled={claim.verdict === "contradicted"}><XCircle size={14} />{interfaceLanguage === "zh" ? "冲突" : "conflict"}</button>
-                    <button onClick={() => handleClaimVerdict(claim.claimId, "ignored")} disabled={claim.verdict === "ignored"}><XCircle size={14} />{interfaceLanguage === "zh" ? "忽略" : "ignore"}</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
+        <div className={classNames("main-grid view-section", pageVisible("dashboard") && "visible")}>
+          {renderDashboardActionPanel()}
+          {renderClaimLedgerPanel()}
         </div>
+
+        {pageVisible("claims") && (
+          <>
+            <WorkflowGuide
+              title={interfaceLanguage === "zh" ? "怎么处理论断" : "How to use claims"}
+              body={interfaceLanguage === "zh"
+                ? "这页只处理论断台账。先筛选需要审核的论断，打开详情核对证据，再标记支持、待审、失效、冲突或忽略。"
+                : "This page only handles the claim ledger. Filter claims needing review, inspect their evidence, then mark supported, review, stale, conflict, or ignored."}
+              steps={interfaceLanguage === "zh" ? [
+                { title: "筛选论断", body: "默认看需审核论断，可切换到冲突、失效或全部。" },
+                { title: "查看详情", body: "详情侧栏会显示证据路径和关联资料。" },
+                { title: "标记结论", body: "只更新论断状态，不自动批准科学审核。" },
+                { title: "进入审核", body: "需要人工审批时跳到审核队列处理。" },
+              ] : [
+                { title: "Filter claims", body: "Start with claims needing review, then inspect conflicts or stale items." },
+                { title: "Inspect details", body: "The inspector shows evidence paths and source context." },
+                { title: "Set verdict", body: "Update the claim state without auto-approving review." },
+                { title: "Move to review", body: "Use the review queue for human approval." },
+              ]}
+            />
+            <div className="main-grid claims-workspace-grid view-section visible">
+              {renderClaimLedgerPanel("panel large claim-ledger-primary")}
+              <section className="panel large claim-context-panel">
+                <div className="section-head">
+                  <h2>{interfaceLanguage === "zh" ? "论断处理" : "Claim workflow"}</h2>
+                  <ClipboardList size={18} />
+                </div>
+                <div className="workflow-metrics compact">
+                  <span><strong>{claimWorkflowStats.visible}</strong>{interfaceLanguage === "zh" ? "当前列表" : "visible"}</span>
+                  <span><strong>{claimWorkflowStats.needsReview}</strong>{interfaceLanguage === "zh" ? "需审核" : "review"}</span>
+                  <span><strong>{claimWorkflowStats.conflicted}</strong>{interfaceLanguage === "zh" ? "冲突" : "conflict"}</span>
+                  <span><strong>{claimWorkflowStats.supported}</strong>{interfaceLanguage === "zh" ? "已支撑" : "supported"}</span>
+                </div>
+                <p className="workflow-hint">
+                  {interfaceLanguage === "zh"
+                    ? "如需处理全局 P0/P1 合约或证据断点，使用下方按钮跳到对应页面。"
+                    : "Use the buttons below when global P0/P1 contract findings or evidence-chain issues need attention."}
+                </p>
+                <div className="inline-actions">
+                  <button onClick={() => setClaimFilter("needs_review")}><AlertTriangle size={14} />{interfaceLanguage === "zh" ? "只看需审核" : "Needs review"}</button>
+                  <button onClick={() => setClaimFilter("contradicted")}><XCircle size={14} />{interfaceLanguage === "zh" ? "只看冲突" : "Conflicts"}</button>
+                  <button onClick={() => setActivePage("reviews")}><ShieldCheck size={14} />{interfaceLanguage === "zh" ? "打开审核" : "Open reviews"}</button>
+                  <button onClick={() => setActivePage("traceability")}><GitCompare size={14} />{interfaceLanguage === "zh" ? "检查证据链" : "Traceability"}</button>
+                </div>
+              </section>
+            </div>
+          </>
+        )}
 
         <div className={classNames("main-grid view-section", pageVisible("concepts") && "visible")}>
           <section className="panel large">
@@ -2591,7 +2763,7 @@ function App() {
           </div>
         </section>
 
-        {selectedFile && (
+        {selectedFile && pageVisible("dashboard", "sources", "concepts", "activity") && (
           <section className="detail-bar">
             <div>
               <strong>{selectedFile.title || selectedFile.name}</strong>

@@ -603,11 +603,13 @@ textarea {
   display: grid !important;
 }
 
+.workflow-guide,
 .writeback-guide,
 .writeback-advanced-panel {
   grid-column: 1 / -1;
 }
 
+.workflow-guide,
 .writeback-guide {
   display: grid;
   grid-template-columns: minmax(240px, 0.72fr) minmax(420px, 1.28fr);
@@ -615,11 +617,13 @@ textarea {
   gap: 12px;
 }
 
+.workflow-guide h2,
 .writeback-guide h2 {
   margin: 0;
   font-size: 17px;
 }
 
+.workflow-guide p,
 .writeback-guide p,
 .workflow-hint,
 .field-group small {
@@ -629,6 +633,7 @@ textarea {
   line-height: 1.5;
 }
 
+.workflow-steps,
 .writeback-steps {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -638,6 +643,7 @@ textarea {
   list-style: none;
 }
 
+.workflow-steps li,
 .writeback-steps li {
   min-width: 0;
   border: 1px solid #d8ded9;
@@ -646,6 +652,7 @@ textarea {
   padding: 9px;
 }
 
+.workflow-steps span,
 .writeback-steps span {
   display: inline-grid;
   place-items: center;
@@ -658,17 +665,21 @@ textarea {
   font-weight: 800;
 }
 
+.workflow-steps strong,
+.workflow-steps em,
 .writeback-steps strong,
 .writeback-steps em {
   display: block;
 }
 
+.workflow-steps strong,
 .writeback-steps strong {
   margin-top: 7px;
   color: #17201d;
   font-size: 13px;
 }
 
+.workflow-steps em,
 .writeback-steps em {
   margin-top: 4px;
   color: #64706a;
@@ -739,6 +750,24 @@ textarea {
   display: grid;
   grid-template-columns: minmax(280px, 0.92fr) minmax(420px, 1.35fr);
   gap: 14px;
+}
+
+.claims-workspace-grid,
+.reviews-workspace-grid,
+.traceability-workspace-grid {
+  align-items: start;
+}
+
+.claims-workspace-grid {
+  grid-template-columns: minmax(520px, 1.45fr) minmax(300px, 0.82fr);
+}
+
+.reviews-workspace-grid {
+  grid-template-columns: minmax(520px, 1.35fr) minmax(320px, 0.85fr);
+}
+
+.traceability-workspace-grid {
+  grid-template-columns: minmax(420px, 0.92fr) minmax(520px, 1.2fr);
 }
 
 .main-grid > * {
@@ -887,6 +916,38 @@ textarea {
   font-size: 16px;
 }
 
+.workflow-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.workflow-metrics.compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 12px;
+}
+
+.workflow-metrics span {
+  min-height: 46px;
+  border: 1px solid #d8ded9;
+  border-radius: 6px;
+  background: #fbfcfa;
+  padding: 8px 10px;
+  color: #64706a;
+  font-size: 12px;
+}
+
+.workflow-metrics strong {
+  display: block;
+  color: #17201d;
+  font-size: 18px;
+  line-height: 1.1;
+}
+
+.traceability-metrics {
+  margin-top: -2px;
+}
+
 .action-focus-panel {
   display: grid;
   gap: 8px;
@@ -976,6 +1037,13 @@ textarea {
   gap: 8px;
   max-height: 270px;
   overflow: auto;
+}
+
+.claim-ledger-primary .claim-list,
+.review-queue-primary .action-list,
+.traceability-primary .impact-list,
+.evidence-path-panel .impact-list {
+  max-height: 430px;
 }
 
 .impact-list.compact {
@@ -3678,6 +3746,17 @@ textarea {
   .deepseek-home {
     grid-template-columns: 1fr;
   }
+
+  .workflow-guide,
+  .claims-workspace-grid,
+  .reviews-workspace-grid,
+  .traceability-workspace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 1500px) {
@@ -4593,6 +4672,12 @@ textarea {
 
 @media (max-width: 760px) {
   .settings-center.panel {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-steps,
+  .workflow-metrics,
+  .workflow-metrics.compact {
     grid-template-columns: 1fr;
   }
 }
