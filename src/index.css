@@ -5276,6 +5276,23 @@ button.primary:hover:not(:disabled),
   gap: 8px;
 }
 
+.model-answer-status {
+  border: 1px solid #9dc4aa;
+  border-radius: 8px;
+  background: #eef8f1;
+  color: #1f6a38;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.model-answer-status.warning {
+  border-color: #e8bd73;
+  background: #fff8e8;
+  color: #83550d;
+}
+
 .answer-workspace-panel .chat-answer-draft {
   min-height: 360px;
   max-height: 520px;

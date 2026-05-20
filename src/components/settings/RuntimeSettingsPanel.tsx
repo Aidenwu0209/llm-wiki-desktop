@@ -99,6 +99,7 @@ const settingsCopy = {
     enabled: "已启用",
     keyPresent: "密钥已检测",
     keyMissing: "未检测到密钥",
+    localEndpointReady: "本地端点可用",
     apiPlaceholder: "托管 API 提供方可用。这里保存 Base URL 和 API key 环境变量名，不保存 API key 明文。",
     apiBaseUrl: "API Base URL",
     apiKeyEnvVar: "API Key 环境变量",
@@ -162,6 +163,7 @@ const settingsCopy = {
     enabled: "Enabled",
     keyPresent: "Key detected",
     keyMissing: "Key not detected",
+    localEndpointReady: "Local endpoint ready",
     apiPlaceholder: "Hosted API providers are usable. This saves the Base URL and API key environment variable name, never the API key value.",
     apiBaseUrl: "API Base URL",
     apiKeyEnvVar: "API key environment variable",
@@ -246,6 +248,17 @@ function classNames(...items: Array<string | false | null | undefined>) {
   return items.filter(Boolean).join(" ");
 }
 
+function isLocalApiEndpoint(value?: string | null) {
+  const url = (value || "").trim().toLowerCase();
+  return url.startsWith("http://localhost")
+    || url.startsWith("http://127.0.0.1")
+    || url.startsWith("http://[::1]");
+}
+
+function apiProviderReady(config: LlmProviderConfig) {
+  return Boolean(config.apiKeyConfigured || isLocalApiEndpoint(config.apiBaseUrl));
+}
+
 function defaultProviderConfig(providerId: string): LlmProviderConfig {
   const provider = providers.find((item) => item.id === providerId);
   return {
@@ -288,7 +301,7 @@ function normalizeProviderSettings(settings: DesktopSettings) {
     }
     const savedEnabled = provider.kind === "local"
       ? Boolean(merged.enabled && merged.cliAvailable)
-      : Boolean(merged.enabled && merged.apiKeyConfigured);
+      : Boolean(merged.enabled && apiProviderReady(merged));
     normalized[provider.id] = {
       ...merged,
       enabled: provider.id === activeProviderId && savedEnabled,
@@ -411,6 +424,34 @@ export function RuntimeSettingsPanel({
 
   const runApiKeyCheck = async (providerId: string) => {
     const config = center.providers[providerId] ?? defaultProviderConfig(providerId);
+    if (isLocalApiEndpoint(config.apiBaseUrl)) {
+      const result: LlmApiKeyCheckResult = {
+        providerId,
+        envVar: config.apiKeyEnvVar || "",
+        available: true,
+        message: language === "zh"
+          ? "本地 endpoint 可无 API key 启用；如果服务要求 key，请在启动桌面端前设置环境变量。"
+          : "Local endpoint can be enabled without an API key. If the server requires one, set the environment variable before launching the desktop app.",
+      };
+      setApiChecks((current) => ({ ...current, [providerId]: result }));
+      const nextProviders = Object.fromEntries(
+        Object.entries(center.providers).map(([id, value]) => [
+          id,
+          {
+            ...value,
+            enabled: id === providerId,
+            ...(id === providerId
+              ? {
+                  apiKeyConfigured: true,
+                  apiKeyCheckedAt: new Date().toISOString(),
+                }
+              : {}),
+          },
+        ]),
+      );
+      updateCenter({ activeProviderId: providerId, providers: nextProviders });
+      return;
+    }
     setCheckingApi(providerId);
     try {
       const result = await checkLlmApiKey(providerId, config.apiKeyEnvVar || "");
@@ -906,7 +947,8 @@ export function RuntimeSettingsPanel({
                 const apiCheck = apiChecks[provider.id];
                 const isLocal = provider.kind === "local";
                 const persistedCliAvailable = Boolean(config.cliAvailable);
-                const canEnable = isLocal ? Boolean(cliCheck?.available || persistedCliAvailable) : Boolean(apiCheck?.available || config.apiKeyConfigured);
+                const localApiReady = isLocalApiEndpoint(config.apiBaseUrl);
+                const canEnable = isLocal ? Boolean(cliCheck?.available || persistedCliAvailable) : Boolean(apiCheck?.available || apiProviderReady(config));
                 const status = isLocal
                   ? checkingCli === provider.id
                     ? text.checking
@@ -916,10 +958,10 @@ export function RuntimeSettingsPanel({
                   : checkingApi === provider.id
                     ? text.checking
                     : apiCheck
-                      ? apiCheck.available ? text.keyPresent : text.keyMissing
+                      ? apiCheck.available ? (localApiReady ? text.localEndpointReady : text.keyPresent) : text.keyMissing
                       : config.enabled
                         ? text.enabled
-                        : config.apiKeyConfigured ? text.keyPresent : text.configurable;
+                        : apiProviderReady(config) ? (localApiReady ? text.localEndpointReady : text.keyPresent) : text.configurable;
                 return (
                   <article key={provider.id} className={classNames("provider-card", config.enabled && "enabled", config.expanded && "expanded")}>
                     <div className="provider-row">
@@ -1021,7 +1063,7 @@ export function RuntimeSettingsPanel({
                               <button
                                 type="button"
                                 onClick={() => runApiKeyCheck(provider.id)}
-                                disabled={checkingApi === provider.id || !config.apiKeyEnvVar?.trim()}
+                                disabled={checkingApi === provider.id || (!config.apiKeyEnvVar?.trim() && !localApiReady)}
                               >
                                 <RefreshCw size={14} />
                                 {text.checkKeyAndEnable}

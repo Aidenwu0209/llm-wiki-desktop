@@ -9,6 +9,8 @@ import type {
   ImportResult,
   IngestPipelineResult,
   LlmApiKeyCheckResult,
+  LlmAnswerRequest,
+  LlmAnswerResult,
   LlmCliCheckResult,
   IngestPlan,
   QueryWritebackDraft,
@@ -99,6 +101,10 @@ export function checkLocalLlmCli(command: "codex" | "claude"): Promise<LlmCliChe
 
 export function checkLlmApiKey(providerId: string, apiKeyEnvVar: string): Promise<LlmApiKeyCheckResult> {
   return invoke("check_llm_api_key", { providerId, apiKeyEnvVar });
+}
+
+export function generateLlmAnswer(vaultPath: string, request: LlmAnswerRequest): Promise<LlmAnswerResult> {
+  return invoke("generate_llm_answer", { vaultPath, request });
 }
 
 export function planIngest(vaultPath: string): Promise<IngestPlan> {

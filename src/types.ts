@@ -244,6 +244,43 @@ export type LlmProviderCenterSettings = {
   providers: Record<string, LlmProviderConfig>;
 };
 
+export type LlmAnswerEvidenceRef = {
+  id: string;
+  type: string;
+  title: string;
+  path: string;
+  snippet: string;
+  evidence?: string | null;
+  status?: string | null;
+  severity?: string | null;
+  relations: string[];
+};
+
+export type LlmAnswerRequest = {
+  providerId: string;
+  providerName: string;
+  apiProtocol: string;
+  apiBaseUrl: string;
+  apiKeyEnvVar: string;
+  model: string;
+  contextWindow: number;
+  reasoningMode: string;
+  language: "zh" | "en" | string;
+  question: string;
+  targetPath: string;
+  evidence: LlmAnswerEvidenceRef[];
+};
+
+export type LlmAnswerResult = {
+  providerId: string;
+  providerName: string;
+  model: string;
+  protocol: string;
+  generatedAt: string;
+  answer: string;
+  evidenceCount: number;
+};
+
 export type LlmCliCheckResult = {
   command: string;
   available: boolean;

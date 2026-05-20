@@ -359,6 +359,55 @@ struct LlmApiKeyCheckResult {
     message: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LlmAnswerEvidenceRef {
+    id: String,
+    #[serde(rename = "type")]
+    evidence_type: String,
+    title: String,
+    path: String,
+    snippet: String,
+    #[serde(default)]
+    evidence: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    severity: Option<String>,
+    #[serde(default)]
+    relations: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LlmAnswerRequest {
+    provider_id: String,
+    provider_name: String,
+    api_protocol: String,
+    api_base_url: String,
+    api_key_env_var: String,
+    model: String,
+    context_window: usize,
+    reasoning_mode: String,
+    language: String,
+    question: String,
+    target_path: String,
+    #[serde(default)]
+    evidence: Vec<LlmAnswerEvidenceRef>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LlmAnswerResult {
+    provider_id: String,
+    provider_name: String,
+    model: String,
+    protocol: String,
+    generated_at: String,
+    answer: String,
+    evidence_count: usize,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct IngestPlanSummary {
@@ -1072,8 +1121,7 @@ fn workspace_root_for_vault(vault: &Path) -> PathBuf {
 }
 
 fn app_state_path_for_workspace(root: &Path) -> PathBuf {
-    root
-        .join(".cache")
+    root.join(".cache")
         .join("llm-wiki-desktop")
         .join("desktop-state.json")
 }
@@ -1123,7 +1171,10 @@ fn save_app_state_to_workspace(root: &Path, state: &DesktopAppState) -> Result<(
     write_text(&path, &(rendered + "\n"))
 }
 
-fn mirror_app_state_to_launch_scope(state: &DesktopAppState, workspace: &Path) -> Result<(), String> {
+fn mirror_app_state_to_launch_scope(
+    state: &DesktopAppState,
+    workspace: &Path,
+) -> Result<(), String> {
     if cfg!(test) {
         return Ok(());
     }
@@ -4924,6 +4975,374 @@ fn check_llm_api_key(
     })
 }
 
+fn sanitize_optional_env_var_name(value: &str) -> Result<Option<String>, String> {
+    let name = value.trim();
+    if name.is_empty() {
+        return Ok(None);
+    }
+    sanitize_env_var_name(name).map(Some)
+}
+
+fn is_local_http_endpoint(value: &str) -> bool {
+    let lower = value.trim().to_ascii_lowercase();
+    lower.starts_with("http://localhost")
+        || lower.starts_with("http://127.0.0.1")
+        || lower.starts_with("http://[::1]")
+}
+
+fn validate_llm_base_url(value: &str) -> Result<String, String> {
+    let base = value.trim().trim_end_matches('/').to_string();
+    if base.is_empty() {
+        return Err("API Base URL is required for model calls".to_string());
+    }
+    if base.starts_with("https://") || is_local_http_endpoint(&base) {
+        return Ok(base);
+    }
+    Err("Only HTTPS endpoints or localhost HTTP endpoints are allowed for model calls".to_string())
+}
+
+fn openai_chat_completions_url(base: &str) -> String {
+    if base.to_ascii_lowercase().ends_with("/chat/completions") {
+        base.to_string()
+    } else {
+        format!("{base}/chat/completions")
+    }
+}
+
+fn anthropic_messages_url(base: &str) -> String {
+    let lower = base.to_ascii_lowercase();
+    if lower.ends_with("/v1/messages") || lower.ends_with("/messages") {
+        base.to_string()
+    } else if lower.ends_with("/v1") || lower.ends_with("/v2") || lower.ends_with("/v3") {
+        format!("{base}/messages")
+    } else {
+        format!("{base}/v1/messages")
+    }
+}
+
+fn anthropic_uses_bearer_auth(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    lower.starts_with("https://api.minimax.io/anthropic")
+        || lower.starts_with("https://api.minimaxi.com/anthropic")
+        || lower.starts_with("https://coding.dashscope.aliyuncs.com/apps/anthropic")
+}
+
+fn percent_encode_path_segment(value: &str) -> String {
+    let mut out = String::new();
+    for byte in value.as_bytes() {
+        let ch = *byte as char;
+        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '~') {
+            out.push(ch);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+fn read_llm_api_key(env_var: Option<&str>) -> Result<Option<String>, String> {
+    let Some(env_var) = env_var else {
+        return Ok(None);
+    };
+    let value = env::var(env_var)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    Ok(value)
+}
+
+fn short_error_body(value: &str) -> String {
+    let text = value.replace('\n', " ").trim().to_string();
+    if text.len() <= 600 {
+        text
+    } else {
+        format!("{}...", &text[..600])
+    }
+}
+
+fn build_llm_answer_prompts(request: &LlmAnswerRequest) -> (String, String) {
+    let is_zh = request.language == "zh";
+    let system = if is_zh {
+        "你是 LLM Wiki 的证据回答生成器。只能基于用户提供的知识库证据回答；必须区分证据、推断、假设和预测；不能声称已经写回或批准；不能输出隐藏推理过程。"
+    } else {
+        "You are the evidence answer composer for LLM Wiki. Answer only from the supplied vault evidence; distinguish evidence, inference, hypothesis, and forecast; do not claim that anything was written back or approved; do not expose hidden reasoning."
+    };
+    let evidence = if request.evidence.is_empty() {
+        if is_zh {
+            "未提供已加载证据。".to_string()
+        } else {
+            "No loaded evidence was supplied.".to_string()
+        }
+    } else {
+        request
+            .evidence
+            .iter()
+            .take(12)
+            .enumerate()
+            .map(|(index, item)| {
+                let status = item
+                    .status
+                    .as_deref()
+                    .or(item.severity.as_deref())
+                    .unwrap_or("loaded");
+                let evidence = item.evidence.as_deref().unwrap_or("");
+                let relations = if item.relations.is_empty() {
+                    "".to_string()
+                } else {
+                    format!("\n  relations: {}", item.relations.join(" | "))
+                };
+                format!(
+                    "E{} [{}] {} ({})\n  id: {}\n  status: {}\n  snippet: {}\n  evidence: {}{}",
+                    index + 1,
+                    item.evidence_type,
+                    item.title,
+                    item.path,
+                    item.id,
+                    status,
+                    item.snippet,
+                    evidence,
+                    relations
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    };
+    let user = if is_zh {
+        format!(
+            "问题：{}\n\n写回目标：{}\n\n可用证据：\n{}\n\n请用简体中文输出，结构必须包含：\n1. 证据\n2. 推断\n3. 假设\n4. 预测\n5. 写回建议\n\n要求：每条确定性结论必须引用 E 编号；证据不足时直接说明不足；预测必须写成可能性，不要写成事实。",
+            request.question.trim(),
+            request.target_path.trim(),
+            evidence
+        )
+    } else {
+        format!(
+            "Question: {}\n\nWriteback target: {}\n\nAvailable evidence:\n{}\n\nAnswer in English with these sections:\n1. Evidence\n2. Inference\n3. Hypothesis\n4. Forecast\n5. Writeback suggestion\n\nEvery deterministic conclusion must cite E references. If evidence is insufficient, say so. Forecasts must be phrased as possibilities, not facts.",
+            request.question.trim(),
+            request.target_path.trim(),
+            evidence
+        )
+    };
+    let user = if is_zh {
+        format!(
+            "模型配置：上下文窗口 {} 令牌；推理强度 {}。\n\n{}",
+            request.context_window, request.reasoning_mode, user
+        )
+    } else {
+        format!(
+            "Model config: context window {} tokens; reasoning mode {}.\n\n{}",
+            request.context_window, request.reasoning_mode, user
+        )
+    };
+    (system.to_string(), user)
+}
+
+fn parse_openai_answer(value: &serde_json::Value) -> Result<String, String> {
+    if let Some(error) = value.get("error") {
+        return Err(format!(
+            "provider error: {}",
+            short_error_body(&error.to_string())
+        ));
+    }
+    let message = value
+        .get("choices")
+        .and_then(|choices| choices.get(0))
+        .and_then(|choice| choice.get("message"))
+        .ok_or_else(|| "provider response did not include choices[0].message".to_string())?;
+    if let Some(content) = message.get("content").and_then(|content| content.as_str()) {
+        let trimmed = content.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+    if let Some(parts) = message
+        .get("content")
+        .and_then(|content| content.as_array())
+    {
+        let text = parts
+            .iter()
+            .filter_map(|part| part.get("text").and_then(|text| text.as_str()))
+            .collect::<Vec<_>>()
+            .join("");
+        if !text.trim().is_empty() {
+            return Ok(text.trim().to_string());
+        }
+    }
+    Err("provider returned an empty assistant message".to_string())
+}
+
+fn parse_anthropic_answer(value: &serde_json::Value) -> Result<String, String> {
+    if let Some(error) = value.get("error") {
+        return Err(format!(
+            "provider error: {}",
+            short_error_body(&error.to_string())
+        ));
+    }
+    let text = value
+        .get("content")
+        .and_then(|content| content.as_array())
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|part| part.get("text").and_then(|text| text.as_str()))
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .unwrap_or_default();
+    if text.trim().is_empty() {
+        Err("provider returned no Anthropic content text".to_string())
+    } else {
+        Ok(text.trim().to_string())
+    }
+}
+
+fn parse_gemini_answer(value: &serde_json::Value) -> Result<String, String> {
+    if let Some(error) = value.get("error") {
+        return Err(format!(
+            "provider error: {}",
+            short_error_body(&error.to_string())
+        ));
+    }
+    let parts = value
+        .get("candidates")
+        .and_then(|candidates| candidates.get(0))
+        .and_then(|candidate| candidate.get("content"))
+        .and_then(|content| content.get("parts"))
+        .and_then(|parts| parts.as_array())
+        .ok_or_else(|| {
+            "provider response did not include candidates[0].content.parts".to_string()
+        })?;
+    let text = parts
+        .iter()
+        .filter_map(|part| part.get("text").and_then(|text| text.as_str()))
+        .collect::<Vec<_>>()
+        .join("");
+    if text.trim().is_empty() {
+        Err("provider returned no Gemini text parts".to_string())
+    } else {
+        Ok(text.trim().to_string())
+    }
+}
+
+#[tauri::command]
+async fn generate_llm_answer(
+    vault_path: String,
+    request: LlmAnswerRequest,
+) -> Result<LlmAnswerResult, String> {
+    let vault = PathBuf::from(vault_path);
+    require_existing_dir(&vault, "vault")?;
+    let protocol = request.api_protocol.trim().to_ascii_lowercase();
+    let base_url = validate_llm_base_url(&request.api_base_url)?;
+    let env_var = sanitize_optional_env_var_name(&request.api_key_env_var)?;
+    let api_key = read_llm_api_key(env_var.as_deref())?;
+    if api_key.is_none() && !is_local_http_endpoint(&base_url) {
+        let label = env_var.unwrap_or_else(|| "API key environment variable".to_string());
+        return Err(format!("{label} is not visible to this desktop process"));
+    }
+    let model = request.model.trim().to_string();
+    if model.is_empty() {
+        return Err("model is required for provider answer generation".to_string());
+    }
+    let (system_prompt, user_prompt) = build_llm_answer_prompts(&request);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|e| format!("failed to create HTTP client: {e}"))?;
+
+    let (url, body, parser_kind) = if protocol == "anthropic-compatible"
+        || (protocol == "native" && request.provider_id == "anthropic")
+    {
+        (
+            anthropic_messages_url(&base_url),
+            serde_json::json!({
+                "model": model.as_str(),
+                "system": system_prompt,
+                "messages": [{ "role": "user", "content": user_prompt }],
+                "max_tokens": 1800,
+                "stream": false
+            }),
+            "anthropic",
+        )
+    } else if protocol == "native" && request.provider_id == "google" {
+        (
+            format!(
+                "{}/models/{}:generateContent",
+                base_url,
+                percent_encode_path_segment(&model)
+            ),
+            serde_json::json!({
+                "systemInstruction": { "parts": [{ "text": system_prompt }] },
+                "contents": [{ "role": "user", "parts": [{ "text": user_prompt }] }],
+                "generationConfig": { "maxOutputTokens": 1800 }
+            }),
+            "gemini",
+        )
+    } else {
+        (
+            openai_chat_completions_url(&base_url),
+            serde_json::json!({
+                "model": model.as_str(),
+                "messages": [
+                    { "role": "system", "content": system_prompt },
+                    { "role": "user", "content": user_prompt }
+                ],
+                "stream": false
+            }),
+            "openai",
+        )
+    };
+
+    let mut builder = client.post(&url).header("Content-Type", "application/json");
+    if let Some(token) = api_key.as_deref() {
+        if parser_kind == "gemini" {
+            builder = builder.header("x-goog-api-key", token);
+        } else if parser_kind == "anthropic" && !anthropic_uses_bearer_auth(&url) {
+            builder = builder
+                .header("x-api-key", token)
+                .header("anthropic-version", "2023-06-01");
+        } else {
+            builder = builder.header("Authorization", format!("Bearer {token}"));
+        }
+    }
+    if is_local_http_endpoint(&base_url) {
+        builder = builder.header("Origin", "http://localhost");
+    }
+
+    let response = builder
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("model request failed: {e}"))?;
+    let status = response.status();
+    let text = response
+        .text()
+        .await
+        .map_err(|e| format!("failed to read model response: {e}"))?;
+    if !status.is_success() {
+        return Err(format!(
+            "model request returned HTTP {}: {}",
+            status.as_u16(),
+            short_error_body(&text)
+        ));
+    }
+    let value: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("provider returned non-JSON response: {e}"))?;
+    let answer = match parser_kind {
+        "anthropic" => parse_anthropic_answer(&value)?,
+        "gemini" => parse_gemini_answer(&value)?,
+        _ => parse_openai_answer(&value)?,
+    };
+
+    Ok(LlmAnswerResult {
+        provider_id: request.provider_id,
+        provider_name: request.provider_name,
+        model,
+        protocol,
+        generated_at: Local::now().to_rfc3339(),
+        answer,
+        evidence_count: request.evidence.len(),
+    })
+}
+
 fn qa_report_for_source(
     vault: &Path,
     source_id: Option<&str>,
@@ -7343,6 +7762,7 @@ fn start_ingest_pipeline_job(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::TcpListener;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn test_vault(name: &str) -> PathBuf {
@@ -7357,6 +7777,117 @@ mod tests {
         fs::create_dir_all(vault.join("raw").join("inbox")).expect("create raw inbox");
         fs::create_dir_all(vault.join("_state")).expect("create state dir");
         vault
+    }
+
+    #[test]
+    fn llm_provider_urls_match_chat_endpoints() {
+        assert_eq!(
+            openai_chat_completions_url("https://api.deepseek.com/v1"),
+            "https://api.deepseek.com/v1/chat/completions"
+        );
+        assert_eq!(
+            openai_chat_completions_url("https://api.openai.com/v1/chat/completions"),
+            "https://api.openai.com/v1/chat/completions"
+        );
+        assert_eq!(
+            anthropic_messages_url("https://api.anthropic.com/v1"),
+            "https://api.anthropic.com/v1/messages"
+        );
+        assert_eq!(
+            anthropic_messages_url("https://api.minimax.io/anthropic"),
+            "https://api.minimax.io/anthropic/v1/messages"
+        );
+    }
+
+    #[test]
+    fn llm_provider_rejects_remote_plain_http() {
+        assert!(validate_llm_base_url("http://api.example.com/v1").is_err());
+        assert!(validate_llm_base_url("http://localhost:11434/v1").is_ok());
+        assert!(validate_llm_base_url("https://api.example.com/v1").is_ok());
+    }
+
+    #[test]
+    fn llm_answer_prompt_keeps_evidence_and_writeback_boundary() {
+        let request = LlmAnswerRequest {
+            provider_id: "deepseek".to_string(),
+            provider_name: "DeepSeek".to_string(),
+            api_protocol: "openai-compatible".to_string(),
+            api_base_url: "https://api.deepseek.com/v1".to_string(),
+            api_key_env_var: "DEEPSEEK_API_KEY".to_string(),
+            model: "deepseek-chat".to_string(),
+            context_window: 64_000,
+            reasoning_mode: "balanced".to_string(),
+            language: "zh".to_string(),
+            question: "DeepSeek 的研发思路是什么？".to_string(),
+            target_path: "reviews/query-writeback/deepseek-research-insights.md".to_string(),
+            evidence: vec![LlmAnswerEvidenceRef {
+                id: "claim:1".to_string(),
+                evidence_type: "claim".to_string(),
+                title: "claim-1".to_string(),
+                path: "claims/claims.jsonl".to_string(),
+                snippet: "reported claim".to_string(),
+                evidence: Some("source quote".to_string()),
+                status: Some("supported".to_string()),
+                severity: None,
+                relations: vec!["claim: claim-1".to_string(), "source: LLM-0001".to_string()],
+            }],
+        };
+        let (system, user) = build_llm_answer_prompts(&request);
+        assert!(system.contains("不能声称已经写回或批准"));
+        assert!(user.contains("E1 [claim] claim-1"));
+        assert!(user.contains("每条确定性结论必须引用 E 编号"));
+    }
+
+    #[test]
+    fn llm_answer_calls_local_openai_compatible_endpoint_without_key() {
+        let vault = test_vault("local-llm-answer");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind local mock server");
+        let addr = listener.local_addr().expect("local addr");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut buffer = [0_u8; 4096];
+            let _ = stream.read(&mut buffer).expect("read request");
+            let body = r#"{"choices":[{"message":{"content":"Local model answer citing E1."}}]}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write response");
+        });
+        let request = LlmAnswerRequest {
+            provider_id: "ollama-local".to_string(),
+            provider_name: "Ollama Local".to_string(),
+            api_protocol: "openai-compatible".to_string(),
+            api_base_url: format!("http://{addr}/v1"),
+            api_key_env_var: "".to_string(),
+            model: "qwen3".to_string(),
+            context_window: 32_768,
+            reasoning_mode: "balanced".to_string(),
+            language: "en".to_string(),
+            question: "What does the evidence say?".to_string(),
+            target_path: "reviews/query-writeback/research-insight.md".to_string(),
+            evidence: vec![LlmAnswerEvidenceRef {
+                id: "source:1".to_string(),
+                evidence_type: "source".to_string(),
+                title: "Source 1".to_string(),
+                path: "sources/LLM-0001.md".to_string(),
+                snippet: "snippet".to_string(),
+                evidence: Some("quote".to_string()),
+                status: Some("loaded".to_string()),
+                severity: None,
+                relations: vec!["source: LLM-0001".to_string()],
+            }],
+        };
+        let result =
+            tauri::async_runtime::block_on(generate_llm_answer(to_display(&vault), request))
+                .expect("generate answer");
+        server.join().expect("server join");
+        assert_eq!(result.answer, "Local model answer citing E1.");
+        assert_eq!(result.provider_id, "ollama-local");
+        let _ = fs::remove_dir_all(vault);
     }
 
     #[test]
@@ -7881,7 +8412,10 @@ mod tests {
         create_minimal_vault(&vault).expect("create minimal vault");
 
         let state = save_last_selected_vault(to_display(&vault)).expect("save selected vault");
-        assert_eq!(state.last_selected_vault.as_deref(), Some(to_display(&vault).as_str()));
+        assert_eq!(
+            state.last_selected_vault.as_deref(),
+            Some(to_display(&vault).as_str())
+        );
         assert!(workspace
             .join(".cache")
             .join("llm-wiki-desktop")
@@ -8802,6 +9336,7 @@ pub fn run() {
             save_desktop_settings,
             check_local_llm_cli,
             check_llm_api_key,
+            generate_llm_answer,
             plan_ingest,
             run_ingest_lint,
             set_dashboard_action_status,
