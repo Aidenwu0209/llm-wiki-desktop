@@ -266,10 +266,10 @@ export function QueryWritebackComposer({
                     key={`${item.claimId}-${index}`}
                     onClick={() => onOpenPath(resolveVaultPath(item.sourcePath || item.claimPath))}
                   >
-                    <span className="status-chip proposed">{item.conclusionType}</span>
+                    <span className={classNames("status-chip", item.freshnessStatus === "blocked" ? "rejected" : "proposed")}>{item.conclusionType}</span>
                     <strong>{item.claimText || item.claimId}</strong>
                     <em>{item.sourceId || item.sourcePath || text.sourceUnknown} · {item.verdict}/{item.status} · {item.confidence}</em>
-                    <code>{item.quote || item.evidenceHash || text.quoteMissing}{item.concepts.length ? ` · ${item.concepts.join(", ")}` : ""}</code>
+                    <code>{item.blockedReason || item.quote || item.evidenceHash || text.quoteMissing}{item.concepts.length ? ` · ${item.concepts.join(", ")}` : ""}</code>
                   </button>
                 ))}
               </div>

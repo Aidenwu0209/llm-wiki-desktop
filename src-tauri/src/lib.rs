@@ -831,6 +831,8 @@ struct QueryEvidence {
     concepts: Vec<String>,
     conclusion_type: String,
     confidence: String,
+    freshness_status: String,
+    blocked_reason: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -2341,7 +2343,10 @@ fn claim_item_from_value(
     }
 }
 
-fn claim_ledger_items(vault: &Path) -> Vec<ClaimLedgerItem> {
+fn claim_ledger_items_with_fallback(
+    vault: &Path,
+    fallback_text_hash: bool,
+) -> Vec<ClaimLedgerItem> {
     let claims_path = vault.join("claims").join("claims.jsonl");
     read_text(&claims_path)
         .lines()
@@ -2353,9 +2358,13 @@ fn claim_ledger_items(vault: &Path) -> Vec<ClaimLedgerItem> {
             }
             serde_json::from_str::<serde_json::Value>(line)
                 .ok()
-                .map(|value| claim_item_from_value(&value, index + 1, true))
+                .map(|value| claim_item_from_value(&value, index + 1, fallback_text_hash))
         })
         .collect()
+}
+
+fn claim_ledger_items(vault: &Path) -> Vec<ClaimLedgerItem> {
+    claim_ledger_items_with_fallback(vault, true)
 }
 
 fn set_json_string(value: &mut serde_json::Value, key: &str, next: &str) {
@@ -6772,8 +6781,93 @@ fn load_writeback_proposal(vault: &Path, proposal_id: &str) -> Result<WritebackP
         .map_err(|e| format!("failed to parse {}: {e}", path.display()))
 }
 
+struct QueryEvidenceGate {
+    freshness_status: String,
+    blocked_reason: Option<String>,
+}
+
+fn gate_query_evidence(
+    claim: &ClaimLedgerItem,
+    sources: &[ReadingSourceRecord],
+    artifacts: &[ReadingArtifactRecord],
+) -> QueryEvidenceGate {
+    let mut reasons = Vec::new();
+    let verdict = claim.verdict.to_ascii_lowercase();
+    let status = claim.status.to_ascii_lowercase();
+    if matches!(verdict.as_str(), "stale" | "contradicted")
+        || matches!(status.as_str(), "stale" | "contradicted")
+    {
+        reasons.push(format!(
+            "claim verdict/status is {}/{}",
+            claim.verdict, claim.status
+        ));
+    }
+    if claim.evidence_quote.is_none() && claim.evidence_hash.is_none() {
+        reasons.push("missing evidence quote/hash anchor".to_string());
+    }
+    let matched_sources = sources
+        .iter()
+        .filter(|source| source_record_matches_claim(source, claim))
+        .collect::<Vec<_>>();
+    if matched_sources.is_empty() {
+        if let Some(uuid) = &claim.source_uuid {
+            reasons.push(format!("unknown source_uuid {uuid}"));
+        } else if claim.source_id.is_some() || claim.source_path.is_some() {
+            reasons.push("source registry entry is missing".to_string());
+        } else {
+            reasons.push("missing source identity".to_string());
+        }
+    }
+    for source in matched_sources {
+        if matches!(source.status.as_str(), "stale" | "blocked" | "failed") {
+            reasons.push(format!(
+                "source {} status is {}",
+                source
+                    .source_id
+                    .as_deref()
+                    .unwrap_or(source.source_uuid.as_str()),
+                source.status
+            ));
+        }
+        if let Some(artifact) = reading_artifact_for_source(source, artifacts) {
+            if artifact.status == "stale" {
+                reasons.push(format!("artifact {} is stale", artifact.artifact_path));
+            }
+            if artifact.contract_valid == Some(false) {
+                reasons.push(format!(
+                    "artifact {} hash does not match manifest",
+                    artifact.artifact_path
+                ));
+            }
+        } else if source.artifact_path.is_some() {
+            reasons.push("source artifact contract row is missing".to_string());
+        }
+    }
+    reasons.sort();
+    reasons.dedup();
+
+    if reasons.is_empty() {
+        let freshness_status = if claim.needs_review || verdict == "needs_review" {
+            "needs_review"
+        } else {
+            "fresh"
+        };
+        QueryEvidenceGate {
+            freshness_status: freshness_status.to_string(),
+            blocked_reason: None,
+        }
+    } else {
+        QueryEvidenceGate {
+            freshness_status: "blocked".to_string(),
+            blocked_reason: Some(reasons.join("; ")),
+        }
+    }
+}
+
 fn query_evidence_items(vault: &Path) -> Vec<QueryEvidence> {
-    let mut claims = claim_ledger_items(vault)
+    let sources = reading_source_records(vault);
+    let artifacts = reading_artifact_records(vault);
+    let mut claims = claim_ledger_items_with_fallback(vault, false)
         .into_iter()
         .filter(|claim| {
             claim.evidence_quote.is_some()
@@ -6795,14 +6889,20 @@ fn query_evidence_items(vault: &Path) -> Vec<QueryEvidence> {
         .into_iter()
         .take(16)
         .map(|claim| {
-            let conclusion_type = if matches!(claim.verdict.as_str(), "supported") {
+            let gate = gate_query_evidence(&claim, &sources, &artifacts);
+            let blocked = gate.freshness_status == "blocked";
+            let conclusion_type = if blocked {
+                "blocked evidence - risk only"
+            } else if matches!(claim.verdict.as_str(), "supported") {
                 "evidence-backed conclusion"
             } else if matches!(claim.verdict.as_str(), "contradicted" | "stale") {
                 "conflict or stale evidence"
             } else {
                 "inference needs review"
             };
-            let confidence = if matches!(claim.verdict.as_str(), "supported")
+            let confidence = if blocked {
+                "blocked until evidence is repaired"
+            } else if matches!(claim.verdict.as_str(), "supported")
                 && (claim.evidence_quote.is_some() || claim.evidence_hash.is_some())
             {
                 "medium"
@@ -6824,6 +6924,8 @@ fn query_evidence_items(vault: &Path) -> Vec<QueryEvidence> {
                 concepts: claim.concepts,
                 conclusion_type: conclusion_type.to_string(),
                 confidence: confidence.to_string(),
+                freshness_status: gate.freshness_status,
+                blocked_reason: gate.blocked_reason,
             }
         })
         .collect()
@@ -6863,39 +6965,129 @@ fn render_query_writeback_content(
         .collect::<Vec<_>>();
     let supported_count = evidence
         .iter()
-        .filter(|item| item.conclusion_type == "evidence-backed conclusion")
+        .filter(|item| {
+            item.conclusion_type == "evidence-backed conclusion" && item.freshness_status == "fresh"
+        })
         .count();
+    let blocked_evidence = evidence
+        .iter()
+        .filter(|item| item.freshness_status == "blocked")
+        .collect::<Vec<_>>();
     let review_evidence_count = evidence.len().saturating_sub(supported_count);
 
     let mut evidence_map = String::new();
     if evidence.is_empty() {
         evidence_map.push_str("- No claim evidence with quote/hash was found in this vault.\n");
     } else {
-        for item in evidence {
-            evidence_map.push_str(&format!(
-                "- `{}` ({}) -> {} | claim: {}{}{}{}\n",
+        evidence_map.push_str("### Usable evidence-backed claims\n\n");
+        let usable = evidence
+            .iter()
+            .filter(|item| {
+                item.conclusion_type == "evidence-backed conclusion"
+                    && item.freshness_status == "fresh"
+            })
+            .collect::<Vec<_>>();
+        if usable.is_empty() {
+            evidence_map
+                .push_str("- No fresh supported evidence can be used as a firm conclusion.\n");
+        } else {
+            for item in usable {
+                evidence_map.push_str(&format!(
+                    "- `{}` ({}) -> {} | claim: {}{}{}{}\n",
+                    item.claim_id,
+                    item.conclusion_type,
+                    item.quote
+                        .as_deref()
+                        .unwrap_or("evidence hash present, quote missing"),
+                    item.claim_text,
+                    item.source_path
+                        .as_ref()
+                        .map(|path| format!(" | source: `{path}`"))
+                        .unwrap_or_default(),
+                    item.evidence_hash
+                        .as_ref()
+                        .map(|hash| format!(
+                            " | hash: `{}`",
+                            hash.chars().take(16).collect::<String>()
+                        ))
+                        .unwrap_or_default(),
+                    if item.concepts.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" | concepts: {}", item.concepts.join(", "))
+                    }
+                ));
+            }
+        }
+        let needs_review = evidence
+            .iter()
+            .filter(|item| {
+                item.freshness_status != "blocked"
+                    && item.conclusion_type != "evidence-backed conclusion"
+            })
+            .collect::<Vec<_>>();
+        if !needs_review.is_empty() {
+            evidence_map.push_str("\n### Review-required evidence\n\n");
+            for item in needs_review {
+                evidence_map.push_str(&format!(
+                    "- `{}` ({}) -> claim: {} | status: {}/{}\n",
+                    item.claim_id, item.conclusion_type, item.claim_text, item.verdict, item.status
+                ));
+            }
+        }
+        evidence_map.push_str("\n### Blocked evidence / risks\n\n");
+        if blocked_evidence.is_empty() {
+            evidence_map.push_str("- No stale, contradicted, unknown-source, missing-anchor, or artifact-mismatch evidence was selected.\n");
+        } else {
+            for item in &blocked_evidence {
+                evidence_map.push_str(&format!(
+                    "- `{}` (blocked evidence - risk only) -> claim: {} | reason: {}{}{}\n",
+                    item.claim_id,
+                    item.claim_text,
+                    item.blocked_reason
+                        .as_deref()
+                        .unwrap_or("blocked evidence requires human confirmation"),
+                    item.source_path
+                        .as_ref()
+                        .map(|path| format!(" | source: `{path}`"))
+                        .unwrap_or_default(),
+                    if item.concepts.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" | concepts: {}", item.concepts.join(", "))
+                    }
+                ));
+            }
+        }
+    }
+
+    let mut blocked_evidence_summary = String::new();
+    if blocked_evidence.is_empty() {
+        blocked_evidence_summary.push_str("- No blocked evidence selected for this proposal.\n");
+    } else {
+        for item in &blocked_evidence {
+            blocked_evidence_summary.push_str(&format!(
+                "- `{}` must remain risk-only: {}.\n",
                 item.claim_id,
-                item.conclusion_type,
-                item.quote
+                item.blocked_reason
                     .as_deref()
-                    .unwrap_or("evidence hash present, quote missing"),
-                item.claim_text,
-                item.source_path
-                    .as_ref()
-                    .map(|path| format!(" | source: `{path}`"))
-                    .unwrap_or_default(),
-                item.evidence_hash
-                    .as_ref()
-                    .map(|hash| format!(" | hash: `{}`", hash.chars().take(16).collect::<String>()))
-                    .unwrap_or_default(),
-                if item.concepts.is_empty() {
-                    String::new()
-                } else {
-                    format!(" | concepts: {}", item.concepts.join(", "))
-                }
+                    .unwrap_or("requires human confirmation")
             ));
         }
     }
+
+    let firm_evidence = evidence
+        .iter()
+        .filter(|item| {
+            item.conclusion_type == "evidence-backed conclusion" && item.freshness_status == "fresh"
+        })
+        .collect::<Vec<_>>();
+
+    let strongest_claims = firm_evidence
+        .iter()
+        .take(4)
+        .map(|item| format!("`{}`: {}", item.claim_id, item.claim_text))
+        .collect::<Vec<_>>();
 
     let mut source_index = String::new();
     if source_refs.is_empty() {
@@ -6915,31 +7107,39 @@ fn render_query_writeback_content(
         }
     }
 
-    let strongest_claims = evidence
-        .iter()
-        .take(4)
-        .map(|item| format!("`{}`: {}", item.claim_id, item.claim_text))
-        .collect::<Vec<_>>();
     let strongest_summary = if strongest_claims.is_empty() {
         "当前 vault 尚未提供足够 claim 证据，回答只能停留在待补证据的 proposal。".to_string()
     } else {
         strongest_claims.join("; ")
     };
 
-    let insight_candidates = vec![
-        format!(
-            "Evidence-backed conclusion: 当前 vault 已有 {source_count} 个 source、{concept_count} 个 concept、{supported_count} 条优先 evidence claim，可作为研发路线总结的稳定输入。"
-        ),
-        format!(
+    let mut insight_candidates = Vec::new();
+    if supported_count == 0 {
+        insight_candidates.push(
+            "Needs review: 当前 vault 没有 fresh supported claim，不能生成确定性写回正文。"
+                .to_string(),
+        );
+        insight_candidates.push(format!("Risk-only summary: {strongest_summary}"));
+    } else {
+        insight_candidates.push(format!(
+            "Evidence-backed conclusion: 当前 vault 已有 {source_count} 个 source、{concept_count} 个 concept、{supported_count} 条 fresh supported evidence claim，可作为研发路线总结的稳定输入。"
+        ));
+        insight_candidates.push(format!(
             "Evidence-backed conclusion: 先从这些 claim 提炼确定性内容：{strongest_summary}"
-        ),
+        ));
+    }
+    insight_candidates.extend([
         "Inference: DeepSeek 的研发叙事应按问题选择、资源约束、架构/训练/数据/eval 决策拆开，并要求每个小结回链到 claim/source。".to_string(),
         "Hypothesis: 若 review queue 中的 claims 未解决，策略洞察应标记为待确认，不应进入稳定 concept。".to_string(),
         "Forecast: 后续演进方向只能作为预测候选，需要保留证据缺口、冲突说明和人工确认项。".to_string(),
-    ];
+    ]);
     let uncertainty_conflicts = vec![
         format!("{review_count} 个 claim/review 项仍需要人工确认。"),
         format!("{review_evidence_count} 条 composer evidence 不是 supported verdict，必须标为 inference 或待审证据。"),
+        format!(
+            "{} 条 blocked evidence 只能进入 Risk / Needs human confirmation，不能作为 evidence-backed conclusion 或稳定写回正文。",
+            blocked_evidence.len()
+        ),
         format!("{contradicted} 个 contradicted claim 可能影响最终 insight。"),
         "Composer 不调用外部 LLM；当前草稿基于 vault 内 evidence map 生成，需要人工审阅后再 apply。".to_string(),
     ];
@@ -6972,6 +7172,8 @@ fn render_query_writeback_content(
     for item in &uncertainty_conflicts {
         rendered.push_str(&format!("- {item}\n"));
     }
+    rendered.push_str("\n## Risk / Needs human confirmation\n\n");
+    rendered.push_str(&blocked_evidence_summary);
     rendered.push_str(
         "\n## Writeback proposal\n\nTarget this as a review artifact first. Do not apply to concepts until a human approves the proposal.\n\n## Diff preview\n\nGenerated by desktop writeback proposal before apply; the diff is stored on the proposal object and shown in the desktop approval gate.\n\n## Approval status\n\nproposed\n",
     );
@@ -9720,8 +9922,18 @@ mod tests {
         let vault = test_vault("query-writeback");
         create_minimal_vault(&vault).expect("create minimal vault");
         write_text(
+            &vault.join("sources").join("LLM-0001.md"),
+            "# DeepSeek Source\n\nEfficient reasoning evidence.\n",
+        )
+        .expect("source page");
+        write_text(
+            &vault.join("_state").join("source-registry.jsonl"),
+            "{\"source_uuid\":\"sha256:fresh\",\"source_id\":\"LLM-0001\",\"source_path\":\"raw/inbox/fresh.pdf\",\"source_sha256\":\"fresh\",\"status\":\"published\",\"source_page\":\"sources/LLM-0001.md\"}\n",
+        )
+        .expect("registry");
+        write_text(
             &vault.join("claims").join("claims.jsonl"),
-            "{\"claim_id\":\"c1\",\"claim_text\":\"DeepSeek optimizes for efficient reasoning.\",\"verdict\":\"supported\",\"source_id\":\"LLM-0001\",\"source_path\":\"sources/LLM-0001.md\",\"evidence_quote\":\"efficient reasoning\"}\n",
+            "{\"claim_id\":\"c1\",\"claim_text\":\"DeepSeek optimizes for efficient reasoning.\",\"verdict\":\"supported\",\"source_id\":\"LLM-0001\",\"source_uuid\":\"sha256:fresh\",\"source_path\":\"sources/LLM-0001.md\",\"evidence_quote\":\"efficient reasoning\"}\n",
         )
         .expect("write claim");
         let draft = create_query_writeback_proposal(
@@ -9742,6 +9954,7 @@ mod tests {
             draft.evidence_map[0].conclusion_type,
             "evidence-backed conclusion"
         );
+        assert_eq!(draft.evidence_map[0].freshness_status, "fresh");
         assert!(draft.answer.contains("## Evidence map"));
         assert!(draft.answer.contains("## Source index"));
         assert!(draft.answer.contains("## Concept index"));
@@ -9755,6 +9968,94 @@ mod tests {
             .join("query-writeback")
             .join("deepseek-research-insights.md")
             .exists());
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn query_writeback_blocks_stale_or_mismatched_evidence_from_conclusions() {
+        let vault = test_vault("query-writeback-blocked-evidence");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        write_text(
+            &vault.join("sources").join("LLM-0001.md"),
+            "# Fresh Source\n\nFresh evidence.\n",
+        )
+        .expect("fresh source page");
+        write_text(
+            &vault.join("sources").join("LLM-0002.md"),
+            "# Stale Source\n\nStale evidence.\n",
+        )
+        .expect("stale source page");
+        write_text(
+            &vault.join("_state").join("source-registry.jsonl"),
+            "{\"source_uuid\":\"sha256:fresh\",\"source_id\":\"LLM-0001\",\"source_path\":\"raw/inbox/fresh.pdf\",\"source_sha256\":\"fresh\",\"status\":\"published\",\"source_page\":\"sources/LLM-0001.md\"}\n{\"source_uuid\":\"sha256:stale\",\"source_id\":\"LLM-0002\",\"source_path\":\"raw/inbox/stale.pdf\",\"source_sha256\":\"stale\",\"status\":\"published\",\"source_page\":\"sources/LLM-0002.md\",\"artifact_path\":\"parsed/stale/combined.md\"}\n",
+        )
+        .expect("registry");
+        write_text(
+            &vault.join("_state").join("artifacts.jsonl"),
+            "{\"source_uuid\":\"sha256:stale\",\"source_id\":\"LLM-0002\",\"artifact_path\":\"parsed/stale/combined.md\",\"manifest_path\":\"parsed/stale/manifest.json\",\"status\":\"stale\",\"contract_valid\":false}\n",
+        )
+        .expect("artifacts");
+        write_text(
+            &vault.join("claims").join("claims.jsonl"),
+            "{\"claim_id\":\"fresh-claim\",\"claim_text\":\"Fresh claim can support a conclusion.\",\"verdict\":\"supported\",\"status\":\"supported\",\"source_id\":\"LLM-0001\",\"source_uuid\":\"sha256:fresh\",\"source_path\":\"sources/LLM-0001.md\",\"evidence_quote\":\"Fresh evidence\",\"evidence_hash\":\"fresh-hash\"}\n{\"claim_id\":\"blocked-claim\",\"claim_text\":\"Blocked claim must not become a conclusion.\",\"verdict\":\"supported\",\"status\":\"supported\",\"source_id\":\"LLM-0002\",\"source_uuid\":\"sha256:stale\",\"source_path\":\"sources/LLM-0002.md\",\"evidence_quote\":\"Stale evidence\",\"evidence_hash\":\"stale-hash\"}\n{\"claim_id\":\"unknown-source\",\"claim_text\":\"Unknown source evidence must stay risk-only.\",\"verdict\":\"supported\",\"status\":\"supported\",\"source_uuid\":\"sha256:unknown\",\"evidence_quote\":\"Unknown evidence\",\"evidence_hash\":\"unknown-hash\"}\n",
+        )
+        .expect("claims");
+
+        let draft = create_query_writeback_proposal(
+            to_display(&vault),
+            "Summarize DeepSeek research strategy".to_string(),
+            "reviews/query-writeback/deepseek-risk-gated.md".to_string(),
+            "DeepSeek risk gated insights".to_string(),
+        )
+        .expect("create gated proposal");
+        let fresh = draft
+            .evidence_map
+            .iter()
+            .find(|item| item.claim_id == "fresh-claim")
+            .expect("fresh evidence");
+        assert_eq!(fresh.conclusion_type, "evidence-backed conclusion");
+        assert_eq!(fresh.freshness_status, "fresh");
+        let blocked = draft
+            .evidence_map
+            .iter()
+            .find(|item| item.claim_id == "blocked-claim")
+            .expect("blocked evidence");
+        assert_eq!(blocked.conclusion_type, "blocked evidence - risk only");
+        assert_eq!(blocked.freshness_status, "blocked");
+        assert!(blocked
+            .blocked_reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("artifact parsed/stale/combined.md hash does not match manifest"));
+        let unknown = draft
+            .evidence_map
+            .iter()
+            .find(|item| item.claim_id == "unknown-source")
+            .expect("unknown source evidence");
+        assert_eq!(unknown.freshness_status, "blocked");
+        assert!(unknown
+            .blocked_reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("unknown source_uuid sha256:unknown"));
+        assert!(draft.answer.contains("### Blocked evidence / risks"));
+        assert!(draft.answer.contains("## Risk / Needs human confirmation"));
+        assert!(draft
+            .uncertainty_conflicts
+            .iter()
+            .any(|item| item.contains("blocked evidence")));
+        assert!(!draft
+            .insight_candidates
+            .iter()
+            .any(|item| item.contains("blocked-claim")));
+        assert!(draft.diff_preview.contains("blocked-claim"));
+        assert!(draft
+            .diff_preview
+            .contains("Risk / Needs human confirmation"));
+        assert!(!draft.diff_preview.contains(
+            "Evidence-backed conclusion: 先从这些 claim 提炼确定性内容：`blocked-claim`"
+        ));
 
         let _ = fs::remove_dir_all(vault);
     }

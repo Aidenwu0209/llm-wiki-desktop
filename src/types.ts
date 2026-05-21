@@ -576,6 +576,8 @@ export type QueryEvidence = {
   concepts: string[];
   conclusionType: string;
   confidence: string;
+  freshnessStatus: "fresh" | "needs_review" | "blocked" | string;
+  blockedReason?: string | null;
 };
 
 export type QueryWritebackDraft = {
