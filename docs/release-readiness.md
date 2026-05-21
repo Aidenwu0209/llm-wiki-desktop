@@ -2,6 +2,8 @@
 
 This document defines the local release-candidate path for LLM Wiki Desktop. It does not replace signing, notarization, or a full public distribution process.
 
+Release readiness is evaluated against the current product goal: existing vault workflows must be reliable before adding new surface area. DFC vaults may be used as a local acceptance sample for Dashboard, Raw Sources, and Obsidian entry-note behavior, but passing a DFC smoke test does not mean the product is only for DFC content.
+
 ## Modes
 
 | Mode | Command | Use |
@@ -37,9 +39,41 @@ npm run build:app
 12. Open Graph and confirm source -> claim -> concept/review/proposal/warning relations are usable for evidence navigation.
 13. Open Settings / LLM Models and About, confirm provider toggles, local CLI check, logo, version, repo link, and runtime boundary are visible.
 
+## Clean macOS Profile Smoke
+
+Run this after the automated checks on a fresh macOS user profile or a profile that has not previously opened LLM Wiki Desktop.
+
+1. Copy the local `.app` bundle into the profile and launch it from Finder.
+2. Record the first launch state: either the Welcome page appears or the last selected vault restore fails with a clear path-specific message.
+3. Create or open a generated vault under `vaults/<generated-vault>`. Do not select the outer workspace root or a raw PDF folder such as `deepseek_paper/`.
+4. If macOS prompts for Desktop, Documents, Downloads, or removable-volume access, allow the permission only when the selected generated vault actually lives there. If permission is denied, the app must still offer copy path / reveal / open folder recovery.
+5. Verify selecting the workspace root warns that the user must choose a generated vault under `vaults/`.
+6. Verify selecting a raw PDF/source folder warns that Dashboard state, source registry, and the Obsidian entry note live in the generated vault.
+7. Open Dashboard and confirm vault health, ingest plan, registry/manifest state, traceability, and writeback status are visible without running a hidden ingest.
+8. Open Raw Sources, import one small local file, refresh, and confirm the source appears in the plan state without auto-applying downstream writeback or review status.
+9. For a DFC acceptance sample, use an existing generated DFC vault and verify Dashboard -> Raw Sources -> Obsidian entry note is understandable from a user perspective.
+10. Open Obsidian from the app. If Obsidian is installed, the generated entry note should focus. If Obsidian is missing or does not focus, the app must expose Copy URI, Copy path, Reveal in Finder, and Open folder fallbacks.
+11. Confirm screenshots or screen recordings used as local evidence are kept outside Git unless explicitly reviewed for private content and approved for commit.
+
+Clean-profile pass criteria:
+
+- The first-screen path is understandable without knowing the repo layout.
+- Generated vault, workspace root, and raw PDF folder are not visually interchangeable.
+- Permission denial does not strand the user.
+- Obsidian failure has a recoverable manual path.
+- DFC validates the current reading/evidence workflow; it is not treated as a product scope constraint.
+
 ## macOS Packaging Notes
 
-The local build currently targets macOS `.app` and `.dmg` bundles. Public distribution still requires:
+The local build currently targets macOS `.app` and `.dmg` bundles. Treat these modes separately:
+
+| Stage | What it proves | What it does not prove |
+| --- | --- | --- |
+| Local RC `.app` | The current branch builds and can run a user-style smoke test on this Mac. | It is not signed, notarized, or safe to call public-release ready. |
+| Local RC `.dmg` | The bundle can be packaged and opened locally. | It does not prove Gatekeeper, quarantine, or first-run permission behavior for outside users. |
+| Formal distribution | The app is signed, hardened, notarized, stapled, and smoke-tested on a clean profile. | It still needs release notes, rollback guidance, and support paths. |
+
+Public distribution still requires:
 
 - Developer ID signing.
 - Hardened runtime configuration.
