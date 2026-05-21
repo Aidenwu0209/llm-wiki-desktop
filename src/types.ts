@@ -36,6 +36,24 @@ export type ProductScorecardSummary = {
   reportPath: string;
 };
 
+export type AgentReadApiEndpoint = {
+  method: string;
+  path: string;
+  capability: string;
+};
+
+export type AgentReadApiReadiness = {
+  enabled: boolean;
+  reason: string;
+  bindHost: string;
+  tokenRequired: boolean;
+  scorecard: ProductScorecardSummary;
+  requiredMetrics: string[];
+  unmetRequirements: string[];
+  endpoints: AgentReadApiEndpoint[];
+  blockedOperations: string[];
+};
+
 export type VaultFile = {
   name: string;
   path: string;

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ClaimLedgerItem,
+  AgentReadApiReadiness,
   ContractFinding,
   DesktopAppState,
   DesktopSettings,
@@ -105,6 +106,10 @@ export function checkLlmApiKey(providerId: string, apiKeyEnvVar: string): Promis
 
 export function generateLlmAnswer(vaultPath: string, request: LlmAnswerRequest): Promise<LlmAnswerResult> {
   return invoke("generate_llm_answer", { vaultPath, request });
+}
+
+export function agentReadApiReadiness(vaultPath: string): Promise<AgentReadApiReadiness> {
+  return invoke("agent_read_api_readiness", { vaultPath });
 }
 
 export function planIngest(vaultPath: string): Promise<IngestPlan> {
