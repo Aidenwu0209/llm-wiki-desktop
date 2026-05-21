@@ -14,6 +14,20 @@ export type VaultCounts = {
   actions: number;
 };
 
+export type ReadingQualitySummary = {
+  concepts: number;
+  sources: number;
+  findings: number;
+  trustIssues: number;
+  duplicateGroups: number;
+  orphanConcepts: number;
+  staleEvidenceReferences: number;
+  brokenEvidenceReferences: number;
+  sourceIdentityDrift: number;
+  lowSynthesisConcepts: number;
+  reportPath: string;
+};
+
 export type VaultFile = {
   name: string;
   path: string;
@@ -35,6 +49,7 @@ export type VaultStatus = {
   runtimeVersion?: string | null;
   lastUpdated?: string | null;
   counts: VaultCounts;
+  readingQuality?: ReadingQualitySummary | null;
   files: VaultFile[];
   errors: string[];
 };
