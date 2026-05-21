@@ -560,6 +560,26 @@ function unique(items: Array<string | null>) {
   return Array.from(new Set(items.filter((item): item is string => Boolean(item))));
 }
 
+function isBlockedEvidenceResult(item: SearchResult) {
+  const status = (item.status || "").toLowerCase();
+  const severity = (item.severity || "").toLowerCase();
+  const relations = item.relations.join(" ").toLowerCase();
+  return (
+    ["broken", "stale", "contradicted", "failed", "blocked"].includes(status) ||
+    ["p0", "p1"].includes(severity) ||
+    relations.includes("missing") ||
+    relations.includes("artifact hash") ||
+    relations.includes("unknown source")
+  );
+}
+
+function blockedEvidenceReason(item: SearchResult, language: UiLanguage) {
+  const status = item.status ? `status=${item.status}` : null;
+  const severity = item.severity ? `severity=${item.severity}` : null;
+  const relation = item.relations.find((entry) => /missing|artifact hash|unknown source/i.test(entry));
+  return [status, severity, relation].filter(Boolean).join(" · ") || (language === "zh" ? "证据需要人工确认" : "evidence requires human confirmation");
+}
+
 function pickAnswerEvidence(results: SearchResult[], selected?: SearchResult | null) {
   const evidenceTypes: SearchKind[] = ["claim", "evidence", "source", "concept", "review", "writeback", "traceability"];
   const ordered = selected && evidenceTypes.includes(selected.type) ? [selected, ...results] : results;
@@ -837,24 +857,36 @@ function buildAnswerDraft(question: string, targetPath: string, evidence: Search
   const theme = answerTheme(question, language);
   const claimPrefix = language === "zh" ? "论断:" : "claim:";
   const sourcePrefix = language === "zh" ? "资料" : "source";
-  const evidenceBullets = evidence.length
-    ? evidence.map((item, index) => (
+  const usableEvidence = evidence.filter((item) => !isBlockedEvidenceResult(item));
+  const blockedEvidence = evidence.filter(isBlockedEvidenceResult);
+  const usableEvidenceBullets = usableEvidence.length
+    ? usableEvidence.map((item, index) => (
       `- E${index + 1} [${typeLabel(item.type)}] ${item.title} (${item.path}): ${item.snippet}${item.evidence ? ` ${language === "zh" ? "证据" : "Evidence"}: ${item.evidence}` : ""}`
     )).join("\n")
     : language === "zh"
-      ? "- 还没有匹配到已加载的知识库证据。请先刷新知识库或运行导入流程，再转成提案。"
-      : "- No loaded vault evidence matched yet. Refresh the vault or run ingest before turning this into a proposal.";
+      ? "- 没有 fresh/可用证据可作为确定性结论。"
+      : "- No fresh usable evidence can support firm conclusions.";
+  const blockedEvidenceBullets = blockedEvidence.length
+    ? blockedEvidence.map((item, index) => (
+      `- R${index + 1} [${typeLabel(item.type)}] ${item.title} (${item.path}): ${blockedEvidenceReason(item, language)}`
+    )).join("\n")
+    : language === "zh"
+      ? "- 当前回答证据中没有 blocked evidence。"
+      : "- No blocked evidence selected for this answer.";
 
-  const claimRefs = unique(evidence.map((item) => item.relations.find((entry) => entry.startsWith(claimPrefix)) ?? null)).slice(0, 5);
-  const sourceRefs = unique(evidence.map((item) => item.relations.find((entry) => entry.startsWith(sourcePrefix)) ?? null)).slice(0, 5);
+  const claimRefs = unique(usableEvidence.map((item) => item.relations.find((entry) => entry.startsWith(claimPrefix)) ?? null)).slice(0, 5);
+  const sourceRefs = unique(usableEvidence.map((item) => item.relations.find((entry) => entry.startsWith(sourcePrefix)) ?? null)).slice(0, 5);
 
   if (language === "zh") {
     return [
       `问题：${question || "未输入问题"}`,
       "草稿方法：本地确定性证据提纲；未调用大模型提供方。",
       "",
-      "## 证据",
-      evidenceBullets,
+      "## 可用证据",
+      usableEvidenceBullets,
+      "",
+      "## 风险 / 需人工确认",
+      blockedEvidenceBullets,
       "",
       "## 推断",
       `- 主题：${theme}。当前回答必须受上方已检索知识库对象约束，尤其是论断、资料页、概念、审核项和写回提案。`,
@@ -877,8 +909,11 @@ function buildAnswerDraft(question: string, targetPath: string, evidence: Search
     `Question: ${question || "No question entered"}`,
     "Draft method: local deterministic evidence outline; no LLM provider was called.",
     "",
-    "## Evidence",
-    evidenceBullets,
+    "## Usable evidence",
+    usableEvidenceBullets,
+    "",
+    "## Risk / Needs human confirmation",
+    blockedEvidenceBullets,
     "",
     "## Inference",
     `- Theme: ${theme}. The current answer should be constrained to the retrieved vault objects above, especially claims, source pages, concepts, review items, and writeback proposals.`,
@@ -931,7 +966,7 @@ function buildLlmAnswerRequest(
     language,
     question,
     targetPath,
-    evidence: toLlmAnswerEvidence(evidence),
+    evidence: toLlmAnswerEvidence(evidence.filter((item) => !isBlockedEvidenceResult(item))),
   };
 }
 
