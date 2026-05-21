@@ -8375,13 +8375,66 @@ mod tests {
     fn entry_note_prefers_existing_home_and_warns_on_workspace_root() {
         let vault = test_vault("entry-note");
         create_minimal_vault(&vault).expect("create minimal vault");
+        write_text(
+            &vault.join("sources").join("LLM-0001.md"),
+            "# DeepSeek Source\n\nEvidence summary.\n",
+        )
+        .expect("source page");
+        write_text(
+            &vault.join("concepts").join("research-strategy.md"),
+            "# Research Strategy\n\nSynthesis.\n",
+        )
+        .expect("concept page");
+        write_text(
+            &vault.join("_state").join("source-registry.jsonl"),
+            "{\"source_uuid\":\"sha256:1\",\"source_id\":\"LLM-0001\",\"source_path\":\"raw/inbox/dfc.pdf\",\"source_sha256\":\"abc\",\"status\":\"published\",\"source_page\":\"sources/LLM-0001.md\"}\n{\"source_uuid\":\"sha256:2\",\"source_id\":\"LLM-0002\",\"source_path\":\"raw/inbox/stale.pdf\",\"source_sha256\":\"def\",\"status\":\"stale\"}\n",
+        )
+        .expect("registry");
+        write_text(
+            &vault.join("_state").join("desktop-source-registry.jsonl"),
+            "{\"source_uuid\":\"sha256:3\",\"source_id\":\"LLM-0003\",\"source_path\":\"raw/inbox/blocked.pdf\",\"source_sha256\":\"ghi\",\"status\":\"blocked\"}\n",
+        )
+        .expect("desktop registry");
+        write_text(
+            &vault.join("claims").join("claims.jsonl"),
+            "{\"claim_id\":\"c1\",\"claim_text\":\"Claim needs review\",\"needs_review\":true,\"verdict\":\"needs_review\",\"status\":\"needs_review\"}\n{\"claim_id\":\"c2\",\"claim_text\":\"Claim stale\",\"needs_review\":false,\"verdict\":\"stale\",\"status\":\"stale\"}\n",
+        )
+        .expect("claims");
+        let proposal = create_writeback_proposal(
+            to_display(&vault),
+            "reviews/query-writeback/dfc-insight.md".to_string(),
+            "DFC insight".to_string(),
+            "Review-only proposal.".to_string(),
+        )
+        .expect("writeback proposal");
+        assert_eq!(proposal.status, "proposed");
+
         let entry = resolve_vault_entry_note_impl(&vault, true).expect("resolve entry");
-        assert_eq!(entry.entry_relative_path.as_deref(), Some("index.md"));
+        assert_eq!(
+            entry.entry_relative_path.as_deref(),
+            Some("LLM Wiki Home.md")
+        );
         assert!(entry
             .obsidian_uri
             .as_deref()
-            .is_some_and(|uri| uri.contains("file=index.md")));
-        assert_eq!(entry.fallback_path, to_display(&vault.join("index.md")));
+            .is_some_and(|uri| uri.contains("file=LLM%20Wiki%20Home.md")));
+        assert_eq!(
+            entry.fallback_path,
+            to_display(&vault.join("LLM Wiki Home.md"))
+        );
+        let home = read_text(&vault.join("LLM Wiki Home.md"));
+        assert!(home.contains("## Corpus Map"));
+        assert!(home.contains("- Source pages: 1"));
+        assert!(home.contains("- Published sources: 1"));
+        assert!(home.contains("- Stale sources: 1"));
+        assert!(home.contains("- Blocked sources: 1"));
+        assert!(home.contains("[[sources/LLM-0001]]"));
+        assert!(home.contains("[[concepts/research-strategy]]"));
+        assert!(home.contains("Claims needing review: 1"));
+        assert!(home.contains("Stale claims: 1"));
+        assert!(home.contains("Query writeback proposals waiting for review: 1"));
+        assert!(home.contains("## Suggested Questions"));
+        assert!(home.contains("Do not treat proposed writeback content"));
 
         let workspace = test_vault("workspace-root");
         fs::create_dir_all(workspace.join("deepseek_paper")).expect("deepseek dir");
@@ -8940,6 +8993,7 @@ fn vault_entry_candidates(vault: &Path) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     if name.contains("deepseek") {
         candidates.extend([
+            vault.join("LLM Wiki Home.md"),
             vault.join("concepts/deepseek/research-strategy.md"),
             vault.join("concepts/deepseek-research-strategy.md"),
             vault.join("concepts/deepseek-decision-logic.md"),
@@ -8948,17 +9002,63 @@ fn vault_entry_candidates(vault: &Path) -> Vec<PathBuf> {
         ]);
     }
     candidates.extend([
+        vault.join("LLM Wiki Home.md"),
         vault.join("Home.md"),
+        vault.join("_dashboard.md"),
         vault.join("index.md"),
         vault.join("README.md"),
-        vault.join("LLM Wiki Home.md"),
-        vault.join("_dashboard.md"),
     ]);
     candidates
 }
 
 fn generated_entry_note(vault: &Path) -> PathBuf {
     vault.join("LLM Wiki Home.md")
+}
+
+fn obsidian_link(vault: &Path, path: &Path) -> String {
+    rel_path(vault, path).trim_end_matches(".md").to_string()
+}
+
+fn markdown_list_links(vault: &Path, paths: &[PathBuf], empty: &str, limit: usize) -> String {
+    if paths.is_empty() {
+        return format!("- {empty}\n");
+    }
+    paths
+        .iter()
+        .take(limit)
+        .map(|path| format!("- [[{}]]\n", obsidian_link(vault, path)))
+        .collect::<String>()
+}
+
+fn count_status_rows(path: &Path) -> HashMap<String, usize> {
+    let mut counts = HashMap::new();
+    for line in read_text(path)
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+    {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
+            if let Some(status) = json_string(&value, "status") {
+                *counts.entry(status).or_insert(0) += 1;
+            }
+        }
+    }
+    counts
+}
+
+fn count_writeback_statuses(vault: &Path) -> HashMap<String, usize> {
+    let mut counts = HashMap::new();
+    if let Ok(read_dir) = fs::read_dir(writeback_proposals_dir(vault)) {
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(OsStr::to_str) != Some("json") {
+                continue;
+            }
+            if let Ok(proposal) = serde_json::from_str::<WritebackProposal>(&read_text(&path)) {
+                *counts.entry(proposal.status).or_insert(0) += 1;
+            }
+        }
+    }
+    counts
 }
 
 fn generate_entry_note(vault: &Path) -> Result<PathBuf, String> {
@@ -8969,18 +9069,50 @@ fn generate_entry_note(vault: &Path) -> Result<PathBuf, String> {
     let sources = list_markdown(&vault.join("sources"));
     let concepts = list_markdown(&vault.join("concepts"));
     let reviews = count_jsonl(&vault.join("_state").join("science-review-queue.jsonl"));
-    let first_source = sources
-        .first()
-        .map(|path| rel_path(vault, path))
-        .unwrap_or_else(|| "sources/".to_string());
-    let first_concept = concepts
-        .first()
-        .map(|path| rel_path(vault, path))
-        .unwrap_or_else(|| "concepts/".to_string());
+    let (claims, claims_needing_review, stale_claims, contradicted_claims) =
+        count_claims(&vault.join("claims").join("claims.jsonl"));
+    let registry_statuses = count_status_rows(&vault.join("_state").join("source-registry.jsonl"));
+    let desktop_statuses =
+        count_status_rows(&vault.join("_state").join("desktop-source-registry.jsonl"));
+    let lint_findings = count_jsonl(&vault.join("_state").join("lint-findings.jsonl"));
+    let writeback_statuses = count_writeback_statuses(vault);
+    let proposed_writebacks = writeback_statuses
+        .get("proposed")
+        .copied()
+        .unwrap_or_default();
+    let published_sources = registry_statuses
+        .get("published")
+        .copied()
+        .unwrap_or_default()
+        .max(
+            desktop_statuses
+                .get("published")
+                .copied()
+                .unwrap_or_default(),
+        );
+    let stale_sources = registry_statuses
+        .get("stale")
+        .copied()
+        .unwrap_or_default()
+        .max(desktop_statuses.get("stale").copied().unwrap_or_default());
+    let blocked_sources = desktop_statuses
+        .get("blocked")
+        .copied()
+        .unwrap_or_default()
+        .max(
+            registry_statuses
+                .get("blocked")
+                .copied()
+                .unwrap_or_default(),
+        );
+    let source_links = markdown_list_links(vault, &sources, "No generated source pages yet.", 12);
+    let concept_links = markdown_list_links(vault, &concepts, "No concept pages yet.", 12);
     let rendered = format!(
-        "# LLM Wiki Home\n\n## Start Here\n\n- Sources: [[{}]]\n- Concepts: [[{}]]\n- Review queue: `_state/science-review-queue.jsonl` ({reviews} items)\n- Dashboard: [[_dashboard]]\n\n## Trust Boundary\n\nThis desktop entry note is a navigation aid. Claims, science review, and writeback approval remain runtime-owned state.\n",
-        first_source.trim_end_matches(".md"),
-        first_concept.trim_end_matches(".md")
+        "# LLM Wiki Home\n\n## Start Here\n\n- Read the corpus map first to understand which source pages exist and which inputs are still stale or blocked.\n- Use the concept map for synthesis reading after checking the trust status below.\n- Resolve review-required claims before treating generated insights as stable knowledge.\n- Keep query writeback proposals in `reviews/query-writeback/` until a human explicitly approves them.\n\n## Corpus Map\n\n- Source pages: {source_count}\n- Published sources: {published_sources}\n- Stale sources: {stale_sources}\n- Blocked sources: {blocked_sources}\n\n{source_links}\n## Concept Map\n\n- Concept pages: {concept_count}\n\n{concept_links}\n## Trust Status\n\n- Claims: {claims}\n- Claims needing review: {claims_needing_review}\n- Stale claims: {stale_claims}\n- Contradicted claims: {contradicted_claims}\n- Science review queue: [`{review_path}`]({review_path}) ({reviews} items)\n- Traceability / lint findings: [`{lint_path}`]({lint_path}) ({lint_findings} items)\n- Query writeback proposals waiting for review: {proposed_writebacks}\n\n## Review Queue\n\n- Claims ledger: [`claims/claims.jsonl`](claims/claims.jsonl)\n- Science review queue: [`{review_path}`]({review_path})\n- Query writeback review area: [`reviews/query-writeback/`](reviews/query-writeback/)\n\n## Suggested Questions\n\n- Which sources are published, stale, or blocked, and what is the next action for each?\n- Which concepts are safe to read as stable synthesis, and which still depend on review-required claims?\n- What evidence supports the main research strategy, and which conclusions are inference or forecast?\n- Which query writeback proposals are still review-only and should not be copied into concept pages?\n\n## Trust Boundary\n\nThis generated home note is a navigation aid. Source pages, claims, science review, and query writeback approval remain runtime-owned state. Do not treat proposed writeback content or review-required claims as approved knowledge.\n",
+        source_count = sources.len(),
+        concept_count = concepts.len(),
+        review_path = "_state/science-review-queue.jsonl",
+        lint_path = "_state/lint-findings.jsonl",
     );
     write_text(&path, &rendered)?;
     Ok(path)
@@ -9000,18 +9132,35 @@ fn resolve_vault_entry_note_impl(
         reason = "workspace root selected; generated vault required".to_string();
         None
     } else {
-        vault_entry_candidates(vault)
-            .into_iter()
-            .find(|path| path.is_file())
-            .or_else(|| {
-                if create_if_missing {
-                    reason = "generated LLM Wiki Home.md entry note".to_string();
-                    generate_entry_note(vault).ok()
-                } else {
+        let generated = if create_if_missing {
+            let existed = generated_entry_note(vault).is_file();
+            match generate_entry_note(vault) {
+                Ok(path) => {
+                    reason = if path == generated_entry_note(vault) {
+                        if existed {
+                            "matched generated LLM Wiki Home.md entry note".to_string()
+                        } else {
+                            "generated LLM Wiki Home.md entry note".to_string()
+                        }
+                    } else {
+                        "matched existing entry note".to_string()
+                    };
+                    Some(path)
+                }
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+        generated.or_else(|| {
+            vault_entry_candidates(vault)
+                .into_iter()
+                .find(|path| path.is_file())
+                .or_else(|| {
                     reason = "no entry note found".to_string();
                     None
-                }
-            })
+                })
+        })
     };
     let obsidian_uri = entry.as_ref().map(|path| obsidian_file_uri(vault, path));
     let fallback_path = entry.as_ref().map_or(vault, |path| path.as_path());
