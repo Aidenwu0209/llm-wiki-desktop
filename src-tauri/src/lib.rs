@@ -224,6 +224,105 @@ struct VaultEntryNote {
     is_raw_source_folder: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DesktopPlatform {
+    Macos,
+    Windows,
+    Linux,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DesktopCommandSpec {
+    program: String,
+    args: Vec<String>,
+}
+
+impl DesktopCommandSpec {
+    fn new(program: impl Into<String>, args: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            program: program.into(),
+            args: args.into_iter().collect(),
+        }
+    }
+
+    fn command(&self) -> Command {
+        let mut command = Command::new(&self.program);
+        command.args(&self.args);
+        command
+    }
+}
+
+fn current_desktop_platform() -> DesktopPlatform {
+    if cfg!(target_os = "macos") {
+        DesktopPlatform::Macos
+    } else if cfg!(target_os = "windows") {
+        DesktopPlatform::Windows
+    } else {
+        DesktopPlatform::Linux
+    }
+}
+
+fn local_cli_lookup_command(platform: DesktopPlatform, command: &str) -> DesktopCommandSpec {
+    match platform {
+        DesktopPlatform::Windows => DesktopCommandSpec::new("where", [command.to_string()]),
+        DesktopPlatform::Macos | DesktopPlatform::Linux => DesktopCommandSpec::new(
+            "/bin/sh",
+            ["-lc".to_string(), format!("command -v {command}")],
+        ),
+    }
+}
+
+fn open_path_command(platform: DesktopPlatform, target: &Path) -> DesktopCommandSpec {
+    let target = to_display(target);
+    match platform {
+        DesktopPlatform::Macos => DesktopCommandSpec::new("open", [target]),
+        DesktopPlatform::Windows => DesktopCommandSpec::new("explorer", [target]),
+        DesktopPlatform::Linux => DesktopCommandSpec::new("xdg-open", [target]),
+    }
+}
+
+fn reveal_path_command(
+    platform: DesktopPlatform,
+    target: &Path,
+    target_is_dir: bool,
+) -> DesktopCommandSpec {
+    let target = to_display(target);
+    match platform {
+        DesktopPlatform::Macos => DesktopCommandSpec::new("open", ["-R".to_string(), target]),
+        DesktopPlatform::Windows if !target_is_dir => {
+            DesktopCommandSpec::new("explorer", [format!("/select,{target}")])
+        }
+        DesktopPlatform::Windows => DesktopCommandSpec::new("explorer", [target]),
+        DesktopPlatform::Linux if !target_is_dir => {
+            let folder = Path::new(&target)
+                .parent()
+                .map(to_display)
+                .unwrap_or_else(|| target.clone());
+            DesktopCommandSpec::new("xdg-open", [folder])
+        }
+        DesktopPlatform::Linux => DesktopCommandSpec::new("xdg-open", [target]),
+    }
+}
+
+fn obsidian_uri_command(platform: DesktopPlatform, uri: &str) -> DesktopCommandSpec {
+    match platform {
+        DesktopPlatform::Macos => DesktopCommandSpec::new(
+            "open",
+            ["-a".to_string(), "Obsidian".to_string(), uri.to_string()],
+        ),
+        DesktopPlatform::Windows => DesktopCommandSpec::new(
+            "cmd",
+            [
+                "/C".to_string(),
+                "start".to_string(),
+                "".to_string(),
+                uri.to_string(),
+            ],
+        ),
+        DesktopPlatform::Linux => DesktopCommandSpec::new("xdg-open", [uri.to_string()]),
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TaskLog {
@@ -6866,8 +6965,9 @@ fn check_local_llm_cli(command: String) -> Result<LlmCliCheckResult, String> {
             ))
         }
     };
-    let lookup = Command::new("/bin/sh")
-        .args(["-lc", &format!("command -v {command}")])
+    let lookup_spec = local_cli_lookup_command(current_desktop_platform(), command);
+    let lookup = lookup_spec
+        .command()
         .output()
         .map_err(|e| format!("failed to check {command}: {e}"))?;
     if !lookup.status.success() {
@@ -10944,6 +11044,72 @@ mod tests {
     }
 
     #[test]
+    fn desktop_command_specs_cover_windows_open_reveal_obsidian_and_cli_lookup() {
+        let target = PathBuf::from(r"C:\Users\Ada\llm-wiki\LLM Wiki Home.md");
+        let uri = "obsidian://open?vault=dfc-vault&file=LLM%20Wiki%20Home.md";
+
+        let open = open_path_command(DesktopPlatform::Windows, &target);
+        assert_eq!(open.program, "explorer");
+        assert_eq!(open.args, vec![to_display(&target)]);
+
+        let reveal_file = reveal_path_command(DesktopPlatform::Windows, &target, false);
+        assert_eq!(reveal_file.program, "explorer");
+        assert_eq!(
+            reveal_file.args,
+            vec![format!("/select,{}", to_display(&target))]
+        );
+
+        let reveal_dir = reveal_path_command(DesktopPlatform::Windows, &target, true);
+        assert_eq!(reveal_dir.program, "explorer");
+        assert_eq!(reveal_dir.args, vec![to_display(&target)]);
+
+        let obsidian = obsidian_uri_command(DesktopPlatform::Windows, uri);
+        assert_eq!(obsidian.program, "cmd");
+        assert_eq!(
+            obsidian.args,
+            vec![
+                "/C".to_string(),
+                "start".to_string(),
+                "".to_string(),
+                uri.to_string()
+            ]
+        );
+
+        let lookup = local_cli_lookup_command(DesktopPlatform::Windows, "codex");
+        assert_eq!(lookup.program, "where");
+        assert_eq!(lookup.args, vec!["codex".to_string()]);
+    }
+
+    #[test]
+    fn desktop_command_specs_keep_macos_and_linux_launch_contracts() {
+        let target = PathBuf::from("/Users/ada/llm-wiki/LLM Wiki Home.md");
+        let uri = "obsidian://open?vault=dfc-vault&file=LLM%20Wiki%20Home.md";
+
+        let mac_open = open_path_command(DesktopPlatform::Macos, &target);
+        assert_eq!(mac_open.program, "open");
+        assert_eq!(mac_open.args, vec![to_display(&target)]);
+
+        let mac_reveal = reveal_path_command(DesktopPlatform::Macos, &target, false);
+        assert_eq!(mac_reveal.program, "open");
+        assert_eq!(mac_reveal.args, vec!["-R".to_string(), to_display(&target)]);
+
+        let mac_obsidian = obsidian_uri_command(DesktopPlatform::Macos, uri);
+        assert_eq!(mac_obsidian.program, "open");
+        assert_eq!(
+            mac_obsidian.args,
+            vec!["-a".to_string(), "Obsidian".to_string(), uri.to_string()]
+        );
+
+        let linux_open = open_path_command(DesktopPlatform::Linux, &target);
+        assert_eq!(linux_open.program, "xdg-open");
+        assert_eq!(linux_open.args, vec![to_display(&target)]);
+
+        let linux_obsidian = obsidian_uri_command(DesktopPlatform::Linux, uri);
+        assert_eq!(linux_obsidian.program, "xdg-open");
+        assert_eq!(linux_obsidian.args, vec![uri.to_string()]);
+    }
+
+    #[test]
     fn agent_read_api_readiness_requires_scorecard_gate_and_read_only_contract() {
         let vault = test_vault("agent-api-readiness-blocked");
         create_minimal_vault(&vault).expect("create minimal vault");
@@ -12290,29 +12456,25 @@ fn register_obsidian_vault(vault: &Path) -> Result<(), String> {
 }
 
 fn try_open_obsidian_file(vault: &Path, file: &Path) -> Result<(), String> {
-    if cfg!(target_os = "macos") {
+    let platform = current_desktop_platform();
+    if platform == DesktopPlatform::Macos {
         register_obsidian_vault(vault)?;
         let _ = Command::new("open")
             .arg("-a")
             .arg("Obsidian")
             .arg(vault)
             .status();
-        let uri = obsidian_file_uri(vault, file);
-        let status = Command::new("open")
-            .arg("-a")
-            .arg("Obsidian")
-            .arg(&uri)
-            .status()
-            .map_err(|e| format!("failed to launch Obsidian entry note: {e}"))?;
-        if status.success() {
-            return Ok(());
-        }
-        return Err(format!(
-            "Obsidian URI launch failed for {}",
-            obsidian_file_uri(vault, file)
-        ));
     }
-    Err("Obsidian URI launch is only available on macOS".to_string())
+    let uri = obsidian_file_uri(vault, file);
+    let spec = obsidian_uri_command(platform, &uri);
+    let status = spec
+        .command()
+        .status()
+        .map_err(|e| format!("failed to launch Obsidian entry note: {e}"))?;
+    if status.success() {
+        return Ok(());
+    }
+    Err(format!("Obsidian URI launch failed for {uri}"))
 }
 
 fn open_obsidian_file(vault: &Path, file: &Path) -> Result<(), String> {
@@ -12325,20 +12487,8 @@ fn open_obsidian_file(vault: &Path, file: &Path) -> Result<(), String> {
 #[tauri::command]
 fn open_path(path: String) -> Result<(), String> {
     let target = PathBuf::from(path);
-    let mut command = if cfg!(target_os = "macos") {
-        let mut cmd = Command::new("open");
-        cmd.arg(&target);
-        cmd
-    } else if cfg!(target_os = "windows") {
-        let mut cmd = Command::new("explorer");
-        cmd.arg(&target);
-        cmd
-    } else {
-        let mut cmd = Command::new("xdg-open");
-        cmd.arg(&target);
-        cmd
-    };
-    command
+    open_path_command(current_desktop_platform(), &target)
+        .command()
         .spawn()
         .map_err(|e| format!("failed to open {}: {e}", target.display()))?;
     Ok(())
@@ -12347,23 +12497,11 @@ fn open_path(path: String) -> Result<(), String> {
 #[tauri::command]
 fn reveal_path(path: String) -> Result<(), String> {
     let target = PathBuf::from(path);
-    if cfg!(target_os = "macos") {
-        Command::new("open")
-            .arg("-R")
-            .arg(&target)
-            .spawn()
-            .map_err(|e| format!("failed to reveal {}: {e}", target.display()))?;
-        return Ok(());
-    }
-    let folder = if target.is_dir() {
-        target
-    } else {
-        target
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| target.clone())
-    };
-    open_path(to_display(&folder))
+    reveal_path_command(current_desktop_platform(), &target, target.is_dir())
+        .command()
+        .spawn()
+        .map_err(|e| format!("failed to reveal {}: {e}", target.display()))?;
+    Ok(())
 }
 
 fn resolve_vault_item_path(vault: &Path, path: &str) -> Result<PathBuf, String> {
@@ -12406,30 +12544,29 @@ fn open_obsidian_vault(vault_path: String) -> Result<VaultEntryNote, String> {
     if entry.is_workspace_root || entry.is_raw_source_folder {
         return Ok(entry);
     }
-    if cfg!(target_os = "macos") {
-        if let Some(entry_path) = &entry.entry_path {
-            match try_open_obsidian_file(&vault, &PathBuf::from(entry_path)) {
-                Ok(()) => return Ok(entry),
-                Err(err) => {
-                    entry.warning = Some(format!(
-                        "{err}. Use Copy URI, Copy path, Reveal in Finder, or Open folder to recover without changing the vault."
-                    ));
-                }
+    if let Some(entry_path) = &entry.entry_path {
+        match try_open_obsidian_file(&vault, &PathBuf::from(entry_path)) {
+            Ok(()) => return Ok(entry),
+            Err(err) => {
+                entry.warning = Some(format!(
+                    "{err}. Use Copy URI, Copy path, Reveal in Finder, or Open folder to recover without changing the vault."
+                ));
             }
-        } else {
-            let status = Command::new("open")
-                .arg("-a")
-                .arg("Obsidian")
-                .arg(&vault)
-                .status()
-                .map_err(|e| format!("failed to launch Obsidian: {e}"))?;
-            if status.success() {
-                return Ok(entry);
-            }
-            entry.warning = Some(
-                "Obsidian did not accept the vault open request. Use reveal/open folder or copy the vault path.".to_string(),
-            );
         }
+    } else if cfg!(target_os = "macos") {
+        let status = Command::new("open")
+            .arg("-a")
+            .arg("Obsidian")
+            .arg(&vault)
+            .status()
+            .map_err(|e| format!("failed to launch Obsidian: {e}"))?;
+        if status.success() {
+            return Ok(entry);
+        }
+        entry.warning = Some(
+            "Obsidian did not accept the vault open request. Use reveal/open folder or copy the vault path."
+                .to_string(),
+        );
     }
     if let Err(err) = open_path(to_display(&vault)) {
         let previous = entry.warning.unwrap_or_default();
