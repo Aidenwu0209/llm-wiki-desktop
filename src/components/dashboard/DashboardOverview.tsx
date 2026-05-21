@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   BarChart3,
+  BookOpenCheck,
   CheckCircle2,
   ClipboardList,
   Database,
@@ -115,6 +116,11 @@ const dashboardCopy = {
     clear: "清空",
     reviewDetail: "论断或科学审核项需要人工处理",
     reviewClearDetail: "未检测到未处理审核队列项",
+    readingQuality: "阅读质量",
+    readingClear: "清晰",
+    readingFindings: "发现项",
+    readingQualityDetail: "检查重复、孤立概念和证据漂移",
+    readingQualityIssueDetail: "个阅读/可信风险需要核对",
     proposed: "待审核",
     total: "总数",
     writebackIssueDetail: "个被拒提案需要清理",
@@ -151,6 +157,7 @@ const dashboardCopy = {
       stageable: "可入队",
       blocked: "阻塞",
       traceability: "可追踪性",
+      readingQuality: "阅读风险",
     },
     messages: {
       pending: "知识库检查尚未完成。如果这里一直为空，请刷新知识库。",
@@ -159,6 +166,7 @@ const dashboardCopy = {
       obsidianMissing: "该知识库尚未配置 Obsidian。用户审阅前请先运行 Obsidian 配置。",
       blockingFindings: (count: number) => `${count} 个阻塞性合约检查问题需要审核。`,
       traceabilityIssues: (count: number) => `${count} 个可追踪性问题需要跟进资料或论断。`,
+      readingQualityIssues: (count: number) => `${count} 个阅读质量问题需要检查 source/concept 重复、漂移或过期证据。`,
       writebackWaiting: (count: number) => `${count} 个写回提案等待明确审核。`,
       clear: "核心桌面检查清晰。可以从下方卡片继续导入、审核或问答写回。",
     },
@@ -207,6 +215,11 @@ const dashboardCopy = {
     clear: "Clear",
     reviewDetail: "Claims or science review items need human attention",
     reviewClearDetail: "No open review queue items detected",
+    readingQuality: "Reading quality",
+    readingClear: "Clear",
+    readingFindings: "findings",
+    readingQualityDetail: "Checks duplicates, orphan concepts, and evidence drift",
+    readingQualityIssueDetail: "reading/trust risks need review",
     proposed: "proposed",
     total: "total",
     writebackIssueDetail: "Rejected proposals need cleanup",
@@ -243,6 +256,7 @@ const dashboardCopy = {
       stageable: "Stageable",
       blocked: "Blocked",
       traceability: "Traceability",
+      readingQuality: "Reading risk",
     },
     messages: {
       pending: "Vault inspection is pending. Refresh the vault if this stays empty.",
@@ -251,6 +265,7 @@ const dashboardCopy = {
       obsidianMissing: "Obsidian is not configured for this vault. Run Obsidian setup before user-facing review.",
       blockingFindings: (count: number) => `${count} blocking contract lint finding${count === 1 ? "" : "s"} need review.`,
       traceabilityIssues: (count: number) => `${count} traceability issue${count === 1 ? "" : "s"} need source or claim follow-up.`,
+      readingQualityIssues: (count: number) => `${count} reading quality issue${count === 1 ? "" : "s"} need source/concept duplicate, drift, or stale evidence review.`,
       writebackWaiting: (count: number) => `${count} writeback proposal${count === 1 ? "" : "s"} waiting for explicit review.`,
       clear: "Core desktop checks are clear. Continue with ingest, review, or query writeback from the cards below.",
     },
@@ -364,6 +379,7 @@ export function DashboardOverview({
   const writebackIssues = writebacks.filter((proposal) => proposal.status === "rejected").length;
   const reviewTotal = openReviewCount + (status?.counts.claimsNeedingReview ?? 0);
   const traceabilityTotal = traceabilityWarnings.length + brokenEvidence;
+  const readingQualityIssues = status?.readingQuality?.findings ?? 0;
   const vaultErrors = status?.errors ?? [];
   const statusMessages: string[] = [];
 
@@ -382,6 +398,9 @@ export function DashboardOverview({
   }
   if (traceabilityTotal > 0) {
     statusMessages.push(text.messages.traceabilityIssues(traceabilityTotal));
+  }
+  if (readingQualityIssues > 0) {
+    statusMessages.push(text.messages.readingQualityIssues(readingQualityIssues));
   }
   if (proposedWritebacks > 0) {
     statusMessages.push(text.messages.writebackWaiting(proposedWritebacks));
@@ -447,6 +466,19 @@ export function DashboardOverview({
           tone={status?.obsidianEnabled ? "ok" : "warn"}
           action={status?.obsidianEnabled ? text.open : text.setup}
           onAction={status?.obsidianEnabled ? onOpenObsidian : onRunObsidianSetup}
+        />
+        <ReadinessCard
+          icon={BookOpenCheck}
+          label={text.readingQuality}
+          value={readingQualityIssues ? `${readingQualityIssues} ${text.readingFindings}` : text.readingClear}
+          detail={
+            readingQualityIssues
+              ? `${status?.readingQuality?.trustIssues ?? 0} ${text.readingQualityIssueDetail}`
+              : text.readingQualityDetail
+          }
+          tone={readingQualityIssues ? "warn" : "ok"}
+          action={text.open}
+          onAction={onOpenObsidian}
         />
         <ReadinessCard
           icon={ShieldCheck}
@@ -586,6 +618,7 @@ export function DashboardOverview({
         <MiniMetric label={text.metrics.stageable} value={summary?.stageable ?? 0} />
         <MiniMetric label={text.metrics.blocked} value={summary?.blocked ?? 0} emphasis={(summary?.blocked ?? 0) > 0} />
         <MiniMetric label={text.metrics.traceability} value={traceabilityTotal} emphasis={traceabilityTotal > 0} />
+        <MiniMetric label={text.metrics.readingQuality} value={readingQualityIssues} emphasis={readingQualityIssues > 0} />
       </div>
     </section>
   );

@@ -32,6 +32,60 @@ struct VaultCounts {
     actions: usize,
 }
 
+#[derive(Debug, Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+struct ReadingQualitySummary {
+    concepts: usize,
+    sources: usize,
+    findings: usize,
+    trust_issues: usize,
+    duplicate_groups: usize,
+    orphan_concepts: usize,
+    stale_evidence_references: usize,
+    broken_evidence_references: usize,
+    source_identity_drift: usize,
+    low_synthesis_concepts: usize,
+    report_path: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ReadingQualityFinding {
+    finding_id: String,
+    severity: String,
+    kind: String,
+    object_type: String,
+    object_id: String,
+    title: String,
+    detail: String,
+    path: Option<String>,
+    evidence_paths: Vec<String>,
+    recommendation: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ConceptReadingQuality {
+    concept_path: String,
+    title: String,
+    source_ids: Vec<String>,
+    source_pages: Vec<String>,
+    claim_ids: Vec<String>,
+    artifact_paths: Vec<String>,
+    artifact_statuses: Vec<String>,
+    issues: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ReadingQualityReport {
+    generated_at: String,
+    vault_path: String,
+    summary: ReadingQualitySummary,
+    findings: Vec<ReadingQualityFinding>,
+    concepts: Vec<ConceptReadingQuality>,
+}
+
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct VaultFile {
@@ -57,6 +111,7 @@ struct VaultStatus {
     runtime_version: Option<String>,
     last_updated: Option<String>,
     counts: VaultCounts,
+    reading_quality: Option<ReadingQualitySummary>,
     files: Vec<VaultFile>,
     errors: Vec<String>,
 }
@@ -1411,6 +1466,741 @@ fn count_claims(path: &Path) -> (usize, usize, usize, usize) {
     (total, review, stale, contradicted)
 }
 
+fn read_jsonl_values(path: &Path) -> Vec<serde_json::Value> {
+    read_text(path)
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() {
+                None
+            } else {
+                serde_json::from_str::<serde_json::Value>(line).ok()
+            }
+        })
+        .collect()
+}
+
+fn json_string_any(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| json_string(value, key))
+}
+
+fn list_markdown_recursive(dir: &Path) -> Vec<PathBuf> {
+    fn collect(dir: &Path, files: &mut Vec<PathBuf>) {
+        if let Ok(read_dir) = fs::read_dir(dir) {
+            for entry in read_dir.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    collect(&path, files);
+                } else if path.extension().and_then(OsStr::to_str) == Some("md") {
+                    files.push(path);
+                }
+            }
+        }
+    }
+
+    let mut files = Vec::new();
+    collect(dir, &mut files);
+    files.sort();
+    files
+}
+
+#[derive(Debug, Clone)]
+struct ReadingSourceRecord {
+    source_uuid: String,
+    source_id: Option<String>,
+    source_sha256: Option<String>,
+    source_path: String,
+    source_page: Option<String>,
+    artifact_path: Option<String>,
+    status: String,
+    duplicate_of: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ReadingArtifactRecord {
+    source_uuid: Option<String>,
+    source_id: Option<String>,
+    artifact_path: String,
+    status: String,
+    contract_valid: Option<bool>,
+    manifest_path: Option<String>,
+}
+
+fn reading_quality_report_path(vault: &Path) -> PathBuf {
+    vault.join("_state").join("obsidian-reading-quality.json")
+}
+
+fn quality_finding(
+    severity: &str,
+    kind: &str,
+    object_type: &str,
+    object_id: &str,
+    title: String,
+    detail: String,
+    path: Option<String>,
+    evidence_paths: Vec<String>,
+    recommendation: String,
+) -> ReadingQualityFinding {
+    ReadingQualityFinding {
+        finding_id: format!(
+            "reading-quality-{}-{}",
+            kind,
+            short_hash(&sha256_text(object_id))
+        ),
+        severity: severity.to_string(),
+        kind: kind.to_string(),
+        object_type: object_type.to_string(),
+        object_id: object_id.to_string(),
+        title,
+        detail,
+        path,
+        evidence_paths,
+        recommendation,
+    }
+}
+
+fn reading_source_records(vault: &Path) -> Vec<ReadingSourceRecord> {
+    let mut rows = Vec::new();
+    let mut seen = HashSet::new();
+    for state_file in ["source-registry.jsonl", "desktop-source-registry.jsonl"] {
+        for value in read_jsonl_values(&vault.join("_state").join(state_file)) {
+            let source_sha256 = json_string_any(
+                &value,
+                &[
+                    "source_sha256",
+                    "sourceSha256",
+                    "raw_sha256",
+                    "rawSha256",
+                    "sha256",
+                ],
+            );
+            let source_uuid = json_string_any(&value, &["source_uuid", "sourceUuid"])
+                .or_else(|| source_sha256.as_deref().map(source_uuid))
+                .unwrap_or_default();
+            let source_path = json_string_any(
+                &value,
+                &[
+                    "source_path",
+                    "sourcePath",
+                    "raw_path",
+                    "rawPath",
+                    "canonical_path",
+                ],
+            )
+            .unwrap_or_default();
+            if source_uuid.is_empty() && source_path.is_empty() {
+                continue;
+            }
+            let source_id = json_string_any(&value, &["source_id", "sourceId"]);
+            let source_page = json_string_any(&value, &["source_page", "sourcePage"]);
+            let artifact_path = json_string_any(&value, &["artifact_path", "artifactPath"]);
+            let status = json_string(&value, "status").unwrap_or_else(|| "unknown".to_string());
+            let duplicate_of = json_string_any(&value, &["duplicate_of", "duplicateOf"]);
+            let key = format!(
+                "{}|{:?}|{}|{:?}|{:?}|{}",
+                source_uuid, source_id, source_path, source_page, artifact_path, status
+            );
+            if seen.insert(key) {
+                rows.push(ReadingSourceRecord {
+                    source_uuid,
+                    source_id,
+                    source_sha256,
+                    source_path,
+                    source_page,
+                    artifact_path,
+                    status,
+                    duplicate_of,
+                });
+            }
+        }
+    }
+    rows
+}
+
+fn reading_artifact_records(vault: &Path) -> Vec<ReadingArtifactRecord> {
+    let mut rows = Vec::new();
+    let mut seen = HashSet::new();
+    for state_file in ["artifacts.jsonl", "desktop-artifacts.jsonl"] {
+        for value in read_jsonl_values(&vault.join("_state").join(state_file)) {
+            let Some(artifact_path) = json_string_any(&value, &["artifact_path", "artifactPath"])
+            else {
+                continue;
+            };
+            let key = artifact_path.clone();
+            if !seen.insert(key) {
+                continue;
+            }
+            let contract_valid = value
+                .get("contract_valid")
+                .or_else(|| value.get("contractValid"))
+                .and_then(serde_json::Value::as_bool);
+            rows.push(ReadingArtifactRecord {
+                source_uuid: json_string_any(&value, &["source_uuid", "sourceUuid"]),
+                source_id: json_string_any(&value, &["source_id", "sourceId"]),
+                artifact_path,
+                status: json_string(&value, "status").unwrap_or_else(|| "unknown".to_string()),
+                contract_valid,
+                manifest_path: json_string_any(&value, &["manifest_path", "manifestPath"]),
+            });
+        }
+    }
+    rows
+}
+
+fn markdown_title(text: &str, path: &Path) -> String {
+    text.lines()
+        .find_map(|line| line.trim().strip_prefix("# ").map(str::trim))
+        .filter(|title| !title.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| {
+            path.file_stem()
+                .and_then(OsStr::to_str)
+                .unwrap_or("untitled")
+                .to_string()
+        })
+}
+
+fn concept_label_key(value: &str) -> String {
+    value
+        .trim()
+        .trim_end_matches(".md")
+        .trim_start_matches("concepts/")
+        .replace('\\', "/")
+        .replace(' ', "-")
+        .to_ascii_lowercase()
+}
+
+fn concept_aliases(vault: &Path, path: &Path, title: &str) -> HashSet<String> {
+    let rel = rel_path(vault, path);
+    let stem = path
+        .file_stem()
+        .and_then(OsStr::to_str)
+        .unwrap_or_default()
+        .to_string();
+    [rel, title.to_string(), stem]
+        .into_iter()
+        .flat_map(|item| {
+            let no_ext = item.trim_end_matches(".md").to_string();
+            [item, no_ext]
+        })
+        .map(|item| concept_label_key(&item))
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+fn claim_matches_concept(claim: &ClaimLedgerItem, aliases: &HashSet<String>) -> bool {
+    claim.concepts.iter().any(|concept| {
+        let key = concept_label_key(concept);
+        aliases.contains(&key)
+            || aliases
+                .iter()
+                .any(|alias| key.ends_with(alias) || alias.ends_with(&key))
+    })
+}
+
+fn source_record_matches_claim(source: &ReadingSourceRecord, claim: &ClaimLedgerItem) -> bool {
+    claim
+        .source_uuid
+        .as_ref()
+        .is_some_and(|uuid| uuid == &source.source_uuid)
+        || claim
+            .source_id
+            .as_ref()
+            .zip(source.source_id.as_ref())
+            .is_some_and(|(claim_id, source_id)| claim_id == source_id)
+        || claim.source_path.as_ref().is_some_and(|path| {
+            path == &source.source_path
+                || source.source_page.as_ref().is_some_and(|page| page == path)
+        })
+}
+
+fn source_record_matches_text(source: &ReadingSourceRecord, text: &str) -> bool {
+    let text = text.replace('\\', "/").to_ascii_lowercase();
+    [
+        source.source_id.as_deref(),
+        Some(source.source_uuid.as_str()),
+        Some(source.source_path.as_str()),
+        source.source_page.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|value| !value.is_empty())
+    .any(|value| text.contains(&value.replace('\\', "/").to_ascii_lowercase()))
+}
+
+fn reading_artifact_for_source<'a>(
+    source: &ReadingSourceRecord,
+    artifacts: &'a [ReadingArtifactRecord],
+) -> Option<&'a ReadingArtifactRecord> {
+    artifacts.iter().find(|artifact| {
+        artifact
+            .source_uuid
+            .as_ref()
+            .is_some_and(|uuid| uuid == &source.source_uuid)
+            || artifact
+                .source_id
+                .as_ref()
+                .zip(source.source_id.as_ref())
+                .is_some_and(|(artifact_id, source_id)| artifact_id == source_id)
+            || source
+                .artifact_path
+                .as_ref()
+                .is_some_and(|path| path == &artifact.artifact_path)
+    })
+}
+
+fn normalize_reading_text(text: &str) -> String {
+    let mut normalized = String::new();
+    let mut previous_space = false;
+    for ch in text.chars().flat_map(char::to_lowercase) {
+        if ch.is_alphanumeric() {
+            normalized.push(ch);
+            previous_space = false;
+        } else if !previous_space {
+            normalized.push(' ');
+            previous_space = true;
+        }
+    }
+    normalized.trim().to_string()
+}
+
+fn text_ngrams(text: &str) -> HashSet<String> {
+    let compact = normalize_reading_text(text)
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<Vec<_>>();
+    if compact.len() < 80 {
+        return HashSet::new();
+    }
+    compact
+        .windows(8)
+        .map(|window| window.iter().collect::<String>())
+        .collect()
+}
+
+fn text_overlap_score(a: &str, b: &str) -> f64 {
+    let a_grams = text_ngrams(a);
+    let b_grams = text_ngrams(b);
+    let baseline = a_grams.len().min(b_grams.len());
+    if baseline == 0 {
+        return 0.0;
+    }
+    let overlap = a_grams.intersection(&b_grams).count();
+    overlap as f64 / baseline as f64
+}
+
+fn content_fingerprint(text: &str) -> Option<String> {
+    let normalized = normalize_reading_text(text);
+    (normalized.chars().count() >= 160).then(|| sha256_text(&normalized))
+}
+
+fn sorted_vec(mut values: HashSet<String>) -> Vec<String> {
+    let mut items = values.drain().collect::<Vec<_>>();
+    items.sort();
+    items
+}
+
+fn build_reading_quality_report(vault: &Path) -> ReadingQualityReport {
+    let sources = reading_source_records(vault);
+    let artifacts = reading_artifact_records(vault);
+    let concept_paths = list_markdown_recursive(&vault.join("concepts"));
+    let source_pages = list_markdown_recursive(&vault.join("sources"));
+    let claims = claim_ledger_items(vault);
+    let mut findings = Vec::new();
+    let mut concept_reports = Vec::new();
+    let mut orphan_concepts = 0;
+    let mut low_synthesis_concepts = 0;
+    let mut stale_evidence_references = 0;
+    let mut broken_evidence_references = 0;
+    let mut source_identity_drift = 0;
+
+    let mut source_ids_by_hash: HashMap<String, HashSet<String>> = HashMap::new();
+    for source in &sources {
+        if let Some(hash) = &source.source_sha256 {
+            if source.duplicate_of.is_none() {
+                if let Some(source_id) = &source.source_id {
+                    source_ids_by_hash
+                        .entry(hash.clone())
+                        .or_default()
+                        .insert(source_id.clone());
+                }
+            }
+        }
+    }
+    for (hash, ids) in source_ids_by_hash {
+        if ids.len() > 1 {
+            source_identity_drift += 1;
+            let evidence_paths = sources
+                .iter()
+                .filter(|source| source.source_sha256.as_deref() == Some(hash.as_str()))
+                .map(|source| source.source_path.clone())
+                .collect::<Vec<_>>();
+            findings.push(quality_finding(
+                "p1",
+                "source_identity_drift",
+                "source",
+                &hash,
+                "Same source hash maps to multiple source IDs".to_string(),
+                format!(
+                    "One raw source hash is represented by multiple stable IDs: {}.",
+                    sorted_vec(ids).join(", ")
+                ),
+                None,
+                evidence_paths,
+                "Review source registry aliases before trusting duplicated source or concept entrypoints."
+                    .to_string(),
+            ));
+        }
+    }
+
+    let mut uuids_by_id: HashMap<String, HashSet<String>> = HashMap::new();
+    for source in &sources {
+        if source.duplicate_of.is_none() {
+            if let Some(source_id) = &source.source_id {
+                uuids_by_id
+                    .entry(source_id.clone())
+                    .or_default()
+                    .insert(source.source_uuid.clone());
+            }
+        }
+    }
+    for (source_id, uuids) in uuids_by_id {
+        if uuids.len() > 1 {
+            source_identity_drift += 1;
+            findings.push(quality_finding(
+                "p1",
+                "source_id_drift",
+                "source",
+                &source_id,
+                "One source ID maps to multiple source UUIDs".to_string(),
+                format!(
+                    "{source_id} points at multiple source UUIDs: {}.",
+                    sorted_vec(uuids).join(", ")
+                ),
+                None,
+                Vec::new(),
+                "Repair source registry identity before using affected concepts as stable synthesis."
+                    .to_string(),
+            ));
+        }
+    }
+
+    let mut concept_fingerprints: HashMap<String, Vec<String>> = HashMap::new();
+    let mut source_fingerprints: HashMap<String, Vec<String>> = HashMap::new();
+    for path in &source_pages {
+        if let Some(fingerprint) = content_fingerprint(&read_text(path)) {
+            source_fingerprints
+                .entry(fingerprint)
+                .or_default()
+                .push(rel_path(vault, path));
+        }
+    }
+
+    for concept_path in concept_paths {
+        let concept_text = read_text(&concept_path);
+        let concept_rel = rel_path(vault, &concept_path);
+        let title = markdown_title(&concept_text, &concept_path);
+        if let Some(fingerprint) = content_fingerprint(&concept_text) {
+            concept_fingerprints
+                .entry(fingerprint)
+                .or_default()
+                .push(concept_rel.clone());
+        }
+        let aliases = concept_aliases(vault, &concept_path, &title);
+        let matched_claims = claims
+            .iter()
+            .filter(|claim| claim_matches_concept(claim, &aliases))
+            .collect::<Vec<_>>();
+
+        let mut concept_sources = HashSet::new();
+        let mut concept_source_pages = HashSet::new();
+        let mut concept_claims = HashSet::new();
+        let mut concept_artifacts = HashSet::new();
+        let mut artifact_statuses = HashSet::new();
+        let mut issues = Vec::new();
+
+        for claim in matched_claims {
+            concept_claims.insert(claim.claim_id.clone());
+            for source in sources
+                .iter()
+                .filter(|source| source_record_matches_claim(source, claim))
+            {
+                if let Some(source_id) = &source.source_id {
+                    concept_sources.insert(source_id.clone());
+                }
+                if let Some(page) = &source.source_page {
+                    concept_source_pages.insert(page.clone());
+                }
+            }
+        }
+        for source in sources
+            .iter()
+            .filter(|source| source_record_matches_text(source, &concept_text))
+        {
+            if let Some(source_id) = &source.source_id {
+                concept_sources.insert(source_id.clone());
+            }
+            if let Some(page) = &source.source_page {
+                concept_source_pages.insert(page.clone());
+            }
+        }
+
+        let referenced_sources = sources
+            .iter()
+            .filter(|source| {
+                source
+                    .source_id
+                    .as_ref()
+                    .is_some_and(|id| concept_sources.contains(id))
+                    || source
+                        .source_page
+                        .as_ref()
+                        .is_some_and(|page| concept_source_pages.contains(page))
+            })
+            .collect::<Vec<_>>();
+
+        if referenced_sources.is_empty() && concept_claims.is_empty() {
+            orphan_concepts += 1;
+            issues.push("orphan_concept".to_string());
+            findings.push(quality_finding(
+                "p2",
+                "orphan_concept",
+                "concept",
+                &concept_rel,
+                "Concept has no detected source or claim dependency".to_string(),
+                "The concept page is not linked to claim ledger rows or source registry records."
+                    .to_string(),
+                Some(concept_rel.clone()),
+                Vec::new(),
+                "Link the concept to evidence or keep it out of trusted reading paths.".to_string(),
+            ));
+        }
+
+        for source in &referenced_sources {
+            if let Some(artifact) = reading_artifact_for_source(source, &artifacts) {
+                concept_artifacts.insert(artifact.artifact_path.clone());
+                artifact_statuses.insert(format!("{}:{}", artifact.artifact_path, artifact.status));
+                if artifact.status == "stale" {
+                    stale_evidence_references += 1;
+                    issues.push("stale_artifact_reference".to_string());
+                    findings.push(quality_finding(
+                        "p1",
+                        "stale_artifact_reference",
+                        "concept",
+                        &concept_rel,
+                        "Concept references stale parsed evidence".to_string(),
+                        format!("The concept depends on stale artifact {}.", artifact.artifact_path),
+                        Some(concept_rel.clone()),
+                        vec![artifact
+                            .manifest_path
+                            .clone()
+                            .unwrap_or_else(|| artifact.artifact_path.clone())],
+                        "Regenerate the source artifact before trusting or writing back this concept."
+                            .to_string(),
+                    ));
+                }
+                if artifact.contract_valid == Some(false) {
+                    broken_evidence_references += 1;
+                    issues.push("artifact_hash_mismatch_reference".to_string());
+                    findings.push(quality_finding(
+                        "p1",
+                        "artifact_hash_mismatch_reference",
+                        "concept",
+                        &concept_rel,
+                        "Concept references an artifact hash mismatch".to_string(),
+                        format!(
+                            "The concept depends on artifact {} whose manifest hash does not match.",
+                            artifact.artifact_path
+                        ),
+                        Some(concept_rel.clone()),
+                        vec![artifact
+                            .manifest_path
+                            .clone()
+                            .unwrap_or_else(|| artifact.artifact_path.clone())],
+                        "Repair the artifact contract and rerun traceability before using this concept."
+                            .to_string(),
+                    ));
+                }
+            } else if source.artifact_path.is_some() {
+                broken_evidence_references += 1;
+                issues.push("missing_artifact_reference".to_string());
+                findings.push(quality_finding(
+                    "p1",
+                    "missing_artifact_reference",
+                    "concept",
+                    &concept_rel,
+                    "Concept references a source without a readable artifact".to_string(),
+                    format!(
+                        "The concept depends on source {} but no artifact contract row was found.",
+                        source
+                            .source_id
+                            .as_deref()
+                            .unwrap_or(source.source_uuid.as_str())
+                    ),
+                    Some(concept_rel.clone()),
+                    source.artifact_path.clone().into_iter().collect(),
+                    "Regenerate or restage the artifact before trusting this synthesis."
+                        .to_string(),
+                ));
+            }
+            if matches!(source.status.as_str(), "stale" | "blocked" | "failed") {
+                stale_evidence_references += 1;
+                issues.push(format!("{}_source_reference", source.status));
+                findings.push(quality_finding(
+                    "p1",
+                    "stale_source_reference",
+                    "concept",
+                    &concept_rel,
+                    "Concept references a non-current source".to_string(),
+                    format!(
+                        "The concept depends on source status {} for {}.",
+                        source.status,
+                        source
+                            .source_id
+                            .as_deref()
+                            .unwrap_or(source.source_uuid.as_str())
+                    ),
+                    Some(concept_rel.clone()),
+                    vec![source.source_path.clone()],
+                    "Resolve the source ingest state before treating this concept as stable."
+                        .to_string(),
+                ));
+            }
+        }
+
+        if referenced_sources.len() == 1 {
+            if let Some(source_page) = referenced_sources[0]
+                .source_page
+                .as_ref()
+                .map(|page| vault.join(page))
+                .filter(|page| page.is_file())
+            {
+                let overlap = text_overlap_score(&concept_text, &read_text(&source_page));
+                if overlap >= 0.82 {
+                    low_synthesis_concepts += 1;
+                    issues.push("low_synthesis_concept".to_string());
+                    findings.push(quality_finding(
+                        "p2",
+                        "low_synthesis_concept",
+                        "concept",
+                        &concept_rel,
+                        "Concept appears to repeat one source page".to_string(),
+                        format!(
+                            "The concept has one detected source and {:.0}% text overlap with its source page.",
+                            overlap * 100.0
+                        ),
+                        Some(concept_rel.clone()),
+                        vec![rel_path(vault, &source_page)],
+                        "Use the concept for cross-source synthesis or keep it as a source summary."
+                            .to_string(),
+                    ));
+                }
+            }
+        }
+
+        issues.sort();
+        issues.dedup();
+        concept_reports.push(ConceptReadingQuality {
+            concept_path: concept_rel,
+            title,
+            source_ids: sorted_vec(concept_sources),
+            source_pages: sorted_vec(concept_source_pages),
+            claim_ids: sorted_vec(concept_claims),
+            artifact_paths: sorted_vec(concept_artifacts),
+            artifact_statuses: sorted_vec(artifact_statuses),
+            issues,
+        });
+    }
+
+    let mut duplicate_groups = 0;
+    for paths in concept_fingerprints.values() {
+        if paths.len() > 1 {
+            duplicate_groups += 1;
+            findings.push(quality_finding(
+                "p2",
+                "duplicate_concept_content",
+                "concept",
+                &paths.join("|"),
+                "Multiple concept pages have identical normalized content".to_string(),
+                format!("Duplicate concept pages: {}.", paths.join(", ")),
+                paths.first().cloned(),
+                paths.clone(),
+                "Review whether these should be aliases before using both as reading entrypoints."
+                    .to_string(),
+            ));
+        }
+    }
+    for paths in source_fingerprints.values() {
+        if paths.len() > 1 {
+            duplicate_groups += 1;
+            findings.push(quality_finding(
+                "p2",
+                "duplicate_source_page_content",
+                "source",
+                &paths.join("|"),
+                "Multiple source pages have identical normalized content".to_string(),
+                format!("Duplicate source pages: {}.", paths.join(", ")),
+                paths.first().cloned(),
+                paths.clone(),
+                "Confirm registry aliases before treating duplicate source pages as separate evidence."
+                    .to_string(),
+            ));
+        }
+    }
+
+    findings.sort_by(|a, b| {
+        a.severity
+            .cmp(&b.severity)
+            .then_with(|| a.kind.cmp(&b.kind))
+            .then_with(|| a.object_id.cmp(&b.object_id))
+    });
+    concept_reports.sort_by(|a, b| a.concept_path.cmp(&b.concept_path));
+
+    let trust_issues = findings
+        .iter()
+        .filter(|finding| {
+            matches!(
+                finding.kind.as_str(),
+                "stale_artifact_reference"
+                    | "artifact_hash_mismatch_reference"
+                    | "missing_artifact_reference"
+                    | "stale_source_reference"
+                    | "source_identity_drift"
+                    | "source_id_drift"
+            )
+        })
+        .count();
+    let summary = ReadingQualitySummary {
+        concepts: concept_reports.len(),
+        sources: source_pages.len().max(sources.len()),
+        findings: findings.len(),
+        trust_issues,
+        duplicate_groups,
+        orphan_concepts,
+        stale_evidence_references,
+        broken_evidence_references,
+        source_identity_drift,
+        low_synthesis_concepts,
+        report_path: rel_path(vault, &reading_quality_report_path(vault)),
+    };
+
+    ReadingQualityReport {
+        generated_at: Local::now().to_rfc3339(),
+        vault_path: to_display(vault),
+        summary,
+        findings,
+        concepts: concept_reports,
+    }
+}
+
+fn write_reading_quality_report(vault: &Path) -> Result<ReadingQualityReport, String> {
+    let report = build_reading_quality_report(vault);
+    let rendered = serde_json::to_string_pretty(&report)
+        .map_err(|e| format!("failed to serialize reading quality report: {e}"))?;
+    write_text(&reading_quality_report_path(vault), &(rendered + "\n"))?;
+    Ok(report)
+}
+
 fn status_override_path(vault: &Path, file_name: &str) -> PathBuf {
     vault.join("_state").join(file_name)
 }
@@ -2025,6 +2815,12 @@ fn inspect_vault(vault_path: String) -> Result<VaultStatus, String> {
         });
     }
 
+    let reading_quality = vault
+        .join("_state")
+        .is_dir()
+        .then(|| write_reading_quality_report(&vault).ok())
+        .flatten()
+        .map(|report| report.summary);
     let runtime = runtime_scripts_path(&vault);
     Ok(VaultStatus {
         path: to_display(&vault),
@@ -2058,6 +2854,7 @@ fn inspect_vault(vault_path: String) -> Result<VaultStatus, String> {
                 &vault.join("_state").join("desktop-actions.jsonl"),
             )),
         },
+        reading_quality,
         files,
         errors,
     })
@@ -8430,6 +9227,12 @@ mod tests {
         assert!(home.contains("- Blocked sources: 1"));
         assert!(home.contains("[[sources/LLM-0001]]"));
         assert!(home.contains("[[concepts/research-strategy]]"));
+        assert!(home.contains("## Reading Quality"));
+        assert!(home.contains("_state/obsidian-reading-quality.json"));
+        assert!(vault
+            .join("_state")
+            .join("obsidian-reading-quality.json")
+            .is_file());
         assert!(home.contains("Claims needing review: 1"));
         assert!(home.contains("Stale claims: 1"));
         assert!(home.contains("Query writeback proposals waiting for review: 1"));
@@ -8452,6 +9255,80 @@ mod tests {
 
         let _ = fs::remove_dir_all(vault);
         let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn reading_quality_report_tracks_concept_dependencies_and_trust_risks() {
+        let vault = test_vault("reading-quality");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        let repeated = "DeepSeek frames research around efficient reasoning, evidence-backed evaluation, and careful resource tradeoffs. "
+            .repeat(12);
+        write_text(
+            &vault.join("sources").join("LLM-0001.md"),
+            &format!("# DFC Source\n\n{repeated}\n"),
+        )
+        .expect("source page");
+        write_text(
+            &vault.join("concepts").join("research-strategy.md"),
+            &format!("# Research Strategy\n\n{repeated}\n"),
+        )
+        .expect("concept page");
+        write_text(
+            &vault.join("concepts").join("orphan.md"),
+            "# Orphan\n\nNo source or claim link yet.\n",
+        )
+        .expect("orphan concept");
+        write_text(
+            &vault.join("_state").join("source-registry.jsonl"),
+            "{\"source_uuid\":\"sha256:dfc\",\"source_id\":\"LLM-0001\",\"source_path\":\"raw/inbox/dfc.pdf\",\"source_sha256\":\"dfc-hash\",\"status\":\"published\",\"source_page\":\"sources/LLM-0001.md\",\"artifact_path\":\"parsed/dfc/combined.md\"}\n{\"source_uuid\":\"sha256:dfc-copy\",\"source_id\":\"LLM-0002\",\"source_path\":\"raw/inbox/dfc-copy.pdf\",\"source_sha256\":\"dfc-hash\",\"status\":\"published\",\"source_page\":\"sources/LLM-0002.md\"}\n",
+        )
+        .expect("registry");
+        write_text(
+            &vault.join("_state").join("artifacts.jsonl"),
+            "{\"source_uuid\":\"sha256:dfc\",\"source_id\":\"LLM-0001\",\"artifact_path\":\"parsed/dfc/combined.md\",\"manifest_path\":\"parsed/dfc/manifest.json\",\"status\":\"stale\",\"contract_valid\":false}\n",
+        )
+        .expect("artifacts");
+        write_text(
+            &vault.join("claims").join("claims.jsonl"),
+            "{\"claim_id\":\"claim-dfc\",\"claim_text\":\"DeepSeek emphasizes efficient reasoning.\",\"source_id\":\"LLM-0001\",\"source_uuid\":\"sha256:dfc\",\"concepts\":[\"research-strategy\"],\"evidence_quote\":\"efficient reasoning\",\"evidence_hash\":\"quote-hash\",\"verdict\":\"supported\",\"status\":\"supported\"}\n",
+        )
+        .expect("claims");
+
+        let report = write_reading_quality_report(&vault).expect("write reading report");
+        assert_eq!(report.summary.concepts, 2);
+        assert_eq!(report.summary.low_synthesis_concepts, 1);
+        assert_eq!(report.summary.orphan_concepts, 1);
+        assert_eq!(report.summary.source_identity_drift, 1);
+        assert!(report.summary.trust_issues >= 3);
+        let kinds = report
+            .findings
+            .iter()
+            .map(|finding| finding.kind.as_str())
+            .collect::<HashSet<_>>();
+        assert!(kinds.contains("source_identity_drift"));
+        assert!(kinds.contains("stale_artifact_reference"));
+        assert!(kinds.contains("artifact_hash_mismatch_reference"));
+        assert!(kinds.contains("low_synthesis_concept"));
+        assert!(kinds.contains("orphan_concept"));
+        let concept = report
+            .concepts
+            .iter()
+            .find(|concept| concept.concept_path == "concepts/research-strategy.md")
+            .expect("concept report");
+        assert_eq!(concept.claim_ids, vec!["claim-dfc".to_string()]);
+        assert_eq!(concept.source_ids, vec!["LLM-0001".to_string()]);
+        assert_eq!(
+            concept.artifact_paths,
+            vec!["parsed/dfc/combined.md".to_string()]
+        );
+        assert!(concept
+            .artifact_statuses
+            .contains(&"parsed/dfc/combined.md:stale".to_string()));
+        let persisted = read_text(&vault.join("_state").join("obsidian-reading-quality.json"));
+        assert!(persisted.contains("\"conceptPath\": \"concepts/research-strategy.md\""));
+        assert!(persisted.contains("\"artifact_hash_mismatch_reference\""));
+
+        let _ = fs::remove_dir_all(vault);
     }
 
     #[test]
@@ -9063,6 +9940,13 @@ fn count_writeback_statuses(vault: &Path) -> HashMap<String, usize> {
 
 fn generate_entry_note(vault: &Path) -> Result<PathBuf, String> {
     let path = generated_entry_note(vault);
+    let reading_quality = vault
+        .join("_state")
+        .is_dir()
+        .then(|| write_reading_quality_report(vault).ok())
+        .flatten()
+        .map(|report| report.summary)
+        .unwrap_or_default();
     if path.is_file() {
         return Ok(path);
     }
@@ -9108,9 +9992,19 @@ fn generate_entry_note(vault: &Path) -> Result<PathBuf, String> {
     let source_links = markdown_list_links(vault, &sources, "No generated source pages yet.", 12);
     let concept_links = markdown_list_links(vault, &concepts, "No concept pages yet.", 12);
     let rendered = format!(
-        "# LLM Wiki Home\n\n## Start Here\n\n- Read the corpus map first to understand which source pages exist and which inputs are still stale or blocked.\n- Use the concept map for synthesis reading after checking the trust status below.\n- Resolve review-required claims before treating generated insights as stable knowledge.\n- Keep query writeback proposals in `reviews/query-writeback/` until a human explicitly approves them.\n\n## Corpus Map\n\n- Source pages: {source_count}\n- Published sources: {published_sources}\n- Stale sources: {stale_sources}\n- Blocked sources: {blocked_sources}\n\n{source_links}\n## Concept Map\n\n- Concept pages: {concept_count}\n\n{concept_links}\n## Trust Status\n\n- Claims: {claims}\n- Claims needing review: {claims_needing_review}\n- Stale claims: {stale_claims}\n- Contradicted claims: {contradicted_claims}\n- Science review queue: [`{review_path}`]({review_path}) ({reviews} items)\n- Traceability / lint findings: [`{lint_path}`]({lint_path}) ({lint_findings} items)\n- Query writeback proposals waiting for review: {proposed_writebacks}\n\n## Review Queue\n\n- Claims ledger: [`claims/claims.jsonl`](claims/claims.jsonl)\n- Science review queue: [`{review_path}`]({review_path})\n- Query writeback review area: [`reviews/query-writeback/`](reviews/query-writeback/)\n\n## Suggested Questions\n\n- Which sources are published, stale, or blocked, and what is the next action for each?\n- Which concepts are safe to read as stable synthesis, and which still depend on review-required claims?\n- What evidence supports the main research strategy, and which conclusions are inference or forecast?\n- Which query writeback proposals are still review-only and should not be copied into concept pages?\n\n## Trust Boundary\n\nThis generated home note is a navigation aid. Source pages, claims, science review, and query writeback approval remain runtime-owned state. Do not treat proposed writeback content or review-required claims as approved knowledge.\n",
+        "# LLM Wiki Home\n\n## Start Here\n\n- Read the corpus map first to understand which source pages exist and which inputs are still stale or blocked.\n- Use the concept map for synthesis reading after checking the trust status below.\n- Resolve review-required claims before treating generated insights as stable knowledge.\n- Keep query writeback proposals in `reviews/query-writeback/` until a human explicitly approves them.\n\n## Corpus Map\n\n- Source pages: {source_count}\n- Published sources: {published_sources}\n- Stale sources: {stale_sources}\n- Blocked sources: {blocked_sources}\n\n{source_links}\n## Concept Map\n\n- Concept pages: {concept_count}\n\n{concept_links}\n## Reading Quality\n\n- Report: [`{reading_report}`]({reading_report})\n- Findings: {reading_findings}\n- Trust issues: {reading_trust_issues}\n- Duplicate groups: {reading_duplicate_groups}\n- Orphan concepts: {reading_orphan_concepts}\n- Low-synthesis concepts: {reading_low_synthesis}\n\n## Trust Status\n\n- Claims: {claims}\n- Claims needing review: {claims_needing_review}\n- Stale claims: {stale_claims}\n- Contradicted claims: {contradicted_claims}\n- Science review queue: [`{review_path}`]({review_path}) ({reviews} items)\n- Traceability / lint findings: [`{lint_path}`]({lint_path}) ({lint_findings} items)\n- Query writeback proposals waiting for review: {proposed_writebacks}\n\n## Review Queue\n\n- Claims ledger: [`claims/claims.jsonl`](claims/claims.jsonl)\n- Science review queue: [`{review_path}`]({review_path})\n- Query writeback review area: [`reviews/query-writeback/`](reviews/query-writeback/)\n\n## Suggested Questions\n\n- Which sources are published, stale, or blocked, and what is the next action for each?\n- Which concepts are safe to read as stable synthesis, and which still depend on review-required claims?\n- What evidence supports the main research strategy, and which conclusions are inference or forecast?\n- Which query writeback proposals are still review-only and should not be copied into concept pages?\n\n## Trust Boundary\n\nThis generated home note is a navigation aid. Source pages, claims, science review, reading quality findings, and query writeback approval remain runtime-owned state. Do not treat proposed writeback content or review-required claims as approved knowledge.\n",
         source_count = sources.len(),
         concept_count = concepts.len(),
+        reading_report = if reading_quality.report_path.is_empty() {
+            "_state/obsidian-reading-quality.json"
+        } else {
+            reading_quality.report_path.as_str()
+        },
+        reading_findings = reading_quality.findings,
+        reading_trust_issues = reading_quality.trust_issues,
+        reading_duplicate_groups = reading_quality.duplicate_groups,
+        reading_orphan_concepts = reading_quality.orphan_concepts,
+        reading_low_synthesis = reading_quality.low_synthesis_concepts,
         review_path = "_state/science-review-queue.jsonl",
         lint_path = "_state/lint-findings.jsonl",
     );
