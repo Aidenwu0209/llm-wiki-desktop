@@ -4924,6 +4924,94 @@ fn preferred_registry_row_path(value: &serde_json::Value) -> Option<String> {
         .or_else(|| json_string(value, "canonicalPath"))
 }
 
+fn registry_row_source_hash_or_uuid(value: &serde_json::Value) -> Option<String> {
+    registry_row_source_hash(value).or_else(|| {
+        registry_row_source_uuid(value).map(|uuid| {
+            uuid.strip_prefix("sha256:")
+                .unwrap_or(uuid.as_str())
+                .to_string()
+        })
+    })
+}
+
+fn registry_row_path_inside_vault(vault: &Path, value: &serde_json::Value) -> Option<PathBuf> {
+    let raw_path = preferred_registry_row_path(value)?;
+    let path = PathBuf::from(&raw_path);
+    let candidate = if path.is_absolute() {
+        path
+    } else {
+        vault.join(path)
+    };
+    ensure_inside(
+        &candidate,
+        vault,
+        "registry source path must stay inside the vault",
+    )
+    .ok()
+}
+
+fn append_missing_runtime_registry_entries(vault: &Path, registry: &mut Vec<DesktopRegistryEntry>) {
+    let mut current_keys = HashSet::new();
+    for entry in registry.iter() {
+        current_keys.insert(entry.source_uuid.clone());
+        current_keys.insert(entry.source_sha256.clone());
+        current_keys.insert(entry.source_path.clone());
+        current_keys.insert(entry.raw_path.clone());
+        current_keys.insert(entry.canonical_path.clone());
+    }
+    let now = Local::now().to_rfc3339();
+    for row in registry_rows(vault) {
+        let Some(source_path) = registry_row_path_inside_vault(vault, &row) else {
+            continue;
+        };
+        if source_path.is_file() {
+            continue;
+        }
+        let Some(source_sha256) = registry_row_source_hash_or_uuid(&row) else {
+            continue;
+        };
+        let source_uuid =
+            registry_row_source_uuid(&row).unwrap_or_else(|| source_uuid(&source_sha256));
+        let source_rel = rel_path(vault, &source_path);
+        if current_keys.contains(&source_uuid)
+            || current_keys.contains(&source_sha256)
+            || current_keys.contains(&source_rel)
+        {
+            continue;
+        }
+        current_keys.insert(source_uuid.clone());
+        current_keys.insert(source_sha256.clone());
+        current_keys.insert(source_rel.clone());
+        registry.push(DesktopRegistryEntry {
+            source_uuid,
+            source_id: registry_row_source_id(&row),
+            duplicate_of: None,
+            raw_path: source_rel.clone(),
+            canonical_path: source_rel.clone(),
+            source_path: source_rel,
+            source_sha256,
+            mime: detect_mime(&source_path),
+            artifact_path: json_string(&row, "artifact_path")
+                .or_else(|| json_string(&row, "artifactPath")),
+            artifact_sha256: json_string(&row, "artifact_sha256")
+                .or_else(|| json_string(&row, "artifactSha256")),
+            parser: json_string(&row, "parser"),
+            parser_version: json_string(&row, "parser_version")
+                .or_else(|| json_string(&row, "parserVersion")),
+            status: "missing_raw_source".to_string(),
+            source_page: json_string(&row, "source_page").or_else(|| json_string(&row, "sourcePage")),
+            last_error: Some(
+                "raw source is missing; manual plan creates an impact warning and does not delete source or concept pages"
+                    .to_string(),
+            ),
+            created_at: json_string(&row, "created_at").or_else(|| json_string(&row, "createdAt")),
+            updated_at: Some(now.clone()),
+            published_at: json_string(&row, "published_at")
+                .or_else(|| json_string(&row, "publishedAt")),
+        });
+    }
+}
+
 fn source_alias_id(old_path: Option<&str>, new_path: &str, reason: &str) -> String {
     format!(
         "alias-{}",
@@ -5754,6 +5842,7 @@ fn build_ingest_contracts(
         .map(|entry| registry_entry_for_plan_entry(vault, entry))
         .collect::<Vec<_>>();
     assign_stable_source_ids(vault, &mut registry)?;
+    append_missing_runtime_registry_entries(vault, &mut registry);
     let source_aliases = source_id_aliases_for_registry(vault, &registry);
     let source_ids = registry
         .iter()
@@ -10249,6 +10338,47 @@ mod tests {
             .source_aliases
             .iter()
             .any(|alias| alias.match_reason == "renamed_or_moved_same_sha256"));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn plan_reports_deleted_registered_source_without_deleting_outputs() {
+        let vault = test_vault("deleted-source-plan");
+        let source = vault.join("raw").join("note.md");
+        write_text(&source, "# Source\n").expect("write source");
+
+        let first_plan = plan_ingest(to_display(&vault)).expect("plan source");
+        let source_id = first_plan.registry[0].source_id.clone().expect("source id");
+        let source_page = vault.join(source_page_for_id(&source_id));
+        write_text(&source_page, "# Source Page\n").expect("source page");
+        let concept = vault.join("concepts").join("research-strategy.md");
+        write_text(&concept, "# Research Strategy\n").expect("concept page");
+
+        fs::remove_file(&source).expect("delete raw source");
+        let deleted_plan = plan_ingest(to_display(&vault)).expect("plan deleted source");
+        let missing = deleted_plan
+            .registry
+            .iter()
+            .find(|entry| entry.status == "missing_raw_source")
+            .expect("missing source registry entry");
+        assert_eq!(missing.source_id.as_deref(), Some(source_id.as_str()));
+        assert_eq!(missing.source_path, "raw/note.md");
+        assert!(missing
+            .last_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("does not delete source or concept pages"));
+        assert!(deleted_plan
+            .lint_findings
+            .iter()
+            .any(|finding| finding.kind == "missing_raw_source"));
+        assert!(deleted_plan
+            .actions
+            .iter()
+            .any(|action| action.reason == "missing_raw_source"));
+        assert!(source_page.is_file());
+        assert!(concept.is_file());
 
         let _ = fs::remove_dir_all(vault);
     }
