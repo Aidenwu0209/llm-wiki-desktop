@@ -505,6 +505,7 @@ struct IngestPlan {
     summary: IngestPlanSummary,
     entries: Vec<IngestPlanEntry>,
     registry: Vec<DesktopRegistryEntry>,
+    source_aliases: Vec<SourceIdAlias>,
     artifacts: Vec<ArtifactContractSummary>,
     jobs: Vec<DesktopIngestJob>,
     actions: Vec<DashboardAction>,
@@ -514,6 +515,7 @@ struct IngestPlan {
 
 struct IngestContracts {
     registry: Vec<DesktopRegistryEntry>,
+    source_aliases: Vec<SourceIdAlias>,
     artifacts: Vec<ArtifactContractSummary>,
     jobs: Vec<DesktopIngestJob>,
     actions: Vec<DashboardAction>,
@@ -625,6 +627,22 @@ struct DesktopRegistryEntry {
     created_at: Option<String>,
     updated_at: Option<String>,
     published_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SourceIdAlias {
+    alias_id: String,
+    old_source_uuid: Option<String>,
+    new_source_uuid: String,
+    source_id: Option<String>,
+    old_source_path: Option<String>,
+    new_source_path: String,
+    match_reason: String,
+    signals: Vec<String>,
+    created_at: String,
+    status: String,
+    needs_review: bool,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -2976,6 +2994,13 @@ fn create_minimal_vault(vault: &Path) -> Result<(), String> {
         vault.join("_state/desktop-source-registry.jsonl").as_path(),
         "",
     )?;
+    write_text(vault.join("_state/source-id-aliases.jsonl").as_path(), "")?;
+    write_text(
+        vault
+            .join("_state/desktop-source-id-aliases.jsonl")
+            .as_path(),
+        "",
+    )?;
     write_text(vault.join("_state/desktop-artifacts.jsonl").as_path(), "")?;
     write_text(vault.join("_state/desktop-ingest-jobs.jsonl").as_path(), "")?;
     write_text(vault.join("_state/desktop-actions.jsonl").as_path(), "")?;
@@ -4411,6 +4436,277 @@ fn assign_stable_source_ids(
     write_next_source_id(vault, next)
 }
 
+fn registry_row_source_uuid(value: &serde_json::Value) -> Option<String> {
+    json_string(value, "source_uuid")
+        .or_else(|| json_string(value, "sourceUuid"))
+        .or_else(|| json_string(value, "source_sha256").map(|hash| source_uuid(&hash)))
+        .or_else(|| json_string(value, "sourceSha256").map(|hash| source_uuid(&hash)))
+}
+
+fn registry_row_source_id(value: &serde_json::Value) -> Option<String> {
+    json_string(value, "source_id").or_else(|| json_string(value, "sourceId"))
+}
+
+fn registry_row_source_hash(value: &serde_json::Value) -> Option<String> {
+    json_string(value, "source_sha256")
+        .or_else(|| json_string(value, "sourceSha256"))
+        .or_else(|| json_string(value, "sha256"))
+}
+
+fn registry_row_paths(value: &serde_json::Value) -> Vec<String> {
+    [
+        "source_path",
+        "sourcePath",
+        "raw_path",
+        "rawPath",
+        "canonical_path",
+        "canonicalPath",
+        "source_page",
+        "sourcePage",
+    ]
+    .iter()
+    .filter_map(|key| json_string(value, key))
+    .collect()
+}
+
+fn same_vault_path(vault: &Path, left: &str, right: &str) -> bool {
+    if left == right {
+        return true;
+    }
+    rel_path(vault, &PathBuf::from(left)) == rel_path(vault, &PathBuf::from(right))
+}
+
+fn registry_row_matches_path(vault: &Path, value: &serde_json::Value, path: &str) -> bool {
+    registry_row_paths(value)
+        .iter()
+        .any(|candidate| same_vault_path(vault, candidate, path))
+}
+
+fn preferred_registry_row_path(value: &serde_json::Value) -> Option<String> {
+    json_string(value, "source_path")
+        .or_else(|| json_string(value, "sourcePath"))
+        .or_else(|| json_string(value, "raw_path"))
+        .or_else(|| json_string(value, "rawPath"))
+        .or_else(|| json_string(value, "canonical_path"))
+        .or_else(|| json_string(value, "canonicalPath"))
+}
+
+fn source_alias_id(old_path: Option<&str>, new_path: &str, reason: &str) -> String {
+    format!(
+        "alias-{}",
+        short_hash(&sha256_text(&format!(
+            "{}:{new_path}:{reason}",
+            old_path.unwrap_or("unknown")
+        )))
+    )
+}
+
+fn source_alias_row(
+    old_source_uuid: Option<String>,
+    new_source_uuid: String,
+    source_id: Option<String>,
+    old_source_path: Option<String>,
+    new_source_path: String,
+    match_reason: String,
+    signals: Vec<String>,
+    needs_review: bool,
+) -> SourceIdAlias {
+    SourceIdAlias {
+        alias_id: source_alias_id(old_source_path.as_deref(), &new_source_path, &match_reason),
+        old_source_uuid,
+        new_source_uuid,
+        source_id,
+        old_source_path,
+        new_source_path,
+        match_reason,
+        signals,
+        created_at: Local::now().to_rfc3339(),
+        status: if needs_review {
+            "possible_new_version".to_string()
+        } else {
+            "confirmed".to_string()
+        },
+        needs_review,
+    }
+}
+
+fn push_unique_source_alias(
+    aliases: &mut Vec<SourceIdAlias>,
+    seen: &mut HashSet<String>,
+    alias: SourceIdAlias,
+) {
+    if seen.insert(alias.alias_id.clone()) {
+        aliases.push(alias);
+    }
+}
+
+fn source_id_aliases_for_registry(
+    vault: &Path,
+    registry: &[DesktopRegistryEntry],
+) -> Vec<SourceIdAlias> {
+    let existing_rows = registry_rows(vault);
+    let mut aliases = Vec::new();
+    let mut seen = HashSet::new();
+
+    for entry in registry {
+        for row in &existing_rows {
+            if registry_row_source_hash(row).as_deref() != Some(entry.source_sha256.as_str()) {
+                continue;
+            }
+            let Some(old_path) = preferred_registry_row_path(row) else {
+                continue;
+            };
+            if same_vault_path(vault, &old_path, &entry.source_path) {
+                continue;
+            }
+            push_unique_source_alias(
+                &mut aliases,
+                &mut seen,
+                source_alias_row(
+                    registry_row_source_uuid(row),
+                    entry.source_uuid.clone(),
+                    entry
+                        .source_id
+                        .clone()
+                        .or_else(|| registry_row_source_id(row)),
+                    Some(rel_path(vault, &PathBuf::from(&old_path))),
+                    entry.source_path.clone(),
+                    "renamed_or_moved_same_sha256".to_string(),
+                    vec![
+                        format!("sha256:{}", entry.source_sha256),
+                        format!("old_path:{}", rel_path(vault, &PathBuf::from(&old_path))),
+                        format!("new_path:{}", entry.source_path),
+                    ],
+                    false,
+                ),
+            );
+        }
+    }
+
+    for line in read_text(&vault.join("_state").join("import-report.jsonl")).lines() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let Some(target_path) =
+            json_string(&value, "targetPath").or_else(|| json_string(&value, "target_path"))
+        else {
+            continue;
+        };
+        let duplicate_reason = json_string(&value, "duplicateReason")
+            .or_else(|| json_string(&value, "duplicate_reason"))
+            .unwrap_or_default();
+        if duplicate_reason == "sha256" {
+            continue;
+        }
+        let Some(new_entry) = registry
+            .iter()
+            .find(|entry| same_vault_path(vault, &entry.source_path, &target_path))
+        else {
+            continue;
+        };
+        let old_path = json_string(&value, "duplicateOf")
+            .or_else(|| json_string(&value, "duplicate_of"))
+            .or_else(|| json_string(&value, "approximateDuplicateOf"))
+            .or_else(|| json_string(&value, "approximate_duplicate_of"));
+        let Some(old_path_value) = old_path.clone() else {
+            continue;
+        };
+        let old_row = existing_rows
+            .iter()
+            .find(|row| registry_row_matches_path(vault, row, &old_path_value));
+        let reason = match duplicate_reason.as_str() {
+            "doi" => "same_doi_different_sha256",
+            "arxiv" => "same_arxiv_different_sha256",
+            "title" => "similar_title_different_sha256",
+            _ => "possible_source_alias",
+        };
+        let mut signals = vec![
+            format!("new_sha256:{}", new_entry.source_sha256),
+            format!(
+                "old_path:{}",
+                rel_path(vault, &PathBuf::from(&old_path_value))
+            ),
+            format!("new_path:{}", new_entry.source_path),
+        ];
+        if let Some(doi) = json_string(&value, "doi") {
+            signals.push(format!("doi:{doi}"));
+        }
+        if let Some(arxiv) =
+            json_string(&value, "arxivId").or_else(|| json_string(&value, "arxiv_id"))
+        {
+            signals.push(format!("arxiv:{arxiv}"));
+        }
+        if let Some(title) =
+            json_string(&value, "titleHint").or_else(|| json_string(&value, "title_hint"))
+        {
+            signals.push(format!("title:{title}"));
+        }
+        push_unique_source_alias(
+            &mut aliases,
+            &mut seen,
+            source_alias_row(
+                old_row.and_then(registry_row_source_uuid),
+                new_entry.source_uuid.clone(),
+                new_entry
+                    .source_id
+                    .clone()
+                    .or_else(|| old_row.and_then(registry_row_source_id)),
+                Some(rel_path(vault, &PathBuf::from(&old_path_value))),
+                new_entry.source_path.clone(),
+                reason.to_string(),
+                signals,
+                true,
+            ),
+        );
+    }
+
+    aliases.sort_by(|a, b| {
+        a.needs_review
+            .cmp(&b.needs_review)
+            .reverse()
+            .then_with(|| a.new_source_path.cmp(&b.new_source_path))
+            .then_with(|| a.match_reason.cmp(&b.match_reason))
+    });
+    aliases
+}
+
+fn load_source_id_aliases(vault: &Path) -> Vec<SourceIdAlias> {
+    read_text(&vault.join("_state").join("source-id-aliases.jsonl"))
+        .lines()
+        .filter_map(|line| serde_json::from_str::<SourceIdAlias>(line).ok())
+        .collect()
+}
+
+fn merge_source_id_aliases(vault: &Path, generated: Vec<SourceIdAlias>) -> Vec<SourceIdAlias> {
+    let mut by_id = HashMap::new();
+    for alias in load_source_id_aliases(vault) {
+        by_id.insert(alias.alias_id.clone(), alias);
+    }
+    for alias in generated {
+        by_id.entry(alias.alias_id.clone()).or_insert(alias);
+    }
+    let mut aliases = by_id.into_values().collect::<Vec<_>>();
+    aliases.sort_by(|a, b| {
+        a.needs_review
+            .cmp(&b.needs_review)
+            .reverse()
+            .then_with(|| a.new_source_path.cmp(&b.new_source_path))
+            .then_with(|| a.match_reason.cmp(&b.match_reason))
+    });
+    aliases
+}
+
+fn write_source_id_aliases(vault: &Path, aliases: &[SourceIdAlias]) -> Result<(), String> {
+    write_jsonl(
+        &vault.join("_state").join("source-id-aliases.jsonl"),
+        aliases,
+    )?;
+    write_jsonl(
+        &vault.join("_state").join("desktop-source-id-aliases.jsonl"),
+        aliases,
+    )
+}
+
 fn registry_key(value: &serde_json::Value) -> Option<String> {
     json_string(value, "source_uuid")
         .or_else(|| json_string(value, "sourceUuid"))
@@ -5025,6 +5321,7 @@ fn build_ingest_contracts(
         .map(|entry| registry_entry_for_plan_entry(vault, entry))
         .collect::<Vec<_>>();
     assign_stable_source_ids(vault, &mut registry)?;
+    let source_aliases = source_id_aliases_for_registry(vault, &registry);
     let source_ids = registry
         .iter()
         .map(|entry| (entry.source_sha256.clone(), entry.source_id.clone()))
@@ -5063,6 +5360,7 @@ fn build_ingest_contracts(
     impact_edges.extend(claim_impact_edges(vault));
     Ok(IngestContracts {
         registry,
+        source_aliases,
         artifacts,
         jobs,
         actions,
@@ -5596,11 +5894,13 @@ fn write_ingest_plan(
     };
     let IngestContracts {
         registry,
+        source_aliases,
         artifacts,
         jobs,
         mut actions,
         impact_edges,
     } = build_ingest_contracts(vault, &entries)?;
+    let source_aliases = merge_source_id_aliases(vault, source_aliases);
     enrich_ingest_plan_entries(vault, &mut entries, &registry, &jobs);
     let mut lint_findings =
         lint_ingest_contracts(vault, &registry, &artifacts, &jobs, &impact_edges);
@@ -5623,6 +5923,7 @@ fn write_ingest_plan(
     write_jsonl(&state.join("impact-graph.jsonl"), &impact_edges)?;
     write_lint_findings(vault, &lint_findings)?;
     write_jsonl(&state.join("desktop-source-registry.jsonl"), &registry)?;
+    write_source_id_aliases(vault, &source_aliases)?;
     merge_runtime_source_registry(vault, &registry)?;
     write_jsonl(&state.join("desktop-artifacts.jsonl"), &artifacts)?;
     write_jsonl(&state.join("desktop-ingest-jobs.jsonl"), &jobs)?;
@@ -5636,6 +5937,7 @@ fn write_ingest_plan(
         summary,
         entries,
         registry,
+        source_aliases,
         artifacts,
         jobs,
         actions,
@@ -9356,6 +9658,21 @@ mod tests {
             .find(|entry| entry.source_path.ends_with("zeta.md"))
             .expect("renamed entry");
         assert_eq!(renamed_entry.source_id.as_deref(), Some(first_id.as_str()));
+        let rename_alias = second_plan
+            .source_aliases
+            .iter()
+            .find(|alias| alias.match_reason == "renamed_or_moved_same_sha256")
+            .expect("rename alias");
+        assert_eq!(rename_alias.source_id.as_deref(), Some(first_id.as_str()));
+        assert_eq!(rename_alias.needs_review, false);
+        assert!(rename_alias
+            .signals
+            .iter()
+            .any(|signal| signal.starts_with("sha256:")));
+        assert!(
+            read_text(&vault.join("_state").join("source-id-aliases.jsonl"))
+                .contains("renamed_or_moved_same_sha256")
+        );
 
         let duplicate = vault.join("raw").join("duplicate.md");
         write_text(&duplicate, "# Same Source\n").expect("write duplicate source");
@@ -9380,6 +9697,62 @@ mod tests {
             .find(|entry| entry.source_path.ends_with("zeta.md"))
             .expect("changed entry");
         assert_eq!(changed_entry.source_id.as_deref(), Some(first_id.as_str()));
+        assert!(changed_plan
+            .source_aliases
+            .iter()
+            .any(|alias| alias.match_reason == "renamed_or_moved_same_sha256"));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn source_id_alias_contract_flags_possible_doi_version() {
+        let vault = test_vault("source-alias-version");
+        let incoming = vault.join("incoming");
+        fs::create_dir_all(&incoming).expect("create incoming");
+        let first = incoming.join("deepseek-v1.md");
+        let second = incoming.join("deepseek-v2.md");
+        write_text(&first, "DOI: 10.1234/deepseek\nold evidence\n").expect("write first");
+        write_text(&second, "DOI: 10.1234/deepseek\nnew evidence\n").expect("write second");
+
+        let first_import = import_sources_impl(&vault, vec![to_display(&first)], false, false)
+            .expect("import first");
+        assert_eq!(first_import.imported.len(), 1);
+        let first_target = first_import.imported[0]
+            .target_path
+            .clone()
+            .expect("first target");
+        let _ = plan_ingest(to_display(&vault)).expect("plan first source");
+
+        let second_import = import_sources_impl(&vault, vec![to_display(&second)], false, false)
+            .expect("import second");
+        assert_eq!(second_import.imported.len(), 1);
+        assert_eq!(
+            second_import.imported[0].duplicate_reason.as_deref(),
+            Some("doi")
+        );
+
+        let plan = plan_ingest(to_display(&vault)).expect("plan version alias");
+        let alias = plan
+            .source_aliases
+            .iter()
+            .find(|alias| alias.match_reason == "same_doi_different_sha256")
+            .expect("doi alias");
+        assert!(alias.needs_review);
+        assert_eq!(alias.status, "possible_new_version");
+        let first_target_rel = rel_path(&vault, &PathBuf::from(&first_target));
+        assert_eq!(
+            alias.old_source_path.as_deref(),
+            Some(first_target_rel.as_str())
+        );
+        assert!(alias
+            .signals
+            .iter()
+            .any(|signal| signal == "doi:10.1234/deepseek"));
+        assert!(
+            read_text(&vault.join("_state").join("source-id-aliases.jsonl"))
+                .contains("same_doi_different_sha256")
+        );
 
         let _ = fs::remove_dir_all(vault);
     }
