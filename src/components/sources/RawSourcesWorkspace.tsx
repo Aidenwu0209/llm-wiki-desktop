@@ -86,6 +86,7 @@ const rawCopy = {
     import: "导入",
     folder: "文件夹",
     plan: "规划",
+    planBoundary: "Refresh / Plan 只生成状态、影响和下一步；不会后台解析、联网、删除资料页或清理概念页。",
     preserve: "保留目录",
     sources: "资料",
     filter: "筛选资料 ID、文件、解析器、状态",
@@ -148,6 +149,7 @@ const rawCopy = {
     unknown: "未知",
     noSourceId: "无资料 ID",
     notUpdated: "未更新",
+    registryIssue: "登记表提示",
     recentImportResults: (count: number) => `上次导入后有 ${count} 条导入结果。`,
     actions: { open: "打开", reveal: "显示", copyPath: "复制路径", obsidian: "Obsidian" },
   },
@@ -159,6 +161,7 @@ const rawCopy = {
     import: "Import",
     folder: "Folder",
     plan: "Plan",
+    planBoundary: "Refresh / Plan only produces state, impact, and next actions; it does not parse in the background, call the network, delete source pages, or clean concept pages.",
     preserve: "preserve folders",
     sources: "Sources",
     filter: "Filter source id, file, parser, status",
@@ -221,6 +224,7 @@ const rawCopy = {
     unknown: "unknown",
     noSourceId: "no source id",
     notUpdated: "not updated",
+    registryIssue: "Registry issue",
     recentImportResults: (count: number) => `${count} recent import results are available after the last import.`,
     actions: { open: "open", reveal: "reveal", copyPath: "copy path", obsidian: "Obsidian" },
   },
@@ -552,6 +556,7 @@ export function RawSourcesWorkspace({
         <div>
           <h2>{text.title}</h2>
           <p>{vaultPath ? text.loaded(records.length) : text.emptyVault}</p>
+          <p className="workflow-hint">{text.planBoundary}</p>
         </div>
         <div className="raw-sources-toolbar">
           <button type="button" onClick={onRefresh} disabled={!vaultPath || busy === "inspect"}>
@@ -721,6 +726,12 @@ export function RawSourcesWorkspace({
                   <div><dt>{text.artifactHash}</dt><dd>{compact(selected.artifactHash)}</dd></div>
                   <div><dt>{text.traceability}</dt><dd>{selected.traceabilityStatus}</dd></div>
                 </dl>
+                {selected.registry?.lastError && (
+                  <div className="raw-source-notes">
+                    <strong>{text.registryIssue}</strong>
+                    <code>{selected.registry.lastError}</code>
+                  </div>
+                )}
 
                 <SourceActions
                   record={selected}

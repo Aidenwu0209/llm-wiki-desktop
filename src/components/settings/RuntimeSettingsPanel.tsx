@@ -718,18 +718,18 @@ export function RuntimeSettingsPanel({
           <div className="settings-section-page">
             {renderSectionHead(
               text.nav["source-watch"],
-              isZh ? "配置资料文件夹监控、允许类型和排除规则。" : "Configure source folder watching, allowed file types, and exclusions.",
-              sectionStatus(isZh ? "可配置" : "Configurable", "available"),
+              isZh ? "先稳定手动 Refresh / Plan；本地监控当前仅作为规则预览，不会后台 ingest。" : "Manual Refresh / Plan comes first; local watching is currently a rule preview and will not ingest in the background.",
+              sectionStatus(isZh ? "Plan-only" : "Plan-only", "available"),
             )}
             <div className="settings-block">
               <div className="settings-block-title"><ShieldCheck size={15} /><span>{isZh ? "导入模式" : "Import mode"}</span></div>
               <label className="switch-row">
                 <input type="checkbox" checked={settings.sourceWatchEnabled} onChange={(event) => updateSettings({ sourceWatchEnabled: event.target.checked })} />
-                <span>{isZh ? "监控项目资料文件夹" : "Monitor project source folder"}</span>
+                <span>{isZh ? "保存本地资料监控规则（不自动执行）" : "Save local source watch rules (no automatic execution)"}</span>
               </label>
               <label className="switch-row">
-                <input type="checkbox" checked={settings.sourceWatchAutoIngest} onChange={(event) => updateSettings({ sourceWatchAutoIngest: event.target.checked })} />
-                <span>{isZh ? "自动导入允许的新增/修改文件" : "Auto-ingest allowed new or changed files"}</span>
+                <input type="checkbox" checked={false} disabled />
+                <span>{isZh ? "自动 ingest 已延后：新增/修改/删除只应生成 plan event" : "Auto-ingest is deferred: new, changed, or deleted files should only create plan events"}</span>
               </label>
               <label className="field-label">
                 {isZh ? "默认导入模式" : "Default ingest mode"}
@@ -739,7 +739,7 @@ export function RuntimeSettingsPanel({
                 </select>
               </label>
               <p className="settings-block-copy">
-                {isZh ? "该设置影响后续 Import/Raw Sources 流程；不会修改已经进入 vault 的 raw evidence。" : "This affects future Import/Raw Sources flows and does not mutate raw evidence already in the vault."}
+                {isZh ? "当前阶段不启动后台 watcher，不调用 parser/runtime，不联网，也不会清理 source/concept 页面；请用 Raw Sources 的 Refresh / Plan 验证状态。" : "This phase does not start a background watcher, call parser/runtime, use the network, or clean source/concept pages; use Raw Sources Refresh / Plan to verify state."}
               </p>
             </div>
             <div className="settings-block">
