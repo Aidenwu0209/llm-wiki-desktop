@@ -616,6 +616,14 @@ export type QueryEvidence = {
 export type QueryWritebackDraft = {
   query: string;
   answer: string;
+  citationCoverage: {
+    conclusions: number;
+    cited: number;
+    unsupported: number;
+    staleOrRisky: number;
+    needsEvidenceReview: boolean;
+    summary: string;
+  };
   evidenceMap: QueryEvidence[];
   insightCandidates: string[];
   uncertaintyConflicts: string[];
