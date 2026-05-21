@@ -63,6 +63,26 @@ Clean-profile pass criteria:
 - Obsidian failure has a recoverable manual path.
 - DFC validates the current reading/evidence workflow; it is not treated as a product scope constraint.
 
+## Windows Desktop Smoke
+
+Windows is not covered by the current GitHub Actions runner, so the macOS CI must be paired with a targeted helper-contract check and a manual Windows smoke before calling a Windows build ready.
+
+Required Windows behaviors:
+
+1. Open file/folder uses Explorer.
+2. Reveal file uses `explorer /select,<path>` so the selected artifact is visible instead of only opening the parent folder.
+3. Obsidian entry-note launch uses the registered `obsidian://` protocol handler, then falls back to Open folder / Copy URI / Copy path if Obsidian is missing.
+4. Local Codex / Claude CLI checks use `where` instead of `/bin/sh`.
+5. Generated vault, workspace root, and raw PDF folder warnings match the macOS clean-profile smoke.
+
+Minimum manual Windows smoke:
+
+1. Start the app from a Windows build or development run.
+2. Open a generated vault under `vaults/<generated-vault>`.
+3. Click Obsidian and confirm the generated entry note opens when Obsidian is installed.
+4. Uninstall or disable Obsidian protocol handling, click Obsidian again, and confirm Copy URI / Copy path / Open folder recovery is visible.
+5. Run local provider checks for Codex and Claude and confirm missing tools report as missing tools, not `/bin/sh` errors.
+
 ## macOS Packaging Notes
 
 The local build currently targets macOS `.app` and `.dmg` bundles. Treat these modes separately:
