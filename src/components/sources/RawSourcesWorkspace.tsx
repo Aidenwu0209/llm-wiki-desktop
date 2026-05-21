@@ -117,6 +117,9 @@ const rawCopy = {
     artifact: "解析产物",
     artifactHash: "产物哈希",
     planState: "规划状态",
+    aliases: "ID alias / migration",
+    matchReason: "匹配原因",
+    signals: "证据",
     nextAction: "下一步",
     command: "命令",
     inputs: "输入",
@@ -187,6 +190,9 @@ const rawCopy = {
     artifact: "Artifact",
     artifactHash: "Artifact hash",
     planState: "Plan state",
+    aliases: "ID aliases / migrations",
+    matchReason: "Match reason",
+    signals: "Signals",
     nextAction: "Next action",
     command: "Command",
     inputs: "Inputs",
@@ -298,6 +304,16 @@ function planEntryMatchesRecord(record: RawSourceRecord, entry: IngestPlanEntry,
     Boolean(record.artifactHash && entry.artifactSha256 && entry.artifactSha256 === record.artifactHash) ||
     [record.path, record.rawPath, record.canonicalPath, record.sourcePage].some((path) => samePath(path, entry.sourcePath, vaultPath)) ||
     samePath(record.artifactPath, entry.artifactPath, vaultPath)
+  );
+}
+
+function sourceAliasMatchesRecord(record: RawSourceRecord, alias: IngestPlan["sourceAliases"][number], vaultPath?: string | null) {
+  return (
+    Boolean(record.sourceId && alias.sourceId === record.sourceId) ||
+    Boolean(record.sourceUuid && [alias.oldSourceUuid, alias.newSourceUuid].includes(record.sourceUuid)) ||
+    [record.path, record.rawPath, record.canonicalPath, record.sourcePage].some((path) =>
+      samePath(path, alias.oldSourcePath, vaultPath) || samePath(path, alias.newSourcePath, vaultPath),
+    )
   );
 }
 
@@ -524,6 +540,10 @@ export function RawSourcesWorkspace({
     () => (selected ? ingestPlan?.entries.find((entry) => planEntryMatchesRecord(selected, entry, vaultPath)) ?? null : null),
     [ingestPlan?.entries, selected, vaultPath],
   );
+  const selectedAliases = useMemo(
+    () => (selected ? ingestPlan?.sourceAliases.filter((alias) => sourceAliasMatchesRecord(selected, alias, vaultPath)) ?? [] : []),
+    [ingestPlan?.sourceAliases, selected, vaultPath],
+  );
   const selectedBrokenEvidence = selected?.evidencePaths.some((item) => item.chainStatus !== "ok") ?? false;
 
   return (
@@ -743,6 +763,23 @@ export function RawSourcesWorkspace({
                       <ClipboardCopy size={14} />{text.command}
                     </button>
                   </div>
+                </details>
+              )}
+
+              {selectedAliases.length > 0 && (
+                <details className="raw-source-detail-section" open>
+                  <summary>
+                    <strong>{text.aliases}</strong>
+                    <span>{selectedAliases.length}</span>
+                  </summary>
+                  {selectedAliases.map((alias) => (
+                    <div className="trace-warning-row" key={alias.aliasId}>
+                      <span className={classNames("status-chip inline", alias.needsReview ? "blocked" : "published")}>{alias.status}</span>
+                      <strong>{alias.sourceId || alias.newSourceUuid}</strong>
+                      <em>{alias.matchReason} · {alias.oldSourcePath || text.missing}{" -> "}{alias.newSourcePath}</em>
+                      <code>{alias.signals.join(" · ")}</code>
+                    </div>
+                  ))}
                 </details>
               )}
 

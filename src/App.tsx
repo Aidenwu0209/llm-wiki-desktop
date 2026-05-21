@@ -850,6 +850,7 @@ function App() {
   const jobs = ingestPlan?.jobs ?? [];
   const artifacts = ingestPlan?.artifacts ?? [];
   const registry = ingestPlan?.registry ?? [];
+  const sourceAliases = ingestPlan?.sourceAliases ?? [];
   const impactEdges = ingestPlan?.impactEdges ?? [];
   const lintFindings = ingestPlan?.lintFindings ?? [];
   const runtimeRunning = Boolean(activeJob && !activeJob.endedAt && !isTerminalRuntimeStatus(activeJob.status));
@@ -2598,6 +2599,24 @@ function App() {
                 </button>
               ))}
             </div>
+            {sourceAliases.length > 0 && (
+              <>
+                <div className="section-head compact">
+                  <h3>{interfaceLanguage === "zh" ? "ID alias / migration" : "ID aliases / migrations"}</h3>
+                  <span>{sourceAliases.length}</span>
+                </div>
+                <div className="registry-list compact">
+                  {sourceAliases.map((alias) => (
+                    <button key={alias.aliasId} onClick={() => openPath(vaultFilePath(alias.newSourcePath))}>
+                      <span className={classNames("status-chip", alias.needsReview ? "blocked" : "published")}>{alias.status}</span>
+                      <strong>{alias.sourceId || alias.newSourceUuid}</strong>
+                      <em>{alias.matchReason} · {alias.oldSourcePath || (interfaceLanguage === "zh" ? "旧路径未知" : "unknown old path")} → {alias.newSourcePath}</em>
+                      <code>{alias.signals.join(" · ")}</code>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </section>
 
           <section className="panel large">

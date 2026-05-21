@@ -409,6 +409,20 @@ export type DesktopRegistryEntry = {
   publishedAt?: string | null;
 };
 
+export type SourceIdAlias = {
+  aliasId: string;
+  oldSourceUuid?: string | null;
+  newSourceUuid: string;
+  sourceId?: string | null;
+  oldSourcePath?: string | null;
+  newSourcePath: string;
+  matchReason: string;
+  signals: string[];
+  createdAt: string;
+  status: string;
+  needsReview: boolean;
+};
+
 export type ArtifactContractSummary = {
   sourcePath: string;
   sourceId?: string | null;
@@ -453,6 +467,7 @@ export type IngestPlan = {
   summary: IngestPlanSummary;
   entries: IngestPlanEntry[];
   registry: DesktopRegistryEntry[];
+  sourceAliases: SourceIdAlias[];
   artifacts: ArtifactContractSummary[];
   jobs: DesktopIngestJob[];
   actions: DashboardAction[];
