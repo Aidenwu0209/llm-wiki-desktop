@@ -28,6 +28,14 @@ export type ReadingQualitySummary = {
   reportPath: string;
 };
 
+export type ProductScorecardSummary = {
+  passed: number;
+  failed: number;
+  manual: number;
+  notRun: number;
+  reportPath: string;
+};
+
 export type VaultFile = {
   name: string;
   path: string;
@@ -50,6 +58,7 @@ export type VaultStatus = {
   lastUpdated?: string | null;
   counts: VaultCounts;
   readingQuality?: ReadingQualitySummary | null;
+  productScorecard?: ProductScorecardSummary | null;
   files: VaultFile[];
   errors: string[];
 };

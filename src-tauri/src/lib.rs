@@ -86,6 +86,37 @@ struct ReadingQualityReport {
     concepts: Vec<ConceptReadingQuality>,
 }
 
+#[derive(Debug, Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+struct ProductScorecardSummary {
+    passed: usize,
+    failed: usize,
+    manual: usize,
+    not_run: usize,
+    report_path: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ProductScorecardMetric {
+    metric_id: String,
+    label: String,
+    status: String,
+    evidence: Vec<String>,
+    counts: Vec<String>,
+    next_action: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ProductScorecardReport {
+    generated_at: String,
+    vault_path: String,
+    corpus_role: String,
+    summary: ProductScorecardSummary,
+    metrics: Vec<ProductScorecardMetric>,
+}
+
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct VaultFile {
@@ -112,6 +143,7 @@ struct VaultStatus {
     last_updated: Option<String>,
     counts: VaultCounts,
     reading_quality: Option<ReadingQualitySummary>,
+    product_scorecard: Option<ProductScorecardSummary>,
     files: Vec<VaultFile>,
     errors: Vec<String>,
 }
@@ -2230,6 +2262,381 @@ fn write_reading_quality_report(vault: &Path) -> Result<ReadingQualityReport, St
     Ok(report)
 }
 
+fn product_scorecard_report_path(vault: &Path) -> PathBuf {
+    vault.join("qa-reports").join("dfc-product-scorecard.md")
+}
+
+fn scorecard_metric(
+    metric_id: &str,
+    label: &str,
+    status: &str,
+    evidence: Vec<String>,
+    counts: Vec<String>,
+    next_action: &str,
+) -> ProductScorecardMetric {
+    ProductScorecardMetric {
+        metric_id: metric_id.to_string(),
+        label: label.to_string(),
+        status: status.to_string(),
+        evidence,
+        counts,
+        next_action: next_action.to_string(),
+    }
+}
+
+fn scorecard_status_counts(
+    metrics: &[ProductScorecardMetric],
+    report_path: String,
+) -> ProductScorecardSummary {
+    ProductScorecardSummary {
+        passed: metrics
+            .iter()
+            .filter(|metric| metric.status == "pass")
+            .count(),
+        failed: metrics
+            .iter()
+            .filter(|metric| metric.status == "fail")
+            .count(),
+        manual: metrics
+            .iter()
+            .filter(|metric| metric.status == "manual")
+            .count(),
+        not_run: metrics
+            .iter()
+            .filter(|metric| metric.status == "not_run")
+            .count(),
+        report_path,
+    }
+}
+
+fn markdown_cell(values: &[String]) -> String {
+    if values.is_empty() {
+        return "-".to_string();
+    }
+    values
+        .iter()
+        .map(|value| value.replace('|', "\\|").replace('\n', " "))
+        .collect::<Vec<_>>()
+        .join("<br>")
+}
+
+fn render_product_scorecard(report: &ProductScorecardReport) -> String {
+    let mut out = format!(
+        "# DFC Product Scorecard\n\n- generated_at: {}\n- vault_path: `{}`\n- corpus_role: {}\n\nDFC is used here as an evaluation corpus / benchmark, not as the product positioning or a DFC-only feature set.\n\n## Summary\n\n- pass: {}\n- fail: {}\n- manual: {}\n- not_run: {}\n\n## Metrics\n\n| Metric | Status | Counts | Evidence | Next action |\n|---|---|---|---|---|\n",
+        report.generated_at,
+        report.vault_path,
+        report.corpus_role,
+        report.summary.passed,
+        report.summary.failed,
+        report.summary.manual,
+        report.summary.not_run,
+    );
+    for metric in &report.metrics {
+        out.push_str(&format!(
+            "| {} | `{}` | {} | {} | {} |\n",
+            metric.label.replace('|', "\\|"),
+            metric.status,
+            markdown_cell(&metric.counts),
+            markdown_cell(&metric.evidence),
+            metric.next_action.replace('|', "\\|").replace('\n', " "),
+        ));
+    }
+    out.push_str(
+        "\n## Status Semantics\n\n- `pass`: evidence exists and the current checks did not find a blocker.\n- `fail`: evidence exists and the current checks found a concrete blocker.\n- `manual`: the app can point to evidence, but a user must score or approve the result.\n- `not_run`: the scorecard could not find a concrete artifact for that stage.\n\n## Boundaries\n\nThis report does not approve science review, does not apply query writeback, and does not call cloud parser, external LLM, or external OCR. Screenshot paths and manual Obsidian first-screen scores must be supplied by a real user run.\n",
+    );
+    out
+}
+
+fn plan_entries_from_state(vault: &Path) -> Vec<serde_json::Value> {
+    read_json_value(&vault.join("_state").join("desktop-ingest-plan.json"))
+        .and_then(|value| {
+            value
+                .get("entries")
+                .and_then(serde_json::Value::as_array)
+                .cloned()
+        })
+        .unwrap_or_default()
+}
+
+fn build_product_scorecard_report(vault: &Path) -> ProductScorecardReport {
+    let mut metrics = Vec::new();
+    let plan_path = vault.join("_state").join("desktop-ingest-plan.json");
+    let plan_entries = plan_entries_from_state(vault);
+    let plan_missing_state = plan_entries
+        .iter()
+        .filter(|entry| {
+            json_string(entry, "currentState").is_none()
+                || json_string(entry, "nextActionLabel").is_none()
+        })
+        .count();
+    metrics.push(if plan_entries.is_empty() {
+        scorecard_metric(
+            "ingest_plan",
+            "Ingest plan state",
+            "not_run",
+            vec![rel_path(vault, &plan_path)],
+            vec!["entries: 0".to_string()],
+            "Run ingest planning on the evaluation corpus.",
+        )
+    } else if plan_missing_state > 0 {
+        scorecard_metric(
+            "ingest_plan",
+            "Ingest plan state",
+            "fail",
+            vec![rel_path(vault, &plan_path)],
+            vec![
+                format!("entries: {}", plan_entries.len()),
+                format!("missing_state: {plan_missing_state}"),
+            ],
+            "Regenerate the ingest plan until every source has current state and next action.",
+        )
+    } else {
+        scorecard_metric(
+            "ingest_plan",
+            "Ingest plan state",
+            "pass",
+            vec![rel_path(vault, &plan_path)],
+            vec![format!("entries: {}", plan_entries.len())],
+            "Use Raw Sources for per-source next actions.",
+        )
+    });
+
+    let registry_count = count_jsonl(&vault.join("_state").join("source-registry.jsonl")).max(
+        count_jsonl(&vault.join("_state").join("desktop-source-registry.jsonl")),
+    );
+    let artifacts_count = count_jsonl(&vault.join("_state").join("artifacts.jsonl")).max(
+        count_jsonl(&vault.join("_state").join("desktop-artifacts.jsonl")),
+    );
+    let stale_artifacts = read_text(&vault.join("_state").join("artifacts.jsonl"))
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|value| {
+            json_string(value, "status").as_deref() == Some("stale")
+                || !json_bool(value, "contract_valid") && !json_bool(value, "contractValid")
+        })
+        .count();
+    metrics.push(if registry_count == 0 && artifacts_count == 0 {
+        scorecard_metric(
+            "registry_manifest",
+            "Registry and artifact manifest",
+            "not_run",
+            vec![
+                "_state/source-registry.jsonl".to_string(),
+                "_state/artifacts.jsonl".to_string(),
+            ],
+            vec!["registry: 0".to_string(), "artifacts: 0".to_string()],
+            "Run ingest or artifact staging before scoring registry completeness.",
+        )
+    } else if stale_artifacts > 0 {
+        scorecard_metric(
+            "registry_manifest",
+            "Registry and artifact manifest",
+            "fail",
+            vec![
+                "_state/source-registry.jsonl".to_string(),
+                "_state/artifacts.jsonl".to_string(),
+            ],
+            vec![
+                format!("registry: {registry_count}"),
+                format!("artifacts: {artifacts_count}"),
+                format!("stale_or_invalid_artifacts: {stale_artifacts}"),
+            ],
+            "Re-parse or restage stale artifacts before trusting downstream synthesis.",
+        )
+    } else {
+        scorecard_metric(
+            "registry_manifest",
+            "Registry and artifact manifest",
+            "pass",
+            vec![
+                "_state/source-registry.jsonl".to_string(),
+                "_state/artifacts.jsonl".to_string(),
+            ],
+            vec![
+                format!("registry: {registry_count}"),
+                format!("artifacts: {artifacts_count}"),
+            ],
+            "Continue to traceability and review checks.",
+        )
+    });
+
+    let claims_count = count_jsonl(&vault.join("claims").join("claims.jsonl"));
+    let evidence_paths = list_evidence_paths(to_display(vault)).unwrap_or_default();
+    let traceability_findings = load_existing_evidence_anchor_findings(vault).len();
+    metrics.push(if claims_count == 0 {
+        scorecard_metric(
+            "traceability",
+            "Source -> artifact -> claim -> concept traceability",
+            "not_run",
+            vec![
+                "claims/claims.jsonl".to_string(),
+                "_state/lint-findings.jsonl".to_string(),
+            ],
+            vec!["claims: 0".to_string()],
+            "Run claim extraction and lint before scoring traceability.",
+        )
+    } else if traceability_findings > 0 {
+        scorecard_metric(
+            "traceability",
+            "Source -> artifact -> claim -> concept traceability",
+            "fail",
+            vec![
+                "claims/claims.jsonl".to_string(),
+                "_state/lint-findings.jsonl".to_string(),
+            ],
+            vec![
+                format!("claims: {claims_count}"),
+                format!("evidence_paths: {}", evidence_paths.len()),
+                format!("traceability_findings: {traceability_findings}"),
+            ],
+            "Repair missing source/artifact/anchor links before using claims as stable evidence.",
+        )
+    } else {
+        scorecard_metric(
+            "traceability",
+            "Source -> artifact -> claim -> concept traceability",
+            "pass",
+            vec!["claims/claims.jsonl".to_string()],
+            vec![
+                format!("claims: {claims_count}"),
+                format!("evidence_paths: {}", evidence_paths.len()),
+            ],
+            "Use evidence paths for search and writeback checks.",
+        )
+    });
+
+    let entry_note = resolve_vault_entry_note_impl(vault, false).ok();
+    metrics.push(if let Some(entry) = entry_note {
+        scorecard_metric(
+            "obsidian_entry",
+            "Obsidian first-screen readiness",
+            "manual",
+            vec![entry.entry_relative_path.unwrap_or(entry.fallback_path)],
+            vec!["first_screen_score: manual_required".to_string()],
+            "Open Obsidian, capture a screenshot, and record first-screen scores.",
+        )
+    } else {
+        scorecard_metric(
+            "obsidian_entry",
+            "Obsidian first-screen readiness",
+            "not_run",
+            vec!["LLM Wiki Home.md".to_string()],
+            vec!["entry_note: missing".to_string()],
+            "Run Obsidian setup or generate the vault home entry.",
+        )
+    });
+
+    metrics.push(if evidence_paths.is_empty() {
+        scorecard_metric(
+            "evidence_search",
+            "Evidence Search readiness",
+            "not_run",
+            vec!["claims/claims.jsonl".to_string()],
+            vec!["evidence_paths: 0".to_string()],
+            "Run claim/evidence extraction before scoring search readiness.",
+        )
+    } else {
+        scorecard_metric(
+            "evidence_search",
+            "Evidence Search readiness",
+            "pass",
+            vec!["claims/claims.jsonl".to_string()],
+            vec![format!("evidence_paths: {}", evidence_paths.len())],
+            "Ask an evidence-backed question and inspect citation coverage.",
+        )
+    });
+
+    let writebacks = list_writeback_proposals(to_display(vault)).unwrap_or_default();
+    let proposed_writebacks = writebacks
+        .iter()
+        .filter(|proposal| proposal.status == "proposed")
+        .count();
+    metrics.push(if writebacks.is_empty() {
+        scorecard_metric(
+            "query_writeback",
+            "Query writeback proposal boundary",
+            "not_run",
+            vec!["_state/writeback-proposals/".to_string()],
+            vec!["proposals: 0".to_string()],
+            "Create a query writeback proposal without applying it.",
+        )
+    } else if proposed_writebacks == 0 {
+        scorecard_metric(
+            "query_writeback",
+            "Query writeback proposal boundary",
+            "manual",
+            vec!["_state/writeback-proposals/".to_string()],
+            vec![
+                format!("proposals: {}", writebacks.len()),
+                format!("proposed: {proposed_writebacks}"),
+            ],
+            "Verify applied/rejected proposals had explicit human approval.",
+        )
+    } else {
+        scorecard_metric(
+            "query_writeback",
+            "Query writeback proposal boundary",
+            "pass",
+            vec!["_state/writeback-proposals/".to_string()],
+            vec![
+                format!("proposals: {}", writebacks.len()),
+                format!("proposed: {proposed_writebacks}"),
+            ],
+            "Review proposal diff and keep apply gated on explicit approval.",
+        )
+    });
+
+    let alias_reviews = load_source_id_aliases(vault)
+        .iter()
+        .filter(|alias| alias.needs_review)
+        .count();
+    let open_reviews = count_jsonl(&vault.join("_state").join("science-review-queue.jsonl"))
+        + claim_ledger_items(vault)
+            .iter()
+            .filter(|claim| claim.needs_review)
+            .count()
+        + alias_reviews;
+    let manual_steps =
+        open_reviews + traceability_findings + usize::from(!evidence_paths.is_empty());
+    metrics.push(scorecard_metric(
+        "manual_step_count",
+        "Manual-step count",
+        if manual_steps == 0 { "pass" } else { "manual" },
+        vec![
+            "_state/science-review-queue.jsonl".to_string(),
+            "_state/source-id-aliases.jsonl".to_string(),
+            "_state/lint-findings.jsonl".to_string(),
+        ],
+        vec![
+            format!("open_reviews_or_aliases: {open_reviews}"),
+            format!("traceability_findings: {traceability_findings}"),
+            format!("manual_search_review: {}", usize::from(!evidence_paths.is_empty())),
+        ],
+        "Use this count for before/after comparisons; lower means less manual path/log/hash checking.",
+    ));
+
+    let report_path = rel_path(vault, &product_scorecard_report_path(vault));
+    let summary = scorecard_status_counts(&metrics, report_path);
+    ProductScorecardReport {
+        generated_at: Local::now().to_rfc3339(),
+        vault_path: to_display(vault),
+        corpus_role: "evaluation corpus / benchmark, not product positioning".to_string(),
+        summary,
+        metrics,
+    }
+}
+
+fn write_product_scorecard_report(vault: &Path) -> Result<ProductScorecardReport, String> {
+    let report = build_product_scorecard_report(vault);
+    let path = product_scorecard_report_path(vault);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+    }
+    write_text(&path, &render_product_scorecard(&report))?;
+    Ok(report)
+}
+
 fn status_override_path(vault: &Path, file_name: &str) -> PathBuf {
     vault.join("_state").join(file_name)
 }
@@ -2819,6 +3226,12 @@ fn inspect_vault(vault_path: String) -> Result<VaultStatus, String> {
 
     let (claims, claims_needing_review, stale_claims, contradicted_claims) =
         count_claims(&vault.join("claims").join("claims.jsonl"));
+    let product_scorecard = vault
+        .join("_state")
+        .is_dir()
+        .then(|| write_product_scorecard_report(&vault).ok())
+        .flatten()
+        .map(|report| report.summary);
     let mut files = Vec::new();
     for path in list_markdown(&vault.join("sources")) {
         files.push(file_item(&vault, &path, "source"));
@@ -2891,6 +3304,7 @@ fn inspect_vault(vault_path: String) -> Result<VaultStatus, String> {
             )),
         },
         reading_quality,
+        product_scorecard,
         files,
         errors,
     })
@@ -3032,6 +3446,13 @@ fn repair_obsidian_templates(vault_path: String) -> Result<VaultStatus, String> 
     require_existing_dir(&vault, "vault")?;
     write_obsidian_templates(&vault)?;
     inspect_vault(to_display(&vault))
+}
+
+#[tauri::command]
+fn generate_product_scorecard(vault_path: String) -> Result<ProductScorecardReport, String> {
+    let vault = PathBuf::from(vault_path);
+    require_existing_dir(&vault, "vault")?;
+    write_product_scorecard_report(&vault)
 }
 
 #[tauri::command]
@@ -10191,6 +10612,57 @@ mod tests {
     }
 
     #[test]
+    fn product_scorecard_covers_core_validation_flow() {
+        let vault = test_vault("product-scorecard");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        let source = vault.join("raw").join("paper.md");
+        write_text(&source, "# Paper\n\nEfficient reasoning evidence.\n").expect("write source");
+        let staged = stage_text_artifacts(&vault).expect("stage source");
+        assert_eq!(staged.len(), 1);
+        let plan = plan_ingest(to_display(&vault)).expect("plan source");
+        let registry = plan.registry.first().expect("registry entry");
+        let source_uuid = registry.source_uuid.clone();
+        let source_id = registry.source_id.clone().expect("source id");
+        write_text(
+            &vault.join("claims").join("claims.jsonl"),
+            &format!(
+                "{{\"claim_id\":\"c1\",\"claim_text\":\"Efficient reasoning is emphasized.\",\"verdict\":\"supported\",\"status\":\"supported\",\"source_id\":\"{}\",\"source_uuid\":\"{}\",\"source_path\":\"{}\",\"evidence_quote\":\"Efficient reasoning evidence.\",\"evidence_hash\":\"{}\"}}\n",
+                source_id,
+                source_uuid,
+                registry.source_path,
+                sha256_text("Efficient reasoning evidence.")
+            ),
+        )
+        .expect("write claim");
+        let _proposal = create_writeback_proposal(
+            to_display(&vault),
+            "reviews/query-writeback/dfc-scorecard.md".to_string(),
+            "Scorecard proposal".to_string(),
+            "Evidence: supported by c1.".to_string(),
+        )
+        .expect("writeback proposal");
+
+        let report = write_product_scorecard_report(&vault).expect("write scorecard");
+        assert!(report
+            .metrics
+            .iter()
+            .any(|metric| metric.metric_id == "ingest_plan" && metric.status == "pass"));
+        assert!(report
+            .metrics
+            .iter()
+            .any(|metric| metric.metric_id == "obsidian_entry" && metric.status == "manual"));
+        assert!(report
+            .metrics
+            .iter()
+            .any(|metric| metric.metric_id == "query_writeback" && metric.status == "pass"));
+        let rendered = read_text(&product_scorecard_report_path(&vault));
+        assert!(rendered.contains("DFC is used here as an evaluation corpus / benchmark"));
+        assert!(rendered.contains("| Query writeback proposal boundary | `pass` |"));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
     fn selected_vault_state_uses_workspace_cache_when_app_cwd_is_unrelated() {
         let workspace = test_vault("workspace-state");
         let _ = fs::remove_dir_all(&workspace);
@@ -11331,6 +11803,7 @@ pub fn run() {
             inspect_vault,
             create_vault,
             repair_obsidian_templates,
+            generate_product_scorecard,
             import_to_inbox,
             import_sources,
             load_desktop_settings,
