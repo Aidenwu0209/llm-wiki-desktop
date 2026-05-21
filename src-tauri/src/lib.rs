@@ -6853,14 +6853,14 @@ fn build_llm_answer_prompts(request: &LlmAnswerRequest) -> (String, String) {
     };
     let user = if is_zh {
         format!(
-            "问题：{}\n\n写回目标：{}\n\n可用证据：\n{}\n\n请用简体中文输出，结构必须包含：\n1. 证据\n2. 推断\n3. 假设\n4. 预测\n5. 写回建议\n\n要求：每条确定性结论必须引用 E 编号；证据不足时直接说明不足；预测必须写成可能性，不要写成事实。",
+            "问题：{}\n\n写回目标：{}\n\n可用证据：\n{}\n\n请用简体中文输出，结构必须包含：\n1. Evidence / 证据\n2. Inference / 推断\n3. Hypothesis / 假设\n4. Forecast / 预测\n5. Writeback plan / 写回计划\n\n要求：每条确定性结论必须引用 E 编号；证据不足时标为 unsupported draft；预测必须写成可能性，不要写成事实；写回计划必须列出 target page、diff preview、evidence map、risk 和 human confirmation checklist。",
             request.question.trim(),
             request.target_path.trim(),
             evidence
         )
     } else {
         format!(
-            "Question: {}\n\nWriteback target: {}\n\nAvailable evidence:\n{}\n\nAnswer in English with these sections:\n1. Evidence\n2. Inference\n3. Hypothesis\n4. Forecast\n5. Writeback suggestion\n\nEvery deterministic conclusion must cite E references. If evidence is insufficient, say so. Forecasts must be phrased as possibilities, not facts.",
+            "Question: {}\n\nWriteback target: {}\n\nAvailable evidence:\n{}\n\nAnswer in English with these sections:\n1. Evidence\n2. Inference\n3. Hypothesis\n4. Forecast\n5. Writeback plan\n\nEvery deterministic conclusion must cite E references. If evidence is insufficient, mark the answer as an unsupported draft. Forecasts must be phrased as possibilities, not facts. The writeback plan must list target page, diff preview, evidence map, risk, and human confirmation checklist.",
             request.question.trim(),
             request.target_path.trim(),
             evidence
@@ -7872,6 +7872,7 @@ fn query_evidence_items(vault: &Path) -> Vec<QueryEvidence> {
 fn render_query_writeback_content(
     vault: &Path,
     query: &str,
+    target_path: &str,
     evidence: &[QueryEvidence],
 ) -> (String, Vec<String>, Vec<String>) {
     let status = inspect_vault(to_display(vault)).ok();
@@ -8020,6 +8021,7 @@ fn render_query_writeback_content(
             item.conclusion_type == "evidence-backed conclusion" && item.freshness_status == "fresh"
         })
         .collect::<Vec<_>>();
+    let unsupported_draft = firm_evidence.is_empty();
 
     let strongest_claims = firm_evidence
         .iter()
@@ -8081,21 +8083,57 @@ fn render_query_writeback_content(
         format!("{contradicted} 个 contradicted claim 可能影响最终 insight。"),
         "Composer 不调用外部 LLM；当前草稿基于 vault 内 evidence map 生成，需要人工审阅后再 apply。".to_string(),
     ];
-    let mut rendered = format!("## Query\n\n{}\n\n## Answer\n\n", query.trim());
-    rendered.push_str("### Evidence-backed conclusions\n\n");
-    if supported_count == 0 {
-        rendered.push_str("- 当前 vault 没有 supported evidence claim；确定性结论不足，proposal 应保持 review-only。\n\n");
+    let evidence_section = if firm_evidence.is_empty() {
+        "- Empty / unsupported: 当前 vault 没有 fresh supported evidence claim；不得生成可应用的确定性正文。\n".to_string()
     } else {
-        rendered.push_str(&format!(
-            "- 以 {supported_count} 条 supported/evidence-backed claim 为确定性输入，优先总结已被 source/claim 链支撑的研发路线。\n- 当前可引用的 source/concept 规模为 {source_count} sources / {concept_count} concepts。\n\n"
-        ));
-    }
+        let mut section = format!(
+            "- 以 {supported_count} 条 supported/evidence-backed claim 为确定性输入；当前可引用规模为 {source_count} sources / {concept_count} concepts。\n"
+        );
+        for item in &firm_evidence {
+            section.push_str(&format!(
+                "- Evidence `{}`: {}{}{}{}\n",
+                item.claim_id,
+                item.claim_text,
+                item.source_path
+                    .as_ref()
+                    .map(|path| format!(" | source: `{path}`"))
+                    .unwrap_or_default(),
+                item.evidence_hash
+                    .as_ref()
+                    .map(|hash| format!(
+                        " | evidence_hash: `{}`",
+                        hash.chars().take(16).collect::<String>()
+                    ))
+                    .unwrap_or_default(),
+                if item.concepts.is_empty() {
+                    String::new()
+                } else {
+                    format!(" | concepts: {}", item.concepts.join(", "))
+                }
+            ));
+        }
+        section
+    };
+
+    let mut rendered = format!(
+        "unsupported_draft: {}\n\n## Query\n\n{}\n\n## Answer schema\n\n",
+        unsupported_draft,
+        query.trim()
+    );
+    rendered.push_str("### Evidence\n\n");
+    rendered.push_str(&evidence_section);
+    rendered.push('\n');
     rendered.push_str("### Inference\n\n");
     rendered.push_str("- 将 DeepSeek 研发思路拆为问题选择、资源约束、架构/训练/数据/eval 决策逻辑；任何没有 supported verdict 的内容必须保留为 inference。\n\n");
     rendered.push_str("### Hypothesis\n\n");
     rendered.push_str("- 未完成 science review 的 claim 只能支持待确认洞察，不能直接写成事实。若 evidence-anchor 或 review 状态异常，应先生成 follow-up action。\n\n");
     rendered.push_str("### Forecast\n\n");
     rendered.push_str("- 技术演进方向应作为 forecast 保存，不能写成事实；forecast 必须列出来源、证据缺口、冲突和人工确认要求。\n\n");
+    rendered.push_str("### Writeback plan\n\n");
+    rendered.push_str(&format!(
+        "- target_page: `{}`\n- write_content: review proposal only until explicit human approval.\n- evidence_map: see claim/source links below; every Evidence item must cite a claim/source/concept path.\n- risk: Forecast and unsupported statements must remain labeled and must not enter deterministic concept正文.\n- human_confirmation_checklist: verify target page, diff preview, evidence links, blocked evidence, forecast labels, and approval status before apply.\n\n",
+        target_path.trim()
+    ));
     rendered.push_str("## Evidence map\n\n");
     rendered.push_str(&evidence_map);
     rendered.push_str("\n## Source index\n\n");
@@ -8131,8 +8169,23 @@ fn create_query_writeback_proposal(
         return Err("query is required".to_string());
     }
     let evidence = query_evidence_items(&vault);
+    let has_fresh_supported_evidence = evidence.iter().any(|item| {
+        item.conclusion_type == "evidence-backed conclusion" && item.freshness_status == "fresh"
+    });
+    if !has_fresh_supported_evidence {
+        let target = resolve_vault_target(&vault, &target_path)?;
+        if matches!(
+            writeback_target_kind(&vault, &target),
+            Ok(WritebackTargetKind::Concept)
+        ) {
+            return Err(
+                "unsupported query draft cannot target concepts/ without fresh supported evidence; use reviews/query-writeback/ first"
+                    .to_string(),
+            );
+        }
+    }
     let (answer, insight_candidates, uncertainty_conflicts) =
-        render_query_writeback_content(&vault, &query, &evidence);
+        render_query_writeback_content(&vault, &query, &target_path, &evidence);
     let proposal = create_writeback_proposal(
         vault_path,
         target_path,
@@ -11085,6 +11138,15 @@ mod tests {
         );
         assert_eq!(draft.evidence_map[0].freshness_status, "fresh");
         assert!(draft.answer.contains("## Evidence map"));
+        assert!(draft.answer.contains("## Answer schema"));
+        assert!(draft.answer.contains("### Evidence"));
+        assert!(draft.answer.contains("### Inference"));
+        assert!(draft.answer.contains("### Hypothesis"));
+        assert!(draft.answer.contains("### Forecast"));
+        assert!(draft.answer.contains("### Writeback plan"));
+        assert!(draft
+            .answer
+            .contains("target_page: `reviews/query-writeback/deepseek-research-insights.md`"));
         assert!(draft.answer.contains("## Source index"));
         assert!(draft.answer.contains("## Concept index"));
         assert!(draft.answer.contains("## Diff preview"));
@@ -11097,6 +11159,46 @@ mod tests {
             .join("query-writeback")
             .join("deepseek-research-insights.md")
             .exists());
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn query_writeback_unsupported_draft_stays_review_only() {
+        let vault = test_vault("query-writeback-unsupported");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        write_text(
+            &vault.join("concepts").join("research-strategy.md"),
+            "# Research Strategy\n",
+        )
+        .expect("concept");
+
+        let concept_error = create_query_writeback_proposal(
+            to_display(&vault),
+            "Summarize DeepSeek research strategy".to_string(),
+            "concepts/research-strategy.md".to_string(),
+            "Unsupported concept writeback".to_string(),
+        )
+        .expect_err("unsupported concept target should fail");
+        assert!(concept_error.contains("unsupported query draft cannot target concepts/"));
+
+        let draft = create_query_writeback_proposal(
+            to_display(&vault),
+            "Summarize DeepSeek research strategy".to_string(),
+            "reviews/query-writeback/unsupported.md".to_string(),
+            "Unsupported review draft".to_string(),
+        )
+        .expect("review-only unsupported draft");
+        assert_eq!(draft.proposal.status, "proposed");
+        assert!(draft.answer.contains("unsupported_draft: true"));
+        assert!(draft
+            .answer
+            .contains("Empty / unsupported: 当前 vault 没有 fresh supported evidence claim"));
+        assert!(draft.answer.contains("### Writeback plan"));
+        assert!(
+            !read_text(&vault.join("concepts").join("research-strategy.md"))
+                .contains("Unsupported")
+        );
 
         let _ = fs::remove_dir_all(vault);
     }
