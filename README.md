@@ -15,6 +15,8 @@
 | ![问答与写回](docs/screenshots/chat-search.png) | 在 vault 内检索 sources、claims、concepts、reviews 和 writeback proposals，并生成 evidence-first answer draft。 |
 | ![证据图谱](docs/screenshots/evidence-graph.png) | 查看 source、claim、concept、review、proposal 和 warning 之间的 evidence graph。 |
 
+Agent / API 集成必须先通过只读 readiness gate；当前契约见 [`docs/agent-skill.md`](docs/agent-skill.md)。在 gate 未通过前，不应启动 localhost API，也不应向 Codex/Claude Code 暴露写入、删除、apply 或后台 ingest 能力。
+
 ## 软件使用教程
 
 ### 1. 启动桌面端

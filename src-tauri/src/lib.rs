@@ -119,6 +119,28 @@ struct ProductScorecardReport {
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
+struct AgentReadApiEndpoint {
+    method: String,
+    path: String,
+    capability: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct AgentReadApiReadiness {
+    enabled: bool,
+    reason: String,
+    bind_host: String,
+    token_required: bool,
+    scorecard: ProductScorecardSummary,
+    required_metrics: Vec<String>,
+    unmet_requirements: Vec<String>,
+    endpoints: Vec<AgentReadApiEndpoint>,
+    blocked_operations: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct VaultFile {
     name: String,
     path: String,
@@ -2647,6 +2669,115 @@ fn write_product_scorecard_report(vault: &Path) -> Result<ProductScorecardReport
     }
     write_text(&path, &render_product_scorecard(&report))?;
     Ok(report)
+}
+
+fn agent_read_api_endpoints() -> Vec<AgentReadApiEndpoint> {
+    [
+        ("GET", "/health", "desktop process health"),
+        (
+            "GET",
+            "/vault/status",
+            "vault counts, scorecard, and dashboard state",
+        ),
+        ("GET", "/vault/ingest-plan", "manual ingest plan state"),
+        (
+            "GET",
+            "/vault/sources",
+            "source registry and artifact summaries",
+        ),
+        (
+            "GET",
+            "/vault/traceability-warnings",
+            "traceability and evidence-anchor warnings",
+        ),
+        (
+            "POST",
+            "/vault/search",
+            "vault-scoped evidence refs and snippets only",
+        ),
+        (
+            "GET",
+            "/vault/writeback-proposals",
+            "proposal metadata and review status",
+        ),
+        (
+            "POST",
+            "/vault/rescan-plan",
+            "refresh plan only; never run ingest or parser",
+        ),
+    ]
+    .into_iter()
+    .map(|(method, path, capability)| AgentReadApiEndpoint {
+        method: method.to_string(),
+        path: path.to_string(),
+        capability: capability.to_string(),
+    })
+    .collect()
+}
+
+fn agent_read_api_required_metrics() -> Vec<&'static str> {
+    vec![
+        "ingest_plan",
+        "registry_manifest",
+        "traceability",
+        "evidence_search",
+        "query_writeback",
+    ]
+}
+
+fn build_agent_read_api_readiness(vault: &Path) -> AgentReadApiReadiness {
+    let report = build_product_scorecard_report(vault);
+    let required_metrics = agent_read_api_required_metrics();
+    let unmet_requirements = required_metrics
+        .iter()
+        .filter_map(|metric_id| {
+            let metric = report
+                .metrics
+                .iter()
+                .find(|metric| metric.metric_id == *metric_id);
+            match metric {
+                Some(metric) if metric.status == "pass" => None,
+                Some(metric) => Some(format!(
+                    "{} is {}: {}",
+                    metric.metric_id, metric.status, metric.next_action
+                )),
+                None => Some(format!("{metric_id} metric is missing from the scorecard")),
+            }
+        })
+        .collect::<Vec<_>>();
+    let enabled = unmet_requirements.is_empty() && report.summary.failed == 0;
+    AgentReadApiReadiness {
+        enabled,
+        reason: if enabled {
+            "Read-only localhost API may be enabled; core scorecard metrics passed.".to_string()
+        } else {
+            "Read-only localhost API remains deferred until core scorecard metrics pass."
+                .to_string()
+        },
+        bind_host: "127.0.0.1".to_string(),
+        token_required: true,
+        scorecard: report.summary,
+        required_metrics: required_metrics
+            .into_iter()
+            .map(ToString::to_string)
+            .collect(),
+        unmet_requirements,
+        endpoints: agent_read_api_endpoints(),
+        blocked_operations: vec![
+            "apply writeback proposal".to_string(),
+            "set review or proposal status".to_string(),
+            "write, delete, or overwrite raw/source/concept/claim/review files".to_string(),
+            "run parser, ingest pipeline, hosted model, cloud OCR, or external search".to_string(),
+            "serve PDF full text to external services".to_string(),
+        ],
+    }
+}
+
+#[tauri::command]
+fn agent_read_api_readiness(vault_path: String) -> Result<AgentReadApiReadiness, String> {
+    let vault = PathBuf::from(vault_path);
+    require_existing_dir(&vault, "vault")?;
+    Ok(build_agent_read_api_readiness(&vault))
 }
 
 fn status_override_path(vault: &Path, file_name: &str) -> PathBuf {
@@ -10795,6 +10926,84 @@ mod tests {
     }
 
     #[test]
+    fn agent_read_api_readiness_requires_scorecard_gate_and_read_only_contract() {
+        let vault = test_vault("agent-api-readiness-blocked");
+        create_minimal_vault(&vault).expect("create minimal vault");
+
+        let readiness = build_agent_read_api_readiness(&vault);
+        assert!(!readiness.enabled);
+        assert_eq!(readiness.bind_host, "127.0.0.1");
+        assert!(readiness.token_required);
+        assert!(readiness
+            .unmet_requirements
+            .iter()
+            .any(|item| item.contains("ingest_plan")));
+        assert!(readiness
+            .endpoints
+            .iter()
+            .all(|endpoint| matches!(endpoint.method.as_str(), "GET" | "POST")));
+        assert!(readiness
+            .endpoints
+            .iter()
+            .all(|endpoint| !endpoint.path.contains("apply")
+                && !endpoint.path.contains("delete")
+                && !endpoint.path.contains("set-status")));
+        assert!(readiness
+            .blocked_operations
+            .iter()
+            .any(|operation| operation.contains("write, delete, or overwrite")));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn agent_read_api_readiness_enables_after_core_scorecard_metrics_pass() {
+        let vault = test_vault("agent-api-readiness-pass");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        let source = vault.join("raw").join("note.md");
+        write_text(&source, "# Note\n\nAccuracy improved.\n").expect("write source");
+        let staged = stage_text_artifacts(&vault).expect("stage source");
+        assert_eq!(staged.len(), 1);
+        let plan = plan_ingest(to_display(&vault)).expect("plan source");
+        let entry = &plan.registry[0];
+        write_text(
+            &vault.join("claims").join("claims.jsonl"),
+            &format!(
+                "{{\"claim_id\":\"c1\",\"claim_text\":\"Accuracy improved.\",\"needs_review\":false,\"verdict\":\"supported\",\"status\":\"supported\",\"source_uuid\":\"{}\",\"source_id\":\"{}\",\"chunk_id\":\"{}:00001\",\"concepts\":[\"Accuracy\"],\"evidence_quote\":\"Accuracy improved.\",\"evidence_hash\":\"{}\"}}\n",
+                entry.source_uuid,
+                entry.source_id.clone().unwrap_or_default(),
+                entry.source_uuid,
+                sha256_text("Accuracy improved.")
+            ),
+        )
+        .expect("write claim");
+        create_writeback_proposal(
+            to_display(&vault),
+            "reviews/query-writeback/agent-api-readiness.md".to_string(),
+            "Readiness proposal".to_string(),
+            "Review-only proposal.".to_string(),
+        )
+        .expect("write proposal");
+
+        let readiness = build_agent_read_api_readiness(&vault);
+        assert!(readiness.enabled, "{:?}", readiness.unmet_requirements);
+        assert!(readiness.unmet_requirements.is_empty());
+        assert!(readiness
+            .required_metrics
+            .contains(&"query_writeback".to_string()));
+        assert!(readiness
+            .endpoints
+            .iter()
+            .any(|endpoint| endpoint.path == "/vault/rescan-plan"));
+        assert!(readiness
+            .blocked_operations
+            .iter()
+            .any(|operation| operation.contains("apply writeback proposal")));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
     fn reading_quality_report_tracks_concept_dependencies_and_trust_risks() {
         let vault = test_vault("reading-quality");
         create_minimal_vault(&vault).expect("create minimal vault");
@@ -12133,6 +12342,7 @@ pub fn run() {
             create_vault,
             repair_obsidian_templates,
             generate_product_scorecard,
+            agent_read_api_readiness,
             import_to_inbox,
             import_sources,
             load_desktop_settings,
