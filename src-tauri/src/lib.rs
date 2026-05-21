@@ -480,11 +480,20 @@ struct IngestPlanEntry {
     source_path: String,
     file_name: String,
     sha256: String,
+    artifact_sha256: Option<String>,
     artifact_path: Option<String>,
     status: String,
     action: String,
     reason: String,
     parser_hint: Option<String>,
+    current_state: String,
+    next_action_label: String,
+    command: Vec<String>,
+    inputs: Vec<String>,
+    outputs: Vec<String>,
+    last_log_path: Option<String>,
+    requires_human_approval: bool,
+    uses_network: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -3857,6 +3866,171 @@ fn parser_hint_for_source(source: &Path, artifact: &Path) -> String {
     )
 }
 
+fn plan_current_state(status: &str, action: &str) -> String {
+    match (status, action) {
+        ("published", _) => "published",
+        (_, "restage_text_artifact") => "stale_artifact",
+        ("blocked", "parse_required") => "parse_required",
+        ("blocked", _) => "blocked_contract",
+        ("cached", _) => "staged",
+        ("ready", _) => "ingest_ready",
+        ("stageable", "stage_text_artifact") => "imported",
+        ("stageable", _) => "staged",
+        _ => status,
+    }
+    .to_string()
+}
+
+fn plan_next_action_label(status: &str, action: &str) -> String {
+    match (status, action) {
+        ("published", _) => "No action; source and artifact are already published",
+        (_, "restage_text_artifact") => {
+            "Restage the local text artifact, then run the ingest pipeline"
+        }
+        ("blocked", "parse_required") => "Parse this source locally before ingest",
+        ("blocked", _) => "Inspect the blocked source contract before ingest",
+        ("cached", "skip_staging") => "Run the ingest pipeline with the cached artifact",
+        ("ready", "run_ingest_corpus") => "Run the ingest pipeline",
+        ("stageable", "stage_text_artifact") => "Stage this text or Markdown source locally",
+        _ => action,
+    }
+    .to_string()
+}
+
+fn plan_command_for_action(action: &str, parser_hint: Option<&str>) -> Vec<String> {
+    match action {
+        "parse_required" => parser_hint
+            .map(|hint| vec![hint.to_string()])
+            .unwrap_or_else(|| vec!["desktop:parse_pdfs".to_string()]),
+        "stage_text_artifact" | "restage_text_artifact" | "run_ingest_corpus" | "skip_staging" => {
+            vec!["desktop:run_ingest_pipeline".to_string()]
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn plan_outputs_for_action(vault: &Path, artifact: &Path, action: &str) -> Vec<String> {
+    let mut outputs = Vec::new();
+    if matches!(
+        action,
+        "parse_required"
+            | "stage_text_artifact"
+            | "restage_text_artifact"
+            | "run_ingest_corpus"
+            | "skip_staging"
+            | "skip_runtime"
+    ) {
+        outputs.push(rel_path(vault, artifact));
+    }
+    if let Some(parent) = artifact.parent() {
+        if matches!(
+            action,
+            "parse_required" | "stage_text_artifact" | "restage_text_artifact"
+        ) {
+            outputs.push(rel_path(vault, &parent.join("manifest.json")));
+            outputs.push(rel_path(vault, &parent.join("chunks.jsonl")));
+        }
+        if action == "parse_required" {
+            outputs.push(rel_path(vault, &parent.join("parse.log")));
+        }
+    }
+    if matches!(action, "run_ingest_corpus" | "skip_staging") {
+        outputs.push("_state/source-registry.jsonl".to_string());
+        outputs.push("claims/claims.jsonl".to_string());
+        outputs.push("reviews/science-review-queue.md".to_string());
+    }
+    if action == "skip_runtime" {
+        outputs.push("_state/published-ingest.jsonl".to_string());
+    }
+    outputs.sort();
+    outputs.dedup();
+    outputs
+}
+
+fn plan_uses_network(parser_hint: Option<&str>) -> bool {
+    parser_hint.is_some_and(|hint| {
+        hint.contains("layout-api")
+            || hint.contains("http://")
+            || hint.contains("https://")
+            || hint.contains("--download-images")
+    })
+}
+
+fn plan_state_can_be_overridden(state: &str) -> bool {
+    !matches!(
+        state,
+        "parse_required" | "stale_artifact" | "blocked_contract" | "published"
+    )
+}
+
+fn enrich_ingest_plan_entries(
+    vault: &Path,
+    entries: &mut [IngestPlanEntry],
+    registry: &[DesktopRegistryEntry],
+    jobs: &[DesktopIngestJob],
+) {
+    let duplicate_paths = registry
+        .iter()
+        .filter(|entry| entry.duplicate_of.is_some())
+        .map(|entry| entry.source_path.clone())
+        .collect::<HashSet<_>>();
+    let review_claims = claim_ledger_items(vault)
+        .into_iter()
+        .filter(|claim| {
+            claim.needs_review
+                || matches!(
+                    claim.status.as_str(),
+                    "needs_review" | "pending_review" | "review_required"
+                )
+                || matches!(
+                    claim.verdict.as_str(),
+                    "needs_review" | "pending_review" | "review_required"
+                )
+        })
+        .collect::<Vec<_>>();
+
+    for entry in entries {
+        let source_rel = rel_path(vault, &PathBuf::from(&entry.source_path));
+        let source_uuid = source_uuid(&entry.sha256);
+
+        if let Some(job) = jobs
+            .iter()
+            .find(|job| job.source_uuid == source_uuid || job.source_path == source_rel)
+        {
+            entry.last_log_path = job.log_path.clone();
+            if matches!(job.status.as_str(), "failed" | "cancelled") {
+                entry.current_state = "blocked_contract".to_string();
+                entry.next_action_label =
+                    "Inspect the last ingest job log before rerunning".to_string();
+                if let Some(error) = &job.last_error {
+                    entry.reason = error.clone();
+                }
+            }
+        }
+
+        if duplicate_paths.contains(&source_rel)
+            && plan_state_can_be_overridden(&entry.current_state)
+        {
+            entry.current_state = "duplicate".to_string();
+            entry.next_action_label =
+                "Review duplicate source identity before trusting downstream synthesis".to_string();
+            entry.requires_human_approval = true;
+        }
+
+        let has_review_claim = review_claims.iter().any(|claim| {
+            claim.source_uuid.as_deref() == Some(source_uuid.as_str())
+                || claim.source_path.as_deref() == Some(source_rel.as_str())
+                || claim.source_path.as_deref() == Some(entry.source_path.as_str())
+        });
+        if has_review_claim && plan_state_can_be_overridden(&entry.current_state) {
+            entry.current_state = "needs_review".to_string();
+            entry.next_action_label =
+                "Review extracted claims before trusting this source in concepts".to_string();
+            entry.requires_human_approval = true;
+        }
+    }
+}
+
 fn acquire_ingest_lock(vault: &Path) -> Result<IngestPipelineLock, String> {
     let lock_path = vault.join("_state").join("desktop-ingest.lock");
     if let Some(parent) = lock_path.parent() {
@@ -3981,15 +4155,39 @@ fn plan_entry_for_source(
         )
     };
 
+    let current_state = if parsed_artifact_stale {
+        "stale_artifact".to_string()
+    } else {
+        plan_current_state(&status, &action)
+    };
+    let next_action_label = if parsed_artifact_stale {
+        "Re-parse this source locally before ingest".to_string()
+    } else {
+        plan_next_action_label(&status, &action)
+    };
+    let command = plan_command_for_action(&action, parser_hint.as_deref());
+    let inputs = vec![rel_path(vault, source)];
+    let outputs = plan_outputs_for_action(vault, &artifact, &action);
+    let uses_network = plan_uses_network(parser_hint.as_deref());
+
     Ok(IngestPlanEntry {
         source_path: to_display(source),
         file_name,
         sha256: hash,
+        artifact_sha256: artifact_hash,
         artifact_path,
         status,
         action,
         reason,
         parser_hint,
+        current_state,
+        next_action_label,
+        command,
+        inputs,
+        outputs,
+        last_log_path: None,
+        requires_human_approval: false,
+        uses_network,
     })
 }
 
@@ -4533,12 +4731,8 @@ fn job_for_plan_entry(
         ended_at: None,
         last_error: (entry.status == "blocked").then(|| entry.reason.clone()),
         log_path: None,
-        inputs: vec![rel_path(vault, &PathBuf::from(&entry.source_path))],
-        outputs: entry
-            .artifact_path
-            .as_ref()
-            .map(|path| vec![rel_path(vault, &PathBuf::from(path))])
-            .unwrap_or_default(),
+        inputs: entry.inputs.clone(),
+        outputs: entry.outputs.clone(),
     }
 }
 
@@ -5373,7 +5567,10 @@ fn load_existing_evidence_anchor_findings(vault: &Path) -> Vec<ContractFinding> 
         .collect()
 }
 
-fn write_ingest_plan(vault: &Path, entries: Vec<IngestPlanEntry>) -> Result<IngestPlan, String> {
+fn write_ingest_plan(
+    vault: &Path,
+    mut entries: Vec<IngestPlanEntry>,
+) -> Result<IngestPlan, String> {
     let summary = IngestPlanSummary {
         total: entries.len(),
         ready: entries
@@ -5404,6 +5601,7 @@ fn write_ingest_plan(vault: &Path, entries: Vec<IngestPlanEntry>) -> Result<Inge
         mut actions,
         impact_edges,
     } = build_ingest_contracts(vault, &entries)?;
+    enrich_ingest_plan_entries(vault, &mut entries, &registry, &jobs);
     let mut lint_findings =
         lint_ingest_contracts(vault, &registry, &artifacts, &jobs, &impact_edges);
     let mut seen_findings = lint_findings
@@ -5483,6 +5681,24 @@ fn plan_ingest(vault_path: String) -> Result<IngestPlan, String> {
             if combined.is_file() && !artifact_paths.contains(&combined) {
                 let hash = sha256_file(&combined)?;
                 let published = published_keys.contains(&(hash.clone(), hash.clone()));
+                let status = if published { "published" } else { "ready" }.to_string();
+                let action = if published {
+                    "skip_runtime"
+                } else {
+                    "run_ingest_corpus"
+                }
+                .to_string();
+                let reason = if published {
+                    "standalone parsed artifact already completed a desktop ingest pipeline"
+                } else {
+                    "parsed artifact exists without a matching raw source in the desktop scan"
+                }
+                .to_string();
+                let current_state = plan_current_state(&status, &action);
+                let next_action_label = plan_next_action_label(&status, &action);
+                let command = plan_command_for_action(&action, None);
+                let inputs = vec![rel_path(&vault, &combined)];
+                let outputs = plan_outputs_for_action(&vault, &combined, &action);
                 entries.push(IngestPlanEntry {
                     source_path: to_display(&combined),
                     file_name: path
@@ -5491,21 +5707,20 @@ fn plan_ingest(vault_path: String) -> Result<IngestPlan, String> {
                         .to_string_lossy()
                         .to_string(),
                     sha256: hash,
+                    artifact_sha256: sha256_file(&combined).ok(),
                     artifact_path: Some(to_display(&combined)),
-                    status: if published { "published" } else { "ready" }.to_string(),
-                    action: if published {
-                        "skip_runtime"
-                    } else {
-                        "run_ingest_corpus"
-                    }
-                    .to_string(),
-                    reason: if published {
-                        "standalone parsed artifact already completed a desktop ingest pipeline"
-                    } else {
-                        "parsed artifact exists without a matching raw source in the desktop scan"
-                    }
-                    .to_string(),
+                    status,
+                    action,
+                    reason,
                     parser_hint: None,
+                    current_state,
+                    next_action_label,
+                    command,
+                    inputs,
+                    outputs,
+                    last_log_path: None,
+                    requires_human_approval: false,
+                    uses_network: false,
                 });
             }
         }
@@ -8910,6 +9125,19 @@ mod tests {
 
         assert_eq!(entry.status, "stageable");
         assert_eq!(entry.action, "restage_text_artifact");
+        assert_eq!(entry.current_state, "stale_artifact");
+        assert_eq!(
+            entry.command,
+            vec!["desktop:run_ingest_pipeline".to_string()]
+        );
+        assert!(entry
+            .inputs
+            .iter()
+            .any(|item| item.ends_with("raw/paper.md")));
+        assert!(entry
+            .outputs
+            .iter()
+            .any(|item| item.ends_with("manifest.json")));
 
         let _ = fs::remove_dir_all(vault);
     }
@@ -8960,6 +9188,13 @@ mod tests {
         let next_plan = plan_ingest(to_display(&vault)).expect("plan published source");
         assert_eq!(next_plan.summary.published, 1);
         assert_eq!(next_plan.entries[0].status, "published");
+        assert_eq!(next_plan.entries[0].current_state, "published");
+        assert!(next_plan.entries[0].artifact_sha256.is_some());
+        assert!(next_plan.entries[0].command.is_empty());
+        assert!(next_plan.entries[0]
+            .outputs
+            .iter()
+            .any(|item| item == "_state/published-ingest.jsonl"));
 
         let _ = fs::remove_dir_all(vault);
     }
@@ -8996,10 +9231,59 @@ mod tests {
 
         assert_eq!(entry.status, "blocked");
         assert_eq!(entry.action, "parse_required");
+        assert_eq!(entry.current_state, "stale_artifact");
+        assert_eq!(
+            entry.next_action_label,
+            "Re-parse this source locally before ingest"
+        );
         assert!(entry
             .parser_hint
             .as_deref()
             .is_some_and(|hint| hint.contains("--parser auto --no-download-images")));
+        assert!(entry
+            .command
+            .iter()
+            .any(|item| item.contains("pdf_to_markdown.py")));
+        assert!(entry.outputs.iter().any(|item| item.ends_with("parse.log")));
+        assert!(!entry.uses_network);
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn ingest_plan_entries_explain_pdf_next_action() {
+        let vault = test_vault("pdf-plan-state");
+        let source = vault.join("raw").join("paper.pdf");
+        fs::write(&source, b"pdf bytes").expect("write pdf");
+
+        let plan = plan_ingest(to_display(&vault)).expect("plan pdf");
+        let entry = plan
+            .entries
+            .iter()
+            .find(|entry| entry.file_name == "paper.pdf")
+            .expect("pdf entry");
+
+        assert_eq!(entry.status, "blocked");
+        assert_eq!(entry.current_state, "parse_required");
+        assert_eq!(
+            entry.next_action_label,
+            "Parse this source locally before ingest"
+        );
+        assert_eq!(entry.inputs, vec!["raw/paper.pdf".to_string()]);
+        assert!(entry
+            .command
+            .iter()
+            .any(|item| item.contains("pdf_to_markdown.py")));
+        assert!(entry
+            .outputs
+            .iter()
+            .any(|item| item.ends_with("combined.md")));
+        assert!(entry
+            .outputs
+            .iter()
+            .any(|item| item.ends_with("manifest.json")));
+        assert!(!entry.requires_human_approval);
+        assert!(!entry.uses_network);
 
         let _ = fs::remove_dir_all(vault);
     }

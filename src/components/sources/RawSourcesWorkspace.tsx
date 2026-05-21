@@ -16,6 +16,8 @@ import type {
   DesktopRegistryEntry,
   EvidencePathItem,
   ImportPreview,
+  IngestPlan,
+  IngestPlanEntry,
   TraceabilityWarning,
   VaultFile,
   VaultStatus,
@@ -59,6 +61,7 @@ type RawSourcesWorkspaceProps = {
   claims: ClaimLedgerItem[];
   evidencePaths: EvidencePathItem[];
   traceabilityWarnings: TraceabilityWarning[];
+  ingestPlan: IngestPlan | null;
   importResults: ImportPreview[];
   preserveFolders: boolean;
   busy: string | null;
@@ -113,6 +116,18 @@ const rawCopy = {
     parser: "解析器",
     artifact: "解析产物",
     artifactHash: "产物哈希",
+    planState: "规划状态",
+    nextAction: "下一步",
+    command: "命令",
+    inputs: "输入",
+    outputs: "输出",
+    lastLog: "最近日志",
+    approval: "人工确认",
+    network: "网络/API",
+    required: "需要",
+    notRequired: "不需要",
+    enabled: "会使用",
+    disabled: "不使用",
     complete: "该资料关联的证据路径当前完整。",
     manifest: "清单",
     chunks: "分块",
@@ -171,6 +186,18 @@ const rawCopy = {
     parser: "Parser",
     artifact: "Artifact",
     artifactHash: "Artifact hash",
+    planState: "Plan state",
+    nextAction: "Next action",
+    command: "Command",
+    inputs: "Inputs",
+    outputs: "Outputs",
+    lastLog: "Last log",
+    approval: "Human approval",
+    network: "Network/API",
+    required: "required",
+    notRequired: "not required",
+    enabled: "used",
+    disabled: "not used",
     complete: "Evidence paths linked to this source are currently complete.",
     manifest: "manifest",
     chunks: "chunks",
@@ -262,6 +289,15 @@ function artifactMatches(record: SourceIdentity, artifact: ArtifactContractSumma
     samePath(artifact.sourcePath, record.rawPath, vaultPath) ||
     samePath(artifact.sourcePath, record.sourcePage, vaultPath) ||
     samePath(artifact.artifactPath, record.artifactPath, vaultPath)
+  );
+}
+
+function planEntryMatchesRecord(record: RawSourceRecord, entry: IngestPlanEntry, vaultPath?: string | null) {
+  return (
+    Boolean(record.hash && entry.sha256 === record.hash) ||
+    Boolean(record.artifactHash && entry.artifactSha256 && entry.artifactSha256 === record.artifactHash) ||
+    [record.path, record.rawPath, record.canonicalPath, record.sourcePage].some((path) => samePath(path, entry.sourcePath, vaultPath)) ||
+    samePath(record.artifactPath, entry.artifactPath, vaultPath)
   );
 }
 
@@ -441,6 +477,7 @@ export function RawSourcesWorkspace({
   claims,
   evidencePaths,
   traceabilityWarnings,
+  ingestPlan,
   importResults,
   preserveFolders,
   busy,
@@ -483,6 +520,10 @@ export function RawSourcesWorkspace({
   }, [filter, records]);
   const selected = filteredRecords.find((record) => record.id === selectedId) || filteredRecords[0] || null;
   const artifact = selected?.artifact;
+  const selectedPlanEntry = useMemo(
+    () => (selected ? ingestPlan?.entries.find((entry) => planEntryMatchesRecord(selected, entry, vaultPath)) ?? null : null),
+    [ingestPlan?.entries, selected, vaultPath],
+  );
   const selectedBrokenEvidence = selected?.evidencePaths.some((item) => item.chainStatus !== "ok") ?? false;
 
   return (
@@ -671,6 +712,39 @@ export function RawSourcesWorkspace({
                   onCopyText={onCopyText}
                 />
               </details>
+
+              {selectedPlanEntry && (
+                <details className="raw-source-detail-section" open>
+                  <summary>
+                    <strong>{text.planState}</strong>
+                    <span>{selectedPlanEntry.currentState}</span>
+                  </summary>
+                  <dl className="raw-source-facts">
+                    <div><dt>{text.planState}</dt><dd>{selectedPlanEntry.currentState}</dd></div>
+                    <div><dt>{text.nextAction}</dt><dd>{selectedPlanEntry.nextActionLabel || selectedPlanEntry.action}</dd></div>
+                    <div><dt>{text.command}</dt><dd>{selectedPlanEntry.command.length ? selectedPlanEntry.command.join(" ") : selectedPlanEntry.action}</dd></div>
+                    <div><dt>{text.approval}</dt><dd>{selectedPlanEntry.requiresHumanApproval ? text.required : text.notRequired}</dd></div>
+                    <div><dt>{text.network}</dt><dd>{selectedPlanEntry.usesNetwork ? text.enabled : text.disabled}</dd></div>
+                    <div><dt>{text.hash}</dt><dd>{compact(selectedPlanEntry.sha256)}</dd></div>
+                    <div><dt>{text.artifactHash}</dt><dd>{compact(selectedPlanEntry.artifactSha256)}</dd></div>
+                    <div><dt>{text.lastLog}</dt><dd>{compact(selectedPlanEntry.lastLogPath)}</dd></div>
+                  </dl>
+                  <div className="raw-source-notes">
+                    <strong>{text.inputs}</strong>
+                    {(selectedPlanEntry.inputs.length ? selectedPlanEntry.inputs : [selectedPlanEntry.sourcePath]).map((item) => <code key={`plan-input-${item}`}>{item}</code>)}
+                    <strong>{text.outputs}</strong>
+                    {(selectedPlanEntry.outputs.length ? selectedPlanEntry.outputs : [selectedPlanEntry.artifactPath || text.missing]).map((item) => <code key={`plan-output-${item}`}>{item}</code>)}
+                  </div>
+                  <div className="raw-source-actions">
+                    <button type="button" disabled={!selectedPlanEntry.lastLogPath} onClick={() => selectedPlanEntry.lastLogPath && onOpenPath(resolveVaultPath(selectedPlanEntry.lastLogPath))}>
+                      <Search size={14} />{text.lastLog}
+                    </button>
+                    <button type="button" onClick={() => onCopyText("ingest command", selectedPlanEntry.command.join(" "))}>
+                      <ClipboardCopy size={14} />{text.command}
+                    </button>
+                  </div>
+                </details>
+              )}
 
               <details className="raw-source-detail-section traceability-detail" open={selected.warnings.length > 0 || selectedBrokenEvidence}>
                 <summary>
