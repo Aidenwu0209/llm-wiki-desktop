@@ -112,6 +112,7 @@ export type VaultEntryNote = {
   reason: string;
   warning?: string | null;
   isWorkspaceRoot: boolean;
+  isRawSourceFolder: boolean;
 };
 
 export type RuntimeSettings = {

@@ -221,6 +221,7 @@ struct VaultEntryNote {
     reason: String,
     warning: Option<String>,
     is_workspace_root: bool,
+    is_raw_source_folder: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -10914,12 +10915,29 @@ mod tests {
         write_text(&workspace.join("AGENTS.md"), "rules").expect("agents");
         let warning = resolve_vault_entry_note_impl(&workspace, true).expect("workspace entry");
         assert!(warning.is_workspace_root);
+        assert!(!warning.is_raw_source_folder);
         assert!(warning.warning.is_some());
         assert!(warning.entry_path.is_none());
         assert!(warning.obsidian_uri.is_none());
         let opened = open_obsidian_vault(to_display(&workspace)).expect("workspace open warning");
         assert!(opened.is_workspace_root);
         assert!(opened.warning.is_some());
+
+        let raw = workspace.join("deepseek_paper");
+        write_text(&raw.join("dfc.pdf"), "%PDF-1.4\n").expect("raw pdf");
+        let raw_warning = resolve_vault_entry_note_impl(&raw, true).expect("raw folder warning");
+        assert!(!raw_warning.is_workspace_root);
+        assert!(raw_warning.is_raw_source_folder);
+        assert!(raw_warning.warning.as_deref().is_some_and(|warning| warning
+            .contains("raw PDF/source folder")
+            && warning.contains("generated vault")
+            && warning.contains("Dashboard state")
+            && warning.contains("Obsidian entry note")));
+        assert!(raw_warning.entry_path.is_none());
+        assert!(raw_warning.obsidian_uri.is_none());
+        let raw_opened = open_obsidian_vault(to_display(&raw)).expect("raw open warning");
+        assert!(raw_opened.is_raw_source_folder);
+        assert!(raw_opened.warning.is_some());
 
         let _ = fs::remove_dir_all(vault);
         let _ = fs::remove_dir_all(workspace);
@@ -11829,6 +11847,86 @@ fn is_workspace_root(path: &Path) -> bool {
         && path.join("open-llm-wiki").is_dir()
 }
 
+fn looks_like_generated_vault(path: &Path) -> bool {
+    path.join("_state").is_dir()
+        || path.join("sources").is_dir()
+        || path.join("concepts").is_dir()
+        || path.join("claims").is_dir()
+        || path.join("LLM Wiki Home.md").is_file()
+}
+
+fn folder_contains_pdf(path: &Path, depth: usize) -> bool {
+    if depth == 0 {
+        return false;
+    }
+    let Ok(entries) = fs::read_dir(path) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let candidate = entry.path();
+        if candidate.is_file()
+            && candidate
+                .extension()
+                .and_then(OsStr::to_str)
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
+        {
+            return true;
+        }
+        if candidate.is_dir() && folder_contains_pdf(&candidate, depth - 1) {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_raw_source_folder(path: &Path) -> bool {
+    if looks_like_generated_vault(path) {
+        return false;
+    }
+    let name = path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(name.as_str(), "deepseek_paper" | "raw" | "inbox") || folder_contains_pdf(path, 2)
+}
+
+fn first_generated_vault_under(root: &Path) -> Option<PathBuf> {
+    let vaults = root.join("vaults");
+    let mut candidates = fs::read_dir(&vaults)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir() && looks_like_generated_vault(path))
+        .collect::<Vec<_>>();
+    candidates.sort();
+    candidates.into_iter().next()
+}
+
+fn generated_vault_selection_hint(selected: &Path) -> String {
+    let mut roots = Vec::new();
+    roots.push(selected.to_path_buf());
+    if let Some(parent) = selected.parent() {
+        roots.push(parent.to_path_buf());
+        if let Some(grandparent) = parent.parent() {
+            roots.push(grandparent.to_path_buf());
+        }
+    }
+    for root in roots {
+        if let Some(vault) = first_generated_vault_under(&root) {
+            return format!(
+                "Choose generated vault `{}` or another child under `vaults/`.",
+                to_display(&vault)
+            );
+        }
+        let vaults = root.join("vaults");
+        if vaults.is_dir() {
+            return format!("Choose a generated vault under `{}`.", to_display(&vaults));
+        }
+    }
+    "Choose a generated vault under `vaults/<generated-vault>`.".to_string()
+}
+
 fn vault_entry_candidates(vault: &Path) -> Vec<PathBuf> {
     let name = vault
         .file_name()
@@ -11986,12 +12084,27 @@ fn resolve_vault_entry_note_impl(
 ) -> Result<VaultEntryNote, String> {
     require_existing_dir(vault, "vault")?;
     let workspace_root_selected = is_workspace_root(vault);
-    let warning = workspace_root_selected.then(|| {
-        "This looks like the LLM-Wiki workspace root, not a generated vault. Choose a child vault under vaults/ to avoid opening the wrong Obsidian workspace.".to_string()
-    });
+    let raw_source_folder_selected = is_raw_source_folder(vault);
+    let warning = if workspace_root_selected {
+        Some(format!(
+            "This looks like the LLM-Wiki workspace root, not a generated vault. {}",
+            generated_vault_selection_hint(vault)
+        ))
+    } else if raw_source_folder_selected {
+        Some(format!(
+            "This looks like a raw PDF/source folder, not a generated vault. {} Dashboard state, source registry, and the Obsidian entry note live in the generated vault.",
+            generated_vault_selection_hint(vault)
+        ))
+    } else {
+        None
+    };
     let mut reason = "matched existing entry note".to_string();
-    let entry = if workspace_root_selected {
-        reason = "workspace root selected; generated vault required".to_string();
+    let entry = if workspace_root_selected || raw_source_folder_selected {
+        reason = if workspace_root_selected {
+            "workspace root selected; generated vault required".to_string()
+        } else {
+            "raw PDF/source folder selected; generated vault required".to_string()
+        };
         None
     } else {
         let generated = if create_if_missing {
@@ -12035,6 +12148,7 @@ fn resolve_vault_entry_note_impl(
         reason,
         warning,
         is_workspace_root: workspace_root_selected,
+        is_raw_source_folder: raw_source_folder_selected,
     })
 }
 
@@ -12289,7 +12403,7 @@ fn open_obsidian_vault(vault_path: String) -> Result<VaultEntryNote, String> {
     let vault = PathBuf::from(vault_path);
     require_existing_dir(&vault, "vault")?;
     let mut entry = resolve_vault_entry_note_impl(&vault, true)?;
-    if entry.is_workspace_root {
+    if entry.is_workspace_root || entry.is_raw_source_folder {
         return Ok(entry);
     }
     if cfg!(target_os = "macos") {
@@ -12298,7 +12412,7 @@ fn open_obsidian_vault(vault_path: String) -> Result<VaultEntryNote, String> {
                 Ok(()) => return Ok(entry),
                 Err(err) => {
                     entry.warning = Some(format!(
-                        "{err}. Use copy URI/path or reveal in Finder if Obsidian did not focus the entry note."
+                        "{err}. Use Copy URI, Copy path, Reveal in Finder, or Open folder to recover without changing the vault."
                     ));
                 }
             }
