@@ -580,6 +580,45 @@ function blockedEvidenceReason(item: SearchResult, language: UiLanguage) {
   return [status, severity, relation].filter(Boolean).join(" · ") || (language === "zh" ? "证据需要人工确认" : "evidence requires human confirmation");
 }
 
+type AnswerCitationCoverage = {
+  conclusions: number;
+  cited: number;
+  unsupported: number;
+  staleOrRisky: number;
+  needsEvidenceReview: boolean;
+};
+
+function answerCitationCoverage(evidence: SearchResult[]): AnswerCitationCoverage {
+  const cited = evidence.filter((item) => !isBlockedEvidenceResult(item)).length;
+  const staleOrRisky = evidence.filter(isBlockedEvidenceResult).length;
+  const unsupported = cited === 0 ? 1 : 0;
+  return {
+    conclusions: cited + staleOrRisky + unsupported,
+    cited,
+    unsupported,
+    staleOrRisky,
+    needsEvidenceReview: unsupported > 0 || staleOrRisky > 0,
+  };
+}
+
+function renderAnswerCitationCoverage(coverage: AnswerCitationCoverage, language: UiLanguage) {
+  const summary = `${coverage.conclusions} conclusions / ${coverage.cited} cited / ${coverage.unsupported} unsupported / ${coverage.staleOrRisky} stale-or-risky`;
+  if (language === "zh") {
+    return [
+      "## Citation coverage / 引用覆盖",
+      `- summary: ${summary}`,
+      `- status: ${coverage.needsEvidenceReview ? "needs evidence review / 需要证据复核" : "supported coverage ready / 引用覆盖可审"}`,
+      "- rule: stale、contradicted、broken 或 unknown-source 证据只能作为 risky evidence，不计入 supported coverage。",
+    ].join("\n");
+  }
+  return [
+    "## Citation coverage",
+    `- summary: ${summary}`,
+    `- status: ${coverage.needsEvidenceReview ? "needs evidence review" : "supported coverage ready"}`,
+    "- rule: stale, contradicted, broken, or unknown-source evidence is risky only and does not count as supported coverage.",
+  ].join("\n");
+}
+
 function pickAnswerEvidence(results: SearchResult[], selected?: SearchResult | null) {
   const evidenceTypes: SearchKind[] = ["claim", "evidence", "source", "concept", "review", "writeback", "traceability"];
   const ordered = selected && evidenceTypes.includes(selected.type) ? [selected, ...results] : results;
@@ -859,6 +898,7 @@ function buildAnswerDraft(question: string, targetPath: string, evidence: Search
   const sourcePrefix = language === "zh" ? "资料" : "source";
   const usableEvidence = evidence.filter((item) => !isBlockedEvidenceResult(item));
   const blockedEvidence = evidence.filter(isBlockedEvidenceResult);
+  const coverageBlock = renderAnswerCitationCoverage(answerCitationCoverage(evidence), language);
   const usableEvidenceBullets = usableEvidence.length
     ? usableEvidence.map((item, index) => (
       `- E${index + 1} [${typeLabel(item.type)}] ${item.title} (${item.path}): ${item.snippet}${item.evidence ? ` ${language === "zh" ? "证据" : "Evidence"}: ${item.evidence}` : ""}`
@@ -879,6 +919,8 @@ function buildAnswerDraft(question: string, targetPath: string, evidence: Search
 
   if (language === "zh") {
     return [
+      coverageBlock,
+      "",
       `问题：${question || "未输入问题"}`,
       "草稿方法：本地确定性证据提纲；未调用大模型提供方。",
       "",
@@ -906,6 +948,8 @@ function buildAnswerDraft(question: string, targetPath: string, evidence: Search
   }
 
   return [
+    coverageBlock,
+    "",
     `Question: ${question || "No question entered"}`,
     "Draft method: local deterministic evidence outline; no LLM provider was called.",
     "",
@@ -1087,8 +1131,11 @@ export function ChatSearchPage({
     setAnswerBusy(true);
     try {
       const result = await generateLlmAnswer(vaultPath, request);
+      const coverageBlock = renderAnswerCitationCoverage(answerCitationCoverage(draftEvidence), language);
       setAnswerProviderResult(result);
-      setAnswerDraft(result.answer);
+      setAnswerDraft(result.answer.includes("## Citation coverage")
+        ? result.answer
+        : `${coverageBlock}\n\n${result.answer}`);
     } catch (err) {
       setAnswerProviderError(String(err));
       setAnswerDraft(localDraft);

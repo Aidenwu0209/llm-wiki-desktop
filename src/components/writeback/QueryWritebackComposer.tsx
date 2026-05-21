@@ -81,6 +81,13 @@ const writebackCopy = {
     log: "日志",
     boundary: "先提案后写回",
     answer: "回答草稿",
+    citationCoverage: "引用覆盖",
+    needsEvidenceReview: "需要证据复核",
+    coverageReady: "引用覆盖可审",
+    conclusions: "结论",
+    cited: "已引用",
+    unsupported: "无证据",
+    staleOrRisky: "过期/风险",
     evidenceMap: "证据图",
     insightCandidates: "洞察候选",
     uncertaintyConflicts: "不确定性 / 冲突",
@@ -131,6 +138,13 @@ const writebackCopy = {
     log: "log",
     boundary: "proposal-first",
     answer: "Answer",
+    citationCoverage: "Citation coverage",
+    needsEvidenceReview: "needs evidence review",
+    coverageReady: "coverage ready",
+    conclusions: "conclusions",
+    cited: "cited",
+    unsupported: "unsupported",
+    staleOrRisky: "stale/risky",
     evidenceMap: "Evidence map",
     insightCandidates: "Insight candidates",
     uncertaintyConflicts: "Uncertainty / conflicts",
@@ -255,6 +269,28 @@ export function QueryWritebackComposer({
           </button>
           {queryDraft && (
             <div className="composer-result">
+              <strong>{text.citationCoverage}</strong>
+              <div className="workflow-metrics compact">
+                <span>
+                  <strong>{queryDraft.citationCoverage.conclusions}</strong>
+                  {text.conclusions}
+                </span>
+                <span>
+                  <strong>{queryDraft.citationCoverage.cited}</strong>
+                  {text.cited}
+                </span>
+                <span>
+                  <strong>{queryDraft.citationCoverage.unsupported}</strong>
+                  {text.unsupported}
+                </span>
+                <span>
+                  <strong>{queryDraft.citationCoverage.staleOrRisky}</strong>
+                  {text.staleOrRisky}
+                </span>
+              </div>
+              <span className={classNames("status-chip", "inline", queryDraft.citationCoverage.needsEvidenceReview ? "needs_review" : "supported")}>
+                {queryDraft.citationCoverage.needsEvidenceReview ? text.needsEvidenceReview : text.coverageReady}
+              </span>
               <strong>{text.answer}</strong>
               <pre className="diff-box">{queryDraft.answer}</pre>
 
