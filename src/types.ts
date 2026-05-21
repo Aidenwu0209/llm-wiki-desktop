@@ -324,11 +324,20 @@ export type IngestPlanEntry = {
   sourcePath: string;
   fileName: string;
   sha256: string;
+  artifactSha256?: string | null;
   artifactPath?: string | null;
   status: "ready" | "stageable" | "blocked" | "cached" | "published";
   action: string;
   reason: string;
   parserHint?: string | null;
+  currentState: string;
+  nextActionLabel: string;
+  command: string[];
+  inputs: string[];
+  outputs: string[];
+  lastLogPath?: string | null;
+  requiresHumanApproval: boolean;
+  usesNetwork: boolean;
 };
 
 export type DashboardLink = {

@@ -2236,6 +2236,7 @@ function App() {
           claims={claims}
           evidencePaths={evidencePaths}
           traceabilityWarnings={traceabilityWarnings}
+          ingestPlan={ingestPlan}
           importResults={importResults}
           preserveFolders={preserveFolders}
           busy={busy}
@@ -2639,10 +2640,21 @@ function App() {
               {!ingestPlan?.entries.length && <p className="empty">暂无可规划输入。</p>}
               {ingestPlan?.entries.map((entry) => (
                 <button key={`${entry.sourcePath}-${entry.sha256}`} onClick={() => openPath(entry.status === "blocked" ? entry.sourcePath : entry.artifactPath || entry.sourcePath)}>
-                  <span className={classNames("status-chip", entry.status)}>{entry.status}</span>
+                  <span className={classNames("status-chip", entry.currentState || entry.status)}>{entry.currentState || entry.status}</span>
                   <strong>{entry.fileName}</strong>
-                  <em>{entry.reason}</em>
-                  {entry.parserHint && <code>{entry.parserHint}</code>}
+                  <em>{entry.nextActionLabel || entry.reason}</em>
+                  <code>{entry.command.length ? entry.command.join(" ") : entry.reason}</code>
+                  <code>
+                    {interfaceLanguage === "zh" ? "输入" : "inputs"} {entry.inputs.join(", ") || entry.sourcePath}
+                    {" · "}
+                    {interfaceLanguage === "zh" ? "输出" : "outputs"} {entry.outputs.join(", ") || entry.artifactPath || "-"}
+                  </code>
+                  <code>
+                    {interfaceLanguage === "zh" ? "人工确认" : "human approval"}: {entry.requiresHumanApproval ? "yes" : "no"}
+                    {" · "}
+                    {interfaceLanguage === "zh" ? "网络/API" : "network/API"}: {entry.usesNetwork ? "yes" : "no"}
+                    {entry.lastLogPath ? ` · ${entry.lastLogPath}` : ""}
+                  </code>
                 </button>
               ))}
             </div>

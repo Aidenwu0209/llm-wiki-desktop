@@ -339,6 +339,23 @@ function NextAction({
   );
 }
 
+function ingestPlanPriority(entry: IngestPlan["entries"][number]) {
+  if (entry.currentState === "parse_required" || entry.currentState === "stale_artifact") return 0;
+  if (entry.currentState === "blocked_contract" || entry.status === "blocked") return 1;
+  if (entry.currentState === "duplicate" || entry.currentState === "needs_review") return 2;
+  if (entry.currentState === "imported" || entry.currentState === "staged") return 3;
+  if (entry.currentState === "ingest_ready" || entry.status === "ready") return 4;
+  if (entry.currentState === "published") return 9;
+  return 5;
+}
+
+function topIngestPlanEntry(ingestPlan: IngestPlan | null) {
+  return (ingestPlan?.entries ?? [])
+    .filter((entry) => entry.currentState !== "published")
+    .slice()
+    .sort((a, b) => ingestPlanPriority(a) - ingestPlanPriority(b) || a.fileName.localeCompare(b.fileName))[0] ?? null;
+}
+
 export function DashboardOverview({
   className,
   language = "zh",
@@ -373,6 +390,7 @@ export function DashboardOverview({
   const summary = ingestPlan?.summary;
   const parseablePdfs =
     ingestPlan?.entries.filter((entry) => entry.action === "parse_required" && entry.fileName.toLowerCase().endsWith(".pdf")).length ?? 0;
+  const topPlanEntry = topIngestPlanEntry(ingestPlan);
   const runnableIngest = (summary?.ready ?? 0) + (summary?.stageable ?? 0) + (summary?.cached ?? 0) + parseablePdfs;
   const contractP0P1 = lintFindings.filter((finding) => finding.severity === "p0" || finding.severity === "p1").length;
   const proposedWritebacks = writebacks.filter((proposal) => proposal.status === "proposed").length;
@@ -553,6 +571,15 @@ export function DashboardOverview({
                 title={text.planIngest}
                 detail={text.planIngestDetail}
                 onClick={onPlanIngest}
+              />
+            )}
+            {topPlanEntry && (
+              <NextAction
+                icon={FileInput}
+                title={`${topPlanEntry.fileName}: ${topPlanEntry.currentState}`}
+                detail={topPlanEntry.nextActionLabel || topPlanEntry.reason}
+                tone={topPlanEntry.status === "blocked" || topPlanEntry.requiresHumanApproval ? "warn" : "idle"}
+                onClick={onOpenSources}
               />
             )}
             {runnableIngest > 0 && (
