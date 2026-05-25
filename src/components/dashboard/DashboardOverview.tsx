@@ -67,8 +67,20 @@ function visiblePath(path: string) {
   return path.replace(/ +(?=\/|$)/g, (match) => "[space]".repeat(match.length));
 }
 
+function visiblePathPart(part: string) {
+  return part.replace(/^ +| +$/g, (match) => "[space]".repeat(match.length));
+}
+
 function vaultName(path: string) {
   return visiblePath(path).split("/").filter(Boolean).pop() || visiblePath(path) || "No vault";
+}
+
+function whitespacePathParts(path: string) {
+  return path
+    .split(/[\\/]/)
+    .filter(Boolean)
+    .filter((part) => part !== part.trim())
+    .map(visiblePathPart);
 }
 
 const dashboardCopy = {
@@ -165,6 +177,7 @@ const dashboardCopy = {
       runtimeMissing: "运行时缺失。请在设置中选择本地 open-llm-wiki 运行时路径。",
       obsidianMissing: "该知识库尚未配置 Obsidian。用户审阅前请先运行 Obsidian 配置。",
       blockingFindings: (count: number) => `${count} 个阻塞性合约检查问题需要审核。`,
+      pathWhitespace: (parts: string) => `路径组件包含首尾空格：${parts}。跨设备同步、Obsidian 打开或发布验证前建议迁移到无首尾空格路径。`,
       traceabilityIssues: (count: number) => `${count} 个可追踪性问题需要跟进资料或论断。`,
       readingQualityIssues: (count: number) => `${count} 个阅读质量问题需要检查 source/concept 重复、漂移或过期证据。`,
       writebackWaiting: (count: number) => `${count} 个写回提案等待明确审核。`,
@@ -264,6 +277,10 @@ const dashboardCopy = {
       runtimeMissing: "Runtime missing. Select the local open-llm-wiki runtime path in Settings.",
       obsidianMissing: "Obsidian is not configured for this vault. Run Obsidian setup before user-facing review.",
       blockingFindings: (count: number) => `${count} blocking contract lint finding${count === 1 ? "" : "s"} need review.`,
+      pathWhitespace: (parts: string) =>
+        parts.includes(", ")
+          ? `Path components contain leading/trailing spaces: ${parts}. Migrate before sync, Obsidian handoff, or release validation.`
+          : `Path component contains leading/trailing spaces: ${parts}. Migrate before sync, Obsidian handoff, or release validation.`,
       traceabilityIssues: (count: number) => `${count} traceability issue${count === 1 ? "" : "s"} need source or claim follow-up.`,
       readingQualityIssues: (count: number) => `${count} reading quality issue${count === 1 ? "" : "s"} need source/concept duplicate, drift, or stale evidence review.`,
       writebackWaiting: (count: number) => `${count} writeback proposal${count === 1 ? "" : "s"} waiting for explicit review.`,
@@ -399,6 +416,7 @@ export function DashboardOverview({
   const traceabilityTotal = traceabilityWarnings.length + brokenEvidence;
   const readingQualityIssues = status?.readingQuality?.findings ?? 0;
   const vaultErrors = status?.errors ?? [];
+  const unsafePathParts = whitespacePathParts(vaultPath);
   const statusMessages: string[] = [];
 
   if (!status) statusMessages.push(text.messages.pending);
@@ -413,6 +431,9 @@ export function DashboardOverview({
   }
   if (contractP0P1 > 0) {
     statusMessages.push(text.messages.blockingFindings(contractP0P1));
+  }
+  if (unsafePathParts.length > 0) {
+    statusMessages.push(text.messages.pathWhitespace(unsafePathParts.join(", ")));
   }
   if (traceabilityTotal > 0) {
     statusMessages.push(text.messages.traceabilityIssues(traceabilityTotal));
