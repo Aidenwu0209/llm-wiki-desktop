@@ -175,12 +175,14 @@ function lintSummary(status: WritebackApplyStatus, language: UiLanguage) {
 }
 
 function proposalStatusLabel(status: WritebackProposal["status"] | QueryWritebackDraft["approvalStatus"], language: UiLanguage) {
+  if (language !== "zh" && status === "review_only") return "review artifact";
   if (language !== "zh") return status;
   const labels: Record<string, string> = {
     proposed: "待审核",
     approved: "已批准",
     rejected: "已拒绝",
     applied: "已应用",
+    review_only: "仅审核产物",
   };
   return labels[status] ?? status;
 }
@@ -366,27 +368,30 @@ export function QueryWritebackComposer({
         )}
         <div className="impact-list">
           {writebacks.length === 0 && <p className="empty">{text.empty}</p>}
-          {writebacks.map((proposal) => (
-            <div className="work-item" key={proposal.proposalId}>
-              <span className={classNames("status-chip", proposal.status)}>{proposalStatusLabel(proposal.status, language)}</span>
-              <strong>{proposalTitleLabel(proposal.title, language)}</strong>
-              <em>{proposal.targetPath} · {proposal.updatedAt}</em>
-              <code>{proposal.diff.split("\n").slice(0, 2).join(" | ")}</code>
-              <div className="inline-actions">
-                {onSelectProposal && (
-                  <button onClick={() => onSelectProposal(proposal)}>
-                    <PanelRightOpen size={14} />{text.details}
-                  </button>
-                )}
-                <button onClick={() => onOpenPath(resolveVaultPath(proposal.targetPath))}><FolderOpen size={14} />{text.target}</button>
-                <button onClick={() => onSetWritebackStatus(proposal.proposalId, "approved")} disabled={proposal.status !== "proposed"}><Check size={14} />{text.approve}</button>
-                <button onClick={() => onSetWritebackStatus(proposal.proposalId, "rejected")} disabled={proposal.status === "applied"}><XCircle size={14} />{text.reject}</button>
-                <button onClick={() => onApplyWriteback(proposal.proposalId)} disabled={proposal.status !== "approved"}><Play size={14} />{text.apply}</button>
-                <button onClick={() => proposal.logPath && onOpenPath(resolveVaultPath(proposal.logPath))} disabled={!proposal.logPath}><TerminalSquare size={14} />{text.log}</button>
+          {writebacks.map((proposal) => {
+            const reviewOnly = proposal.status === "review_only";
+            return (
+              <div className="work-item" key={proposal.proposalId}>
+                <span className={classNames("status-chip", proposal.status)}>{proposalStatusLabel(proposal.status, language)}</span>
+                <strong>{proposalTitleLabel(proposal.title, language)}</strong>
+                <em>{proposal.targetPath} · {proposal.updatedAt}</em>
+                <code>{proposal.diff.split("\n").slice(0, 2).join(" | ")}</code>
+                <div className="inline-actions">
+                  {onSelectProposal && (
+                    <button onClick={() => onSelectProposal(proposal)}>
+                      <PanelRightOpen size={14} />{text.details}
+                    </button>
+                  )}
+                  <button onClick={() => onOpenPath(resolveVaultPath(proposal.targetPath))}><FolderOpen size={14} />{text.target}</button>
+                  <button onClick={() => onSetWritebackStatus(proposal.proposalId, "approved")} disabled={reviewOnly || proposal.status !== "proposed"}><Check size={14} />{text.approve}</button>
+                  <button onClick={() => onSetWritebackStatus(proposal.proposalId, "rejected")} disabled={reviewOnly || proposal.status === "applied"}><XCircle size={14} />{text.reject}</button>
+                  <button onClick={() => onApplyWriteback(proposal.proposalId)} disabled={reviewOnly || proposal.status !== "approved"}><Play size={14} />{text.apply}</button>
+                  <button onClick={() => proposal.logPath && onOpenPath(resolveVaultPath(proposal.logPath))} disabled={!proposal.logPath}><TerminalSquare size={14} />{text.log}</button>
+                </div>
+                <pre className="diff-box">{proposal.diff}</pre>
               </div>
-              <pre className="diff-box">{proposal.diff}</pre>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 

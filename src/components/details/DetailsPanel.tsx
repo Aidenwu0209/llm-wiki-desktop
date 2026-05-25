@@ -110,12 +110,14 @@ function classNames(...items: Array<string | false | null | undefined>) {
 }
 
 function proposalStatusLabel(status: WritebackProposal["status"], language: UiLanguage) {
+  if (language !== "zh" && status === "review_only") return "review artifact";
   if (language !== "zh") return status;
   const labels: Record<string, string> = {
     proposed: "待审核",
     approved: "已批准",
     rejected: "已拒绝",
     applied: "已应用",
+    review_only: "仅审核产物",
   };
   return labels[status] ?? status;
 }
