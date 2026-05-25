@@ -97,7 +97,7 @@ log-archive/desktop/
 
 ## MVP 能力
 
-- 创建或打开 open-llm-wiki vault。
+- 创建或打开 open-llm-wiki vault；新建 vault 时会拒绝带尾随空格的路径段，避免生成跨设备不稳定的目录名。
 - 将 PDF / Markdown / txt 导入到 `raw/inbox/`，并按 SHA-256 跳过重复文件。
 - 文件夹导入会保留目录上下文，但不会跟随 symlink，避免把未显式选择的外部文件复制进 raw evidence。
 - 生成桌面端 ingest plan：扫描 `raw/inbox/` 与 `raw/*_markdown/combined.md`，按 SHA-256 标记 desktop-only 的 `ready`、`stageable`、`blocked`、`cached`、`published`，并写入 `_state/desktop-ingest-plan.json`。
