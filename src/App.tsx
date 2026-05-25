@@ -2526,6 +2526,9 @@ function App() {
           onRevealPath={revealPath}
           onCopyText={copyText}
           onOpenObsidian={handleOpenObsidian}
+          onOpenSources={() => setActivePage("sources")}
+          onPlanIngest={handlePlanIngest}
+          onRunPipeline={handleIngestPipeline}
           resolveVaultPath={vaultFilePath}
         />
 

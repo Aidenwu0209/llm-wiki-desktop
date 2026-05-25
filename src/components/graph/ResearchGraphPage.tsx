@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Copy, ExternalLink, FolderOpen, GitCompare, Network, Search, ShieldAlert, SquareStack } from "lucide-react";
+import { Copy, ExternalLink, FolderOpen, GitCompare, Network, RotateCcw, Search, ShieldAlert, SquareStack } from "lucide-react";
 import type { UiLanguage } from "../../i18n";
 import type {
   ClaimLedgerItem,
@@ -69,6 +69,9 @@ type ResearchGraphPageProps = {
   onRevealPath: (path: string) => void;
   onCopyText: (label: string, text?: string | null) => void;
   onOpenObsidian: () => void;
+  onOpenSources: () => void;
+  onPlanIngest: () => void;
+  onRunPipeline: () => void;
   resolveVaultPath: (path?: string | null) => string;
 };
 
@@ -118,6 +121,12 @@ const graphCopy = {
     relationshipMap: "证据图谱",
     nodeDetails: "节点详情",
     noGraphNodes: "当前筛选下没有图谱节点。",
+    noGraphDataTitle: "图谱还没有可连接的节点",
+    noGraphDataBody: "先让资料、论断或概念进入当前知识库，再回到图谱检查关系。",
+    noGraphDataSources: "查看资料",
+    noGraphDataPlan: "刷新计划",
+    noGraphDataPipeline: "运行流程",
+    resetGraphFilters: "清除筛选",
     limitHint: (visibleNodes: number, totalNodes: number, visibleEdges: number, totalEdges: number) =>
       `画布为性能只显示前 ${visibleNodes}/${totalNodes} 个节点和 ${visibleEdges}/${totalEdges} 条边；请用搜索或筛选缩小证据图谱。`,
     open: "打开",
@@ -188,6 +197,12 @@ const graphCopy = {
     relationshipMap: "Evidence Graph",
     nodeDetails: "Node details",
     noGraphNodes: "No graph node matches the current filter.",
+    noGraphDataTitle: "No connected graph nodes yet",
+    noGraphDataBody: "Bring sources, claims, or concepts into the selected vault, then return here to inspect relationships.",
+    noGraphDataSources: "View sources",
+    noGraphDataPlan: "Refresh plan",
+    noGraphDataPipeline: "Run pipeline",
+    resetGraphFilters: "Clear filters",
     limitHint: (visibleNodes: number, totalNodes: number, visibleEdges: number, totalEdges: number) =>
       `Canvas is performance-limited to the first ${visibleNodes}/${totalNodes} nodes and ${visibleEdges}/${totalEdges} edges; use search or filters to narrow the Evidence Graph.`,
     open: "open",
@@ -756,6 +771,9 @@ export function ResearchGraphPage({
   onRevealPath,
   onCopyText,
   onOpenObsidian,
+  onOpenSources,
+  onPlanIngest,
+  onRunPipeline,
   resolveVaultPath,
 }: ResearchGraphPageProps) {
   const text = graphCopy[language];
@@ -834,6 +852,8 @@ export function ResearchGraphPage({
   const selected = (selectedId ? filteredNodes.find((node) => node.id === selectedId) : null) || filteredNodes[0] || null;
   const relatedEdges = selected ? visibleEdges.filter((edge) => edge.from === selected.id || edge.to === selected.id) : [];
   const summary = graphSummaryText(graph, language);
+  const hasGraphData = graph.nodes.length > 0;
+  const graphFilterActive = Boolean(normalizedQuery) || typeFilter !== "all" || edgeFilter !== "all";
 
   useEffect(() => {
     if (!selectedId || !filteredNodes.some((node) => node.id === selectedId)) {
@@ -848,6 +868,11 @@ export function ResearchGraphPage({
     if (node.path) onRevealPath(resolveVaultPath(node.path));
   };
   const endpointLabel = (id: string) => nodeById.get(id)?.label || id;
+  const resetGraphFilters = () => {
+    setQuery("");
+    setTypeFilter("all");
+    setEdgeFilter("all");
+  };
 
   return (
     <section className={["research-graph-page", className].filter(Boolean).join(" ")}>
@@ -943,45 +968,68 @@ export function ResearchGraphPage({
             <h2>{text.relationshipMap}</h2>
             <span>{visualNodes.length}/{filteredNodes.length} {text.nodes} · {visualEdges.length}/{visibleEdges.length} {text.edges}</span>
           </div>
-          <svg className="research-graph-svg" viewBox="0 0 860 360" role="img" aria-label="Research relationship graph">
-            <defs>
-              <marker id="graph-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-                <path d="M 0 0 L 10 5 L 0 10 z" />
-              </marker>
-            </defs>
-            {visualEdges.map((edge) => {
-              const from = positions.get(edge.from);
-              const to = positions.get(edge.to);
-              if (!from || !to) return null;
-              const active = selected && (edge.from === selected.id || edge.to === selected.id);
-              return (
-                <line
-                  key={edge.id}
-                  x1={from.x}
-                  y1={from.y}
-                  x2={to.x}
-                  y2={to.y}
-                  markerEnd="url(#graph-arrow)"
-                  className={classNames(edgeStatusClass(edge), active && "active")}
-                />
-              );
-            })}
-            {visualNodes.map((node) => {
-              const position = positions.get(node.id);
-              if (!position) return null;
-              const active = selected?.id === node.id;
-              return (
-                <g
-                  key={node.id}
-                  className={classNames(node.type, active && "active")}
-                  onClick={() => setSelectedId(node.id)}
-                >
-                  <circle cx={position.x} cy={position.y} r={active ? 13 : 10} fill={typeColors[node.type]} />
-                  <text x={position.x + 15} y={position.y + 4}>{node.label.slice(0, 32)}</text>
-                </g>
-              );
-            })}
-          </svg>
+          {!hasGraphData ? (
+            <div className="graph-empty-state">
+              <Network size={30} />
+              <strong>{text.noGraphDataTitle}</strong>
+              <p>{text.noGraphDataBody}</p>
+              <div className="inline-actions">
+                <button onClick={onOpenSources}><FolderOpen size={14} />{text.noGraphDataSources}</button>
+                <button onClick={onPlanIngest}><Search size={14} />{text.noGraphDataPlan}</button>
+                <button onClick={onRunPipeline}><GitCompare size={14} />{text.noGraphDataPipeline}</button>
+              </div>
+            </div>
+          ) : visualNodes.length === 0 ? (
+            <div className="graph-empty-state">
+              <Search size={30} />
+              <strong>{text.noGraphNodes}</strong>
+              {graphFilterActive && (
+                <div className="inline-actions">
+                  <button onClick={resetGraphFilters}><RotateCcw size={14} />{text.resetGraphFilters}</button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <svg className="research-graph-svg" viewBox="0 0 860 360" role="img" aria-label="Research relationship graph">
+              <defs>
+                <marker id="graph-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" />
+                </marker>
+              </defs>
+              {visualEdges.map((edge) => {
+                const from = positions.get(edge.from);
+                const to = positions.get(edge.to);
+                if (!from || !to) return null;
+                const active = selected && (edge.from === selected.id || edge.to === selected.id);
+                return (
+                  <line
+                    key={edge.id}
+                    x1={from.x}
+                    y1={from.y}
+                    x2={to.x}
+                    y2={to.y}
+                    markerEnd="url(#graph-arrow)"
+                    className={classNames(edgeStatusClass(edge), active && "active")}
+                  />
+                );
+              })}
+              {visualNodes.map((node) => {
+                const position = positions.get(node.id);
+                if (!position) return null;
+                const active = selected?.id === node.id;
+                return (
+                  <g
+                    key={node.id}
+                    className={classNames(node.type, active && "active")}
+                    onClick={() => setSelectedId(node.id)}
+                  >
+                    <circle cx={position.x} cy={position.y} r={active ? 13 : 10} fill={typeColors[node.type]} />
+                    <text x={position.x + 15} y={position.y + 4}>{node.label.slice(0, 32)}</text>
+                  </g>
+                );
+              })}
+            </svg>
+          )}
           {graphIsTruncated && (
             <p className="empty">{text.limitHint(visualNodes.length, filteredNodes.length, visualEdges.length, visibleEdges.length)}</p>
           )}
