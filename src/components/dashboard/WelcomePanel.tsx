@@ -61,6 +61,7 @@ const welcomeCopy = {
     projectName: "项目名称",
     aiOutputLanguage: "AI 输出语言",
     parentDirectory: "父目录",
+    parentPathWhitespaceWarning: (parts: string[]) => `父目录包含前导/尾随空格路径段：${parts.join(" / ")}。这类路径在同步、脚本、Obsidian URI 或其他设备上容易被误读；建议先选择没有这些空格的父目录。`,
     browse: "浏览",
     templatePurpose: "模板用途",
     cancel: "取消",
@@ -89,6 +90,7 @@ const welcomeCopy = {
     projectName: "Project Name",
     aiOutputLanguage: "AI Output Language",
     parentDirectory: "Parent Directory",
+    parentPathWhitespaceWarning: (parts: string[]) => `Parent directory contains leading/trailing-space path segment(s): ${parts.join(" / ")}. These paths are easy to misread in sync tools, scripts, Obsidian URIs, or on another device; choose a parent directory without those spaces first.`,
     browse: "Browse",
     templatePurpose: "Template purpose",
     cancel: "Cancel",
@@ -110,6 +112,14 @@ function classNames(...items: Array<string | false | null | undefined>) {
 
 function visiblePath(path: string) {
   return path.replace(/ +(?=\/|$)/g, (match) => "[space]".repeat(match.length));
+}
+
+function pathWhitespaceComponents(path: string) {
+  return path
+    .split(/[\\/]+/)
+    .filter(Boolean)
+    .filter((part) => part !== part.trim())
+    .map(visiblePath);
 }
 
 function lastPathSegment(path: string) {
@@ -149,6 +159,7 @@ export function WelcomePanel({
   const detectedProjects = useMemo(() => suggestions.filter((item) => item.exists).slice(0, 4), [suggestions]);
   const selectedTemplate = templates.find((item) => item.id === template) ?? templates[0];
   const selectedTemplateText = text.templates[selectedTemplate.id];
+  const parentWhitespaceComponents = useMemo(() => pathWhitespaceComponents(parentDirectory), [parentDirectory]);
 
   const resetCreateState = () => {
     setProjectName("");
@@ -320,6 +331,11 @@ export function WelcomePanel({
                     {text.browse}
                   </button>
                 </div>
+                {parentWhitespaceComponents.length > 0 && (
+                  <div className="project-path-warning" role="alert">
+                    {text.parentPathWhitespaceWarning(parentWhitespaceComponents)}
+                  </div>
+                )}
               </label>
             </div>
 

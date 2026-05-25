@@ -4942,6 +4942,16 @@ button.primary:hover:not(:disabled),
   font-size: 13px;
 }
 
+.project-path-warning {
+  border: 1px solid #d07878;
+  border-radius: 6px;
+  background: #fff7f5;
+  padding: 8px;
+  color: #a43131;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .logo-lockup {
   display: inline-flex;
   align-items: center;
