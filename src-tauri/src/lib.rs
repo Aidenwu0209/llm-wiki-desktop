@@ -1193,7 +1193,7 @@ fn default_web_search_categories() -> String {
 }
 
 fn default_source_watch_allowed_extensions() -> String {
-    "pdf, md, txt, docx, pptx, xlsx, csv".to_string()
+    "pdf, md, txt, zip, docx, pptx, xlsx, csv".to_string()
 }
 
 fn default_source_watch_exclude_dirs() -> String {
@@ -1704,6 +1704,7 @@ fn detect_mime(path: &Path) -> String {
         "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "csv" => "text/csv",
+        "zip" => "application/zip",
         _ => "application/octet-stream",
     }
     .to_string()
@@ -4069,7 +4070,7 @@ fn supported_import_file(path: &Path) -> bool {
             .unwrap_or_default()
             .to_ascii_lowercase()
             .as_str(),
-        "pdf" | "md" | "markdown" | "txt" | "docx" | "pptx" | "xlsx" | "csv"
+        "pdf" | "md" | "markdown" | "txt" | "zip" | "docx" | "pptx" | "xlsx" | "csv"
     )
 }
 
@@ -4583,6 +4584,17 @@ fn is_parseable_binary(path: &Path) -> bool {
     )
 }
 
+fn is_archive_package(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(OsStr::to_str)
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "zip"
+    )
+}
+
 fn collect_inbox_files(dir: &Path, out: &mut Vec<PathBuf>) {
     if let Ok(read_dir) = fs::read_dir(dir) {
         for entry in read_dir.flatten() {
@@ -4885,6 +4897,7 @@ fn plan_current_state(status: &str, action: &str) -> String {
         ("published", _) => "published",
         (_, "restage_text_artifact") => "stale_artifact",
         ("blocked", "parse_required") => "parse_required",
+        ("blocked", "extract_archive_required") => "archive_extract_required",
         ("blocked", _) => "blocked_contract",
         ("cached", _) => "staged",
         ("ready", _) => "ingest_ready",
@@ -4902,6 +4915,9 @@ fn plan_next_action_label(status: &str, action: &str) -> String {
             "Restage the local text artifact, then run the ingest pipeline"
         }
         ("blocked", "parse_required") => "Parse this source locally before ingest",
+        ("blocked", "extract_archive_required") => {
+            "Extract this archive into raw/inbox, then re-run ingest planning"
+        }
         ("blocked", _) => "Inspect the blocked source contract before ingest",
         ("cached", "skip_staging") => "Run the ingest pipeline with the cached artifact",
         ("ready", "run_ingest_corpus") => "Run the ingest pipeline",
@@ -4916,6 +4932,7 @@ fn plan_command_for_action(action: &str, parser_hint: Option<&str>) -> Vec<Strin
         "parse_required" => parser_hint
             .map(|hint| vec![hint.to_string()])
             .unwrap_or_else(|| vec!["desktop:parse_pdfs".to_string()]),
+        "extract_archive_required" => vec!["manual:extract_archive_into_raw_inbox".to_string()],
         "stage_text_artifact" | "restage_text_artifact" | "run_ingest_corpus" | "skip_staging" => {
             vec!["desktop:run_ingest_pipeline".to_string()]
         }
@@ -5102,7 +5119,12 @@ fn plan_entry_for_source(
         .unwrap_or_default()
         .to_string_lossy()
         .to_string();
-    let artifact_path = Some(to_display(&artifact));
+    let archive_package = is_archive_package(source);
+    let artifact_path = if archive_package {
+        None
+    } else {
+        Some(to_display(&artifact))
+    };
 
     let (status, action, reason, parser_hint) = if published {
         (
@@ -5158,6 +5180,13 @@ fn plan_entry_for_source(
             "parse_required".to_string(),
             "PDF requires a parser before corpus ingest can run".to_string(),
             Some(hint),
+        )
+    } else if archive_package {
+        (
+            "blocked".to_string(),
+            "extract_archive_required".to_string(),
+            "Archive corpus packages must be extracted under raw/inbox before individual sources can be parsed and ingested".to_string(),
+            None,
         )
     } else {
         (
@@ -6249,6 +6278,13 @@ fn action_for_plan_entry(vault: &Path, entry: &IngestPlanEntry) -> Option<Dashbo
                 .clone()
                 .unwrap_or_else(|| entry.reason.clone()),
             "parse_artifact",
+        ),
+        "blocked" if entry.action == "extract_archive_required" => (
+            "archive_extract_required",
+            "p1",
+            format!("{} 需要先解包", entry.file_name),
+            entry.reason.clone(),
+            "extract_archive",
         ),
         "blocked" => (
             "ingest_blocked",
@@ -10318,7 +10354,7 @@ fn run_ingest_pipeline(
                     .to_string(),
             );
         }
-        return Err("no unpublished ingest inputs are ready; parse blocked sources first or import Markdown/txt".to_string());
+        return Err("no unpublished ingest inputs are ready; parse blocked PDFs, extract archive packages, or import Markdown/txt".to_string());
     }
     let (parsed_artifacts, mut logs) = parse_pdf_artifacts(
         Some(&app),
@@ -11291,6 +11327,47 @@ mod tests {
         assert_eq!(source.source_id.as_deref(), Some("LLM-0001"));
 
         let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn archive_zip_corpus_package_is_imported_as_raw_evidence() {
+        let vault = test_vault("archive-zip-import");
+        let incoming = test_vault("external-archive-zip");
+        let archive = incoming.join("deepseek_paper_中文.zip");
+        fs::write(&archive, b"zip payload").expect("write archive");
+
+        let batch = import_sources_impl(&vault, vec![to_display(&archive)], false, false)
+            .expect("import archive package");
+
+        assert_eq!(batch.imported.len(), 1);
+        assert!(batch.errors.is_empty(), "{:?}", batch.errors);
+        assert_eq!(batch.imported[0].file_name, "deepseek_paper_中文.zip");
+        assert_eq!(batch.imported[0].mime, "application/zip");
+        assert!(batch.imported[0]
+            .target_path
+            .as_deref()
+            .is_some_and(|path| path.contains("raw/inbox/deepseek_paper_中文.zip")));
+
+        let plan = plan_ingest(to_display(&vault)).expect("plan archive package");
+        let entry = plan
+            .entries
+            .iter()
+            .find(|entry| entry.file_name == "deepseek_paper_中文.zip")
+            .expect("archive plan entry");
+        assert_eq!(entry.status, "blocked");
+        assert_eq!(entry.action, "extract_archive_required");
+        assert_eq!(entry.current_state, "archive_extract_required");
+        assert!(entry.artifact_path.is_none());
+        assert!(entry
+            .next_action_label
+            .contains("Extract this archive into raw/inbox"));
+        assert!(plan
+            .actions
+            .iter()
+            .any(|action| action.kind == "archive_extract_required"));
+
+        let _ = fs::remove_dir_all(vault);
+        let _ = fs::remove_dir_all(incoming);
     }
 
     #[test]
