@@ -1,3 +1,6 @@
+import { useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   ClipboardList,
   Copy,
@@ -10,7 +13,8 @@ import {
   SquareStack,
 } from "lucide-react";
 import type { UiLanguage } from "../../i18n";
-import type { ClaimLedgerItem, EvidencePathItem, TraceabilityWarning, VaultFile, WritebackProposal } from "../../types";
+import { readVaultTextFile } from "../../tauri";
+import type { ClaimLedgerItem, EvidencePathItem, TraceabilityWarning, VaultFile, VaultTextFilePreview, WritebackProposal } from "../../types";
 
 export type DetailSelection =
   | { kind: "empty" }
@@ -60,6 +64,10 @@ const detailsCopy = {
     outboundLinks: "出站链接",
     inboundLinks: "反向链接",
     noLinks: "没有页面级 wikilink。",
+    preview: "只读预览",
+    loadingPreview: "正在读取预览...",
+    previewUnavailable: "无法读取预览",
+    truncatedPreview: "内容较长，当前只显示前 64 KB。",
   },
   en: {
     title: "Details",
@@ -88,6 +96,10 @@ const detailsCopy = {
     outboundLinks: "Outbound links",
     inboundLinks: "Backlinks",
     noLinks: "No page-level wikilinks.",
+    preview: "Read-only preview",
+    loadingPreview: "Loading preview...",
+    previewUnavailable: "Preview unavailable",
+    truncatedPreview: "Long file: showing the first 64 KB only.",
   },
 } as const;
 
@@ -111,6 +123,16 @@ function proposalStatusLabel(status: WritebackProposal["status"], language: UiLa
 function proposalTitleLabel(title: string, language: UiLanguage) {
   if (language === "zh" && title === "DeepSeek research insight query") return "DeepSeek 研究洞察提案";
   return title;
+}
+
+type PreviewState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "ready"; preview: VaultTextFilePreview }
+  | { status: "error"; error: string };
+
+function canPreviewVaultText(path?: string | null) {
+  return Boolean(path && /\.(md|markdown|txt|json|jsonl|csv|tsv)$/i.test(path));
 }
 
 function DetailActions({
@@ -190,6 +212,28 @@ export function DetailsPanel({
   onOpenObsidian,
 }: DetailsPanelProps) {
   const text = detailsCopy[language];
+  const sourcePreviewPath = selection.kind === "source" ? selection.file.path : null;
+  const [previewState, setPreviewState] = useState<PreviewState>({ status: "idle" });
+
+  useEffect(() => {
+    if (!vaultPath || !canPreviewVaultText(sourcePreviewPath)) {
+      setPreviewState({ status: "idle" });
+      return;
+    }
+    let cancelled = false;
+    setPreviewState({ status: "loading" });
+    readVaultTextFile(vaultPath, sourcePreviewPath as string)
+      .then((preview) => {
+        if (!cancelled) setPreviewState({ status: "ready", preview });
+      })
+      .catch((err) => {
+        if (!cancelled) setPreviewState({ status: "error", error: String(err) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sourcePreviewPath, vaultPath]);
+
   return (
     <section className="panel details-panel">
       <div className="section-head">
@@ -236,6 +280,42 @@ export function DetailsPanel({
               onOpenVaultPath={onOpenVaultPath}
             />
           </div>
+          {canPreviewVaultText(selection.file.path) && (
+            <div className="details-preview">
+              <div className="section-head compact">
+                <h3>{text.preview}</h3>
+                {previewState.status === "ready" && <span>{previewState.preview.sizeBytes} bytes</span>}
+              </div>
+              {previewState.status === "loading" && <p>{text.loadingPreview}</p>}
+              {previewState.status === "error" && (
+                <p>{text.previewUnavailable}: {previewState.error}</p>
+              )}
+              {previewState.status === "ready" && (
+                <>
+                  <div className="details-markdown-preview">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        a: ({ children, href }) => (
+                          <a href={href} rel="noreferrer" target="_blank">
+                            {children}
+                          </a>
+                        ),
+                        img: ({ alt, src }) => (
+                          <span className="details-markdown-image-placeholder">
+                            {alt || src ? `Image: ${alt || src}` : "Image omitted"}
+                          </span>
+                        ),
+                      }}
+                    >
+                      {previewState.preview.content}
+                    </ReactMarkdown>
+                  </div>
+                  {previewState.preview.truncated && <p>{text.truncatedPreview}</p>}
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
 

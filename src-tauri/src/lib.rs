@@ -14,6 +14,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
+const MAX_VAULT_TEXT_PREVIEW_BYTES: u64 = 64 * 1024;
+
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct VaultCounts {
@@ -157,6 +159,15 @@ struct VaultFile {
     needs_review: usize,
     outbound_links: Vec<String>,
     inbound_links: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct VaultTextFilePreview {
+    path: String,
+    size_bytes: u64,
+    content: String,
+    truncated: bool,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -12638,6 +12649,61 @@ mod tests {
     }
 
     #[test]
+    fn vault_text_preview_reads_markdown_and_rejects_unsafe_targets() {
+        let vault = test_vault("vault-text-preview");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        let source = vault.join("sources").join("LLM-0001.md");
+        write_text(&source, "# Source\n\nEvidence-backed note.").expect("source");
+        let preview =
+            read_vault_text_file(to_display(&vault), "sources/LLM-0001.md".to_string())
+                .expect("preview markdown");
+        assert_eq!(preview.path, "sources/LLM-0001.md");
+        assert!(preview.content.contains("Evidence-backed note"));
+        assert!(!preview.truncated);
+
+        let raw = vault.join("raw").join("paper.pdf");
+        write_text(&raw, "%PDF placeholder").expect("raw pdf");
+        assert!(read_vault_text_file(to_display(&vault), "raw/paper.pdf".to_string()).is_err());
+        assert!(read_vault_text_file(to_display(&vault), "../outside.md".to_string()).is_err());
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn vault_text_preview_rejects_symlink_escape() {
+        let vault = test_vault("vault-text-preview-symlink");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        let outside = vault
+            .parent()
+            .expect("vault parent")
+            .join("llm-wiki-desktop-preview-outside.md");
+        write_text(&outside, "# outside").expect("outside markdown");
+        let link = vault.join("sources").join("linked.md");
+        std::os::unix::fs::symlink(&outside, &link).expect("symlink markdown");
+
+        let result = read_vault_text_file(to_display(&vault), "sources/linked.md".to_string());
+        assert!(result.is_err());
+
+        let _ = fs::remove_file(outside);
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn vault_text_preview_truncates_large_text_files() {
+        let vault = test_vault("vault-text-preview-large");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        let long_text = "a".repeat((MAX_VAULT_TEXT_PREVIEW_BYTES + 32) as usize);
+        write_text(&vault.join("concepts").join("long.md"), &long_text).expect("long concept");
+        let preview = read_vault_text_file(to_display(&vault), "concepts/long.md".to_string())
+            .expect("preview long markdown");
+        assert!(preview.truncated);
+        assert_eq!(preview.content.len(), MAX_VAULT_TEXT_PREVIEW_BYTES as usize);
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
     fn runtime_probe_commands_are_deterministic() {
         let cancel = runtime_probe_command("cancel_probe").expect("cancel probe");
         assert_eq!(cancel.1, 45);
@@ -13546,6 +13612,62 @@ fn open_vault_path(vault_path: String, path: String) -> Result<(), String> {
     }
 }
 
+fn is_vault_text_preview_extension(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(OsStr::to_str)
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "md" | "markdown" | "txt" | "json" | "jsonl" | "csv" | "tsv"
+    )
+}
+
+#[tauri::command]
+fn read_vault_text_file(vault_path: String, path: String) -> Result<VaultTextFilePreview, String> {
+    let vault = PathBuf::from(vault_path);
+    let target = resolve_vault_item_path(&vault, &path)?;
+    let vault_resolved = vault
+        .canonicalize()
+        .map_err(|e| format!("failed to resolve vault {}: {e}", vault.display()))?;
+    let target_resolved = target
+        .canonicalize()
+        .map_err(|e| format!("failed to resolve {}: {e}", target.display()))?;
+    if !target_resolved.starts_with(&vault_resolved) {
+        return Err("vault text preview must stay inside the vault".to_string());
+    }
+    if !target.is_file() {
+        return Err(format!("vault item is not a file: {}", target.display()));
+    }
+    if !is_vault_text_preview_extension(&target) {
+        return Err(format!(
+            "vault item is not a supported text preview: {}",
+            target.display()
+        ));
+    }
+    let mut file = fs::File::open(&target_resolved)
+        .map_err(|e| format!("failed to open {}: {e}", target_resolved.display()))?;
+    let size_bytes = file
+        .metadata()
+        .map_err(|e| format!("failed to inspect {}: {e}", target_resolved.display()))?
+        .len();
+    let mut buffer = Vec::new();
+    std::io::Read::by_ref(&mut file)
+        .take(MAX_VAULT_TEXT_PREVIEW_BYTES + 1)
+        .read_to_end(&mut buffer)
+        .map_err(|e| format!("failed to read {}: {e}", target_resolved.display()))?;
+    let truncated = buffer.len() as u64 > MAX_VAULT_TEXT_PREVIEW_BYTES;
+    if truncated {
+        buffer.truncate(MAX_VAULT_TEXT_PREVIEW_BYTES as usize);
+    }
+    Ok(VaultTextFilePreview {
+        path: rel_path(&vault_resolved, &target_resolved),
+        size_bytes,
+        content: String::from_utf8_lossy(&buffer).into_owned(),
+        truncated,
+    })
+}
+
 #[tauri::command]
 fn open_obsidian_vault(vault_path: String) -> Result<VaultEntryNote, String> {
     let vault = PathBuf::from(vault_path);
@@ -13637,6 +13759,7 @@ pub fn run() {
             open_path,
             reveal_path,
             open_vault_path,
+            read_vault_text_file,
             resolve_vault_entry_note,
             open_obsidian_vault
         ])
