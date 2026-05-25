@@ -140,6 +140,12 @@ const graphCopy = {
     noneYet: "暂未生成",
     evidenceBreaks: "证据断点",
     noneSurfaced: "暂无",
+    knowledgeGaps: "知识缺口",
+    knowledgeGapDetail: (orphanConcepts: number, lowSynthesisConcepts: number) =>
+      `${orphanConcepts} 个孤立概念，${lowSynthesisConcepts} 个低综合概念`,
+    knowledgeGapClear: "暂无孤立或低综合概念",
+    noReadingQuality: "尚未生成阅读质量报告",
+    readingQualityReport: "打开阅读质量报告",
     searchPlaceholder: "搜索节点、路径、论断、概念、提案目标和警告文本",
     nodeType: "节点类型",
     edgeType: "边类型",
@@ -226,6 +232,12 @@ const graphCopy = {
     noneYet: "none yet",
     evidenceBreaks: "Evidence breaks",
     noneSurfaced: "none surfaced",
+    knowledgeGaps: "Knowledge gaps",
+    knowledgeGapDetail: (orphanConcepts: number, lowSynthesisConcepts: number) =>
+      `${orphanConcepts} orphan concepts, ${lowSynthesisConcepts} low-synthesis concepts`,
+    knowledgeGapClear: "No orphan or low-synthesis concepts",
+    noReadingQuality: "Reading quality report has not been generated",
+    readingQualityReport: "Open reading quality report",
     searchPlaceholder: "Search nodes, paths, claims, concepts, proposal targets, and warning text",
     nodeType: "Node type",
     edgeType: "Edge type",
@@ -1080,6 +1092,14 @@ export function ResearchGraphPage({
     const height = GRAPH_VIEWBOX.height / zoom;
     return `${GRAPH_VIEWBOX.centerX - width / 2} ${GRAPH_VIEWBOX.centerY - height / 2} ${width} ${height}`;
   }, [zoom]);
+  const readingQuality = status?.readingQuality ?? null;
+  const orphanConcepts = readingQuality?.orphanConcepts ?? 0;
+  const lowSynthesisConcepts = readingQuality?.lowSynthesisConcepts ?? 0;
+  const knowledgeGaps = orphanConcepts + lowSynthesisConcepts;
+  const readingQualityReportPath = readingQuality?.reportPath || null;
+  const knowledgeGapSummary = readingQuality
+    ? (knowledgeGaps > 0 ? text.knowledgeGapDetail(orphanConcepts, lowSynthesisConcepts) : text.knowledgeGapClear)
+    : text.noReadingQuality;
 
   useEffect(() => {
     if (!selectedId || !filteredNodes.some((node) => node.id === selectedId)) {
@@ -1159,6 +1179,16 @@ export function ResearchGraphPage({
         <div>
           <span>{text.evidenceBreaks}</span>
           <em>{traceabilityWarnings.slice(0, 3).map((warning) => warning.claimId).join(", ") || text.noneSurfaced}</em>
+        </div>
+        <div>
+          <span>{text.knowledgeGaps}</span>
+          <em>{knowledgeGapSummary}</em>
+          {readingQualityReportPath && (
+            <button className="graph-insight-link" onClick={() => onOpenPath(resolveVaultPath(readingQualityReportPath))}>
+              <FolderOpen size={14} />
+              {text.readingQualityReport}
+            </button>
+          )}
         </div>
       </div>
 
