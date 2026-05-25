@@ -1688,6 +1688,12 @@ function App() {
         { label: copy.pageActions.reviewQueue, icon: <AlertTriangle size={15} />, onClick: () => setActivePage("reviews") },
       ];
     }
+    if (activePage === "concepts") {
+      return [
+        { label: interfaceLanguage === "zh" ? "生成概念预览" : "Preview concepts", icon: <Database size={15} />, onClick: () => handleRuntime("concept_revision_preview"), disabled: runtimeRunning || busy === "start:concept_revision_preview", tone: "primary" },
+        { label: interfaceLanguage === "zh" ? "应用概念" : "Apply concepts", icon: <Wrench size={15} />, onClick: () => handleRuntime("concept_revision_apply"), disabled: runtimeRunning || busy === "start:concept_revision_apply" },
+      ];
+    }
     if (activePage === "reviews") {
       return [
         { label: copy.pageActions.scienceReview, icon: <ShieldCheck size={15} />, onClick: () => handleRuntime("science_review"), disabled: runtimeRunning || busy === "start:science_review", tone: "primary" },
@@ -1738,6 +1744,13 @@ function App() {
     warnings: traceabilityWarnings.length,
     broken: brokenEvidence,
     contract: contractP0P1,
+  };
+  const conceptReviewFlags = grouped.concept.reduce((total, file) => total + (file.needsReview ?? 0), 0);
+  const conceptWorkflowStats = {
+    concepts: grouped.concept.length,
+    reviewFlags: conceptReviewFlags,
+    orphanConcepts: status?.readingQuality?.orphanConcepts ?? 0,
+    lowSynthesis: status?.readingQuality?.lowSynthesisConcepts ?? 0,
   };
   const renderDashboardActionPanel = () => (
     <section className="panel large">
@@ -2582,13 +2595,61 @@ function App() {
           </>
         )}
 
-        <div className={classNames("main-grid view-section", pageVisible("concepts") && "visible")}>
-          <section className="panel large">
+        <div className={classNames("main-grid concept-workspace-grid view-section", pageVisible("concepts") && "visible")}>
+          <section className="panel large concept-library-panel">
             <div className="section-head">
-              <h2>{interfaceLanguage === "zh" ? "资料登记" : "Source Registry"}</h2>
-              <span>{registry.length} {interfaceLanguage === "zh" ? "行" : "rows"}</span>
+              <h2>{interfaceLanguage === "zh" ? "概念阅读库" : "Concept library"}</h2>
+              <span>{grouped.concept.length} {interfaceLanguage === "zh" ? "页" : "pages"}</span>
             </div>
-            <div className="registry-list">
+            <div className="workflow-metrics compact concept-metrics">
+              <span><strong>{conceptWorkflowStats.concepts}</strong>{interfaceLanguage === "zh" ? "概念页" : "concept pages"}</span>
+              <span><strong>{conceptWorkflowStats.reviewFlags}</strong>{interfaceLanguage === "zh" ? "待核对标记" : "review flags"}</span>
+              <span><strong>{conceptWorkflowStats.orphanConcepts}</strong>{interfaceLanguage === "zh" ? "孤立概念" : "orphan concepts"}</span>
+              <span><strong>{conceptWorkflowStats.lowSynthesis}</strong>{interfaceLanguage === "zh" ? "低综合页" : "low synthesis"}</span>
+            </div>
+            <p className="workflow-hint">
+              {interfaceLanguage === "zh"
+                ? "先从概念页开始阅读，再用详情侧栏追踪来源、审核状态和证据路径。"
+                : "Start with concept pages, then use the inspector to trace sources, review state, and evidence paths."}
+            </p>
+            <div className="concept-list">
+              {grouped.concept.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无概念页。先运行概念预览或应用概念修订。" : "No concept pages yet. Run concept preview or apply concept revisions first."}</p>}
+              {grouped.concept.map((file) => {
+                const reviewLabel = (file.needsReview ?? 0) > 0
+                  ? `${file.needsReview} ${interfaceLanguage === "zh" ? "项待核对" : "review items"}`
+                  : (interfaceLanguage === "zh" ? "暂无待核对标记" : "no review flags");
+                return (
+                  <button key={file.path} onClick={() => selectFileForDetails(file)}>
+                    <span className={classNames("status-chip", file.status || "published")}>{file.status || (interfaceLanguage === "zh" ? "已生成" : "generated")}</span>
+                    <strong>{file.title || file.name}</strong>
+                    <em>{reviewLabel} · QA {file.qaVerdict || (interfaceLanguage === "zh" ? "未知" : "unknown")} · {file.updated || (interfaceLanguage === "zh" ? "未更新" : "not updated")}</em>
+                    <code>{file.path}</code>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="inline-actions">
+              <button onClick={() => setActivePage("writeback")}><GitCompare size={14} />{interfaceLanguage === "zh" ? "提炼研究洞察" : "Research insights"}</button>
+              <button onClick={() => setActivePage("reviews")}><AlertTriangle size={14} />{interfaceLanguage === "zh" ? "查看审核队列" : "Review queue"}</button>
+              <button onClick={() => setActivePage("traceability")}><ShieldCheck size={14} />{interfaceLanguage === "zh" ? "检查证据链" : "Traceability"}</button>
+            </div>
+          </section>
+
+          <section className="panel large concept-support-panel">
+            <div className="section-head">
+              <h2>{interfaceLanguage === "zh" ? "支撑资料" : "Supporting evidence"}</h2>
+              <span>{registry.length} {interfaceLanguage === "zh" ? "登记行" : "registry rows"}</span>
+            </div>
+            <div className="browser concept-browser">
+              <FileColumn title={interfaceLanguage === "zh" ? "资料" : "Sources"} files={[...grouped.source, ...grouped.draft]} onSelect={selectFileForDetails} />
+              <FileColumn title={interfaceLanguage === "zh" ? "报告" : "Reports"} files={grouped.report} onSelect={selectFileForDetails} />
+              <FileColumn title={interfaceLanguage === "zh" ? "收件箱" : "Inbox"} files={grouped.inbox} onSelect={selectFileForDetails} />
+            </div>
+            <div className="section-head compact">
+              <h3>{interfaceLanguage === "zh" ? "资料登记" : "Source registry"}</h3>
+              <span>{registry.length}</span>
+            </div>
+            <div className="registry-list compact">
               {registry.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无资料登记投影。" : "No registry projection yet."}</p>}
               {registry.map((entry) => (
                 <button key={`${entry.sourceUuid}-${entry.sourcePath}`} onClick={() => openPath(vaultFilePath(entry.sourcePath))}>
@@ -2617,19 +2678,6 @@ function App() {
                 </div>
               </>
             )}
-          </section>
-
-          <section className="panel large">
-            <div className="section-head">
-              <h2>{interfaceLanguage === "zh" ? "资料 / 概念 / 报告" : "Sources / Concepts / Reports"}</h2>
-              <span>{status?.files.length ?? 0} {interfaceLanguage === "zh" ? "项" : "items"}</span>
-            </div>
-            <div className="browser">
-              <FileColumn title={interfaceLanguage === "zh" ? "收件箱" : "Inbox"} files={grouped.inbox} onSelect={selectFileForDetails} />
-              <FileColumn title={interfaceLanguage === "zh" ? "资料" : "Sources"} files={[...grouped.source, ...grouped.draft]} onSelect={selectFileForDetails} />
-              <FileColumn title={interfaceLanguage === "zh" ? "概念" : "Concepts"} files={grouped.concept} onSelect={selectFileForDetails} />
-              <FileColumn title={interfaceLanguage === "zh" ? "报告" : "Reports"} files={grouped.report} onSelect={selectFileForDetails} />
-            </div>
           </section>
         </div>
 
