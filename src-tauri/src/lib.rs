@@ -2797,6 +2797,16 @@ fn agent_read_api_endpoints() -> Vec<AgentReadApiEndpoint> {
         ),
         (
             "GET",
+            "/vault/graph",
+            "read-only evidence graph traversal",
+        ),
+        (
+            "POST",
+            "/vault/read-file",
+            "read one vault-relative file; reject path escapes",
+        ),
+        (
+            "GET",
             "/vault/writeback-proposals",
             "proposal metadata and review status",
         ),
@@ -11133,6 +11143,18 @@ mod tests {
                 && !endpoint.path.contains("delete")
                 && !endpoint.path.contains("set-status")));
         assert!(readiness
+            .endpoints
+            .iter()
+            .any(|endpoint| endpoint.method == "GET"
+                && endpoint.path == "/vault/graph"
+                && endpoint.capability.contains("read-only evidence graph")));
+        assert!(readiness
+            .endpoints
+            .iter()
+            .any(|endpoint| endpoint.method == "POST"
+                && endpoint.path == "/vault/read-file"
+                && endpoint.capability.contains("reject path escapes")));
+        assert!(readiness
             .blocked_operations
             .iter()
             .any(|operation| operation.contains("write, delete, or overwrite")));
@@ -11179,6 +11201,14 @@ mod tests {
             .endpoints
             .iter()
             .any(|endpoint| endpoint.path == "/vault/rescan-plan"));
+        assert!(readiness
+            .endpoints
+            .iter()
+            .any(|endpoint| endpoint.path == "/vault/graph"));
+        assert!(readiness
+            .endpoints
+            .iter()
+            .any(|endpoint| endpoint.path == "/vault/read-file"));
         assert!(readiness
             .blocked_operations
             .iter()
