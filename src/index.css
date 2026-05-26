@@ -1926,6 +1926,44 @@ textarea {
   font-size: 11px;
 }
 
+.details-link-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.details-link-section {
+  display: grid;
+  gap: 6px;
+  border: 1px solid #d8ded9;
+  border-radius: 6px;
+  background: #fbfcfa;
+  padding: 8px;
+}
+
+.details-link-section strong {
+  color: #26312d;
+  font-size: 11px;
+}
+
+.details-link-section p {
+  color: #64706a;
+  font-size: 11px;
+}
+
+.details-link-section button {
+  justify-content: start;
+  min-height: 28px;
+  padding: 0 7px;
+  overflow: hidden;
+  font-size: 11px;
+}
+
+.details-link-section button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .details-diff {
   max-height: 190px;
   overflow: auto;
