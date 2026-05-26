@@ -294,6 +294,26 @@ function labelFromPath(path?: string | null) {
   return basename(path).replace(/\.(md|markdown|txt|pdf|jsonl)$/i, "") || "untitled";
 }
 
+function sourceIdFromPath(path?: string | null) {
+  const match = labelFromPath(path).match(/^LLM-\d{4}$/i);
+  return match ? match[0].toUpperCase() : null;
+}
+
+function relativeVaultPath(vaultPath?: string | null, path?: string | null) {
+  if (!vaultPath || !path) return null;
+  const normalizedVault = vaultPath.replace(/\\/g, "/").replace(/\/+$/, "");
+  const normalizedPath = path.replace(/\\/g, "/");
+  if (normalizedPath === normalizedVault) return "";
+  const prefix = `${normalizedVault}/`;
+  return normalizedPath.startsWith(prefix) ? normalizedPath.slice(prefix.length) : null;
+}
+
+function sourceNodeLabel(existing: string | undefined, next: string) {
+  if (!existing) return next;
+  if (/^LLM-\d{4}$/i.test(existing) && next && next !== existing) return next;
+  return existing;
+}
+
 function upsertNode(nodes: Map<string, ResearchGraphNode>, node: ResearchGraphNode) {
   const existing = nodes.get(node.id);
   if (!existing) {
@@ -303,7 +323,9 @@ function upsertNode(nodes: Map<string, ResearchGraphNode>, node: ResearchGraphNo
   nodes.set(node.id, {
     ...existing,
     ...node,
-    label: existing.label || node.label,
+    label: existing.type === "source" || node.type === "source"
+      ? sourceNodeLabel(existing.label, node.label)
+      : existing.label || node.label,
     subtitle: existing.subtitle || node.subtitle,
     body: existing.body || node.body,
     path: existing.path || node.path,
@@ -380,16 +402,19 @@ export function buildResearchGraph(input: {
 
   for (const file of input.status?.files ?? []) {
     if (file.kind === "source") {
-      const id = sourceNodeId(file.path);
+      const fileSourceId = file.sourceId || sourceIdFromPath(file.name) || sourceIdFromPath(file.path);
+      const fileRelPath = relativeVaultPath(input.status?.path, file.path);
+      const alias = [fileSourceId, fileRelPath, file.path, file.title, file.name].find((item) => item && sourceAliases.has(item));
+      const id = alias ? sourceAliases.get(alias!)! : sourceNodeId(fileSourceId || fileRelPath || file.path);
       upsertNode(nodes, {
         id,
         type: "source",
-        label: file.title || file.name || labelFromPath(file.path),
+        label: file.title || fileSourceId || file.name || labelFromPath(file.path),
         subtitle: file.path,
         path: file.path,
         status: file.status,
       });
-      addAlias(sourceAliases, id, file.path, file.title, file.name);
+      addAlias(sourceAliases, id, fileSourceId, fileRelPath, file.path, file.title, file.name, labelFromPath(file.path));
     }
     if (file.kind === "concept") {
       const id = conceptNodeId(file.path);

@@ -145,6 +145,7 @@ struct VaultFile {
     name: String,
     path: String,
     kind: String,
+    source_id: Option<String>,
     title: Option<String>,
     status: Option<String>,
     updated: Option<String>,
@@ -3139,6 +3140,11 @@ fn format_source_id(number: usize) -> String {
     format!("LLM-{number:04}")
 }
 
+fn source_id_from_page_path(path: &Path) -> Option<String> {
+    let stem = path.file_stem()?.to_string_lossy();
+    source_id_number(&stem).map(|_| stem.to_string())
+}
+
 fn next_source_id_number(vault: &Path, rows: &[serde_json::Value]) -> usize {
     let max_existing = rows
         .iter()
@@ -3277,6 +3283,7 @@ fn file_item(vault: &Path, path: &Path, kind: &str) -> VaultFile {
             .to_string(),
         path: to_display(path),
         kind: kind.to_string(),
+        source_id: source_id_from_page_path(path),
         title: page_title(path),
         status: fields.get("status").cloned(),
         updated: fields.get("updated").cloned(),
@@ -3566,6 +3573,7 @@ fn inspect_vault(vault_path: String) -> Result<VaultStatus, String> {
                 .to_string(),
             path: to_display(&path),
             kind: "inbox".to_string(),
+            source_id: None,
             title: None,
             status: None,
             updated: None,
@@ -3777,6 +3785,7 @@ fn import_to_inbox(vault_path: String, paths: Vec<String>) -> Result<ImportResul
                 name: item.file_name.clone(),
                 path: path.clone(),
                 kind: "inbox".to_string(),
+                source_id: None,
                 title: item.title_hint.clone(),
                 status: Some(item.status.clone()),
                 updated: None,
@@ -10865,6 +10874,27 @@ mod tests {
 
         let _ = fs::remove_dir_all(vault);
         let _ = fs::remove_dir_all(import_root);
+    }
+
+    #[test]
+    fn vault_status_surfaces_source_id_for_generated_source_pages() {
+        let vault = test_vault("source-file-id");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        write_text(
+            &vault.join("sources").join("LLM-0001.md"),
+            "---\ntitle: \"DeepSeek Source\"\nstatus: stable\n---\n# DeepSeek Source\n",
+        )
+        .expect("write generated source");
+
+        let status = inspect_vault(to_display(&vault)).expect("inspect vault");
+        let source = status
+            .files
+            .iter()
+            .find(|file| file.kind == "source" && file.name == "LLM-0001.md")
+            .expect("generated source file");
+        assert_eq!(source.source_id.as_deref(), Some("LLM-0001"));
+
+        let _ = fs::remove_dir_all(vault);
     }
 
     #[test]
