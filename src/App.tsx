@@ -1988,6 +1988,7 @@ function App() {
                 onClick={() => setActivePage(item.id)}
               >
                 <Icon size={19} />
+                <span className="nav-label">{copy.nav[item.id]}</span>
                 {badge !== null && <span className={classNames("nav-badge", badge.tone)}>{badge.value}</span>}
               </button>
             );

@@ -75,7 +75,7 @@ textarea {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 76px minmax(0, 1fr);
+  grid-template-columns: 168px minmax(0, 1fr);
   grid-template-areas: "nav workspace";
   height: 100vh;
   min-height: 100vh;
@@ -83,7 +83,7 @@ textarea {
 }
 
 .app-shell.settings-mode {
-  grid-template-columns: 76px minmax(0, 1fr);
+  grid-template-columns: 168px minmax(0, 1fr);
   grid-template-areas: "nav workspace";
 }
 
@@ -91,11 +91,11 @@ textarea {
   grid-area: nav;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   gap: 14px;
   border-right: 1px solid #cbd4cf;
   background: #17201d;
-  padding: 14px 10px;
+  padding: 14px 12px;
   color: #f4f8f2;
 }
 
@@ -159,18 +159,37 @@ textarea {
 
 .nav-rail {
   display: grid;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
 }
 
 .nav-button {
   position: relative;
-  width: 54px;
-  height: 46px;
-  min-height: 46px;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  justify-items: start;
+  gap: 9px;
+  width: 100%;
+  height: 40px;
+  min-height: 40px;
   border-color: transparent;
   background: transparent;
   color: #c6d2cb;
+  padding: 0 10px;
+  text-align: left;
+}
+
+.nav-label {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nav-button:hover:not(:disabled),
@@ -182,8 +201,8 @@ textarea {
 
 .nav-badge {
   position: absolute;
-  top: 5px;
-  right: 4px;
+  top: 4px;
+  right: 6px;
   max-width: 28px;
   min-width: 16px;
   height: 16px;
@@ -217,6 +236,7 @@ textarea {
 .rail-status {
   width: 14px;
   height: 14px;
+  align-self: center;
   margin-top: auto;
   border-radius: 999px;
   background: #8b9690;
@@ -4926,6 +4946,35 @@ textarea {
 }
 
 @media (max-width: 760px) {
+  .app-shell,
+  .app-shell.settings-mode {
+    grid-template-columns: 76px minmax(0, 1fr);
+  }
+
+  .icon-sidebar {
+    align-items: center;
+    padding: 14px 10px;
+  }
+
+  .nav-button {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    width: 54px;
+    height: 46px;
+    min-height: 46px;
+    gap: 0;
+    padding: 0;
+  }
+
+  .nav-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
   .settings-center.panel {
     grid-template-columns: 1fr;
   }
