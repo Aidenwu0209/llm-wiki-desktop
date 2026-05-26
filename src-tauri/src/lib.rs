@@ -7368,6 +7368,42 @@ fn desktop_settings_path(vault: &Path) -> PathBuf {
     vault.join("_state").join("desktop-settings.json")
 }
 
+fn is_loopback_http_url(value: &str) -> bool {
+    let lower = value.trim().to_ascii_lowercase();
+    let Some(rest) = lower.strip_prefix("http://") else {
+        return false;
+    };
+    let authority = rest
+        .split(|ch| matches!(ch, '/' | '?' | '#'))
+        .next()
+        .unwrap_or("");
+    if authority.is_empty() || authority.contains('@') {
+        return false;
+    }
+    if let Some(bracketed) = authority.strip_prefix('[') {
+        let Some(end) = bracketed.find(']') else {
+            return false;
+        };
+        let host = &bracketed[..end];
+        let suffix = &bracketed[end + 1..];
+        return host == "::1" && (suffix.is_empty() || suffix.starts_with(':'));
+    }
+    let host = authority.split(':').next().unwrap_or("");
+    matches!(host, "localhost" | "127.0.0.1")
+}
+
+fn validate_desktop_settings(settings: &DesktopSettings) -> Result<(), String> {
+    let web_search_provider = settings.web_search_provider.trim().to_ascii_lowercase();
+    let web_search_endpoint = settings.web_search_endpoint.trim();
+    if web_search_provider == "searxng" && !web_search_endpoint.is_empty() {
+        let lower = web_search_endpoint.to_ascii_lowercase();
+        if !(lower.starts_with("https://") || is_loopback_http_url(web_search_endpoint)) {
+            return Err("SearXNG endpoint must use HTTPS unless it is localhost HTTP".to_string());
+        }
+    }
+    Ok(())
+}
+
 fn normalize_desktop_settings(mut settings: DesktopSettings) -> Result<DesktopSettings, String> {
     settings.default_pdf_parser = selected_pdf_parser(&settings.default_pdf_parser)?;
     settings.scheduled_import_path =
@@ -7417,6 +7453,7 @@ fn save_desktop_settings(
             .filter(|value| !value.trim().is_empty())
             .is_some();
     settings = normalize_desktop_settings(settings)?;
+    validate_desktop_settings(&settings)?;
     let rendered = serde_json::to_string_pretty(&settings)
         .map_err(|e| format!("failed to serialize desktop settings: {e}"))?;
     write_text(&desktop_settings_path(&vault), &(rendered + "\n"))?;
@@ -10735,6 +10772,68 @@ mod tests {
         assert!(saved.source_watch_enabled);
         assert!(!saved.source_watch_auto_ingest);
         assert!(rendered.contains("\"sourceWatchAutoIngest\": false"));
+    }
+
+    #[test]
+    fn desktop_settings_reject_remote_plain_http_searxng_endpoint() {
+        let vault = test_vault("searxng-remote-http");
+        let mut settings = DesktopSettings::default();
+        settings.web_search_enabled = true;
+        settings.web_search_provider = "searxng".to_string();
+        settings.web_search_endpoint = "http://search.example.com".to_string();
+
+        let rejected = save_desktop_settings(to_display(&vault), settings);
+
+        assert!(rejected.is_err());
+        assert!(rejected
+            .unwrap_err()
+            .contains("SearXNG endpoint must use HTTPS"));
+        assert!(!desktop_settings_path(&vault).is_file());
+    }
+
+    #[test]
+    fn desktop_settings_allow_https_and_loopback_searxng_endpoints() {
+        for (index, endpoint) in [
+            "https://search.example.com",
+            "http://localhost:8080",
+            "http://127.0.0.1:8080/search",
+            "http://[::1]:8080",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let vault = test_vault(&format!("searxng-allowed-endpoint-{index}"));
+            let mut settings = DesktopSettings::default();
+            settings.web_search_enabled = true;
+            settings.web_search_provider = "searxng".to_string();
+            settings.web_search_endpoint = (*endpoint).to_string();
+
+            let saved = save_desktop_settings(to_display(&vault), settings).expect(endpoint);
+
+            assert_eq!(saved.web_search_endpoint, *endpoint);
+            assert!(desktop_settings_path(&vault).is_file());
+        }
+    }
+
+    #[test]
+    fn desktop_settings_reject_localhost_prefix_searxng_endpoint() {
+        for endpoint in [
+            "http://localhost.evil.com",
+            "http://127.0.0.1.evil.com",
+            "http://[::1].evil.com",
+            "http://localhost@search.example.com",
+        ] {
+            let vault = test_vault("searxng-localhost-prefix");
+            let mut settings = DesktopSettings::default();
+            settings.web_search_enabled = true;
+            settings.web_search_provider = "searxng".to_string();
+            settings.web_search_endpoint = endpoint.to_string();
+
+            let rejected = save_desktop_settings(to_display(&vault), settings);
+
+            assert!(rejected.is_err(), "{endpoint} should be rejected");
+            assert!(!desktop_settings_path(&vault).is_file());
+        }
     }
 
     #[test]
