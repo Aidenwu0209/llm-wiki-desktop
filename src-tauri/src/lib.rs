@@ -3309,6 +3309,7 @@ fn agent_search_vault(
     ] {
         candidates.extend(list_markdown(&vault.join(dir)));
     }
+    candidates.extend(graph_canvas_files(vault));
     let mut results = Vec::new();
     for path in candidates {
         let content = read_text(&path);
@@ -4383,6 +4384,7 @@ fn inspect_vault(vault_path: String) -> Result<VaultStatus, String> {
     let concepts = list_markdown(&vault.join("concepts"));
     let mut reports = list_markdown(&vault.join("qa-reports"));
     reports.extend(graph_report_notes(&vault));
+    reports.extend(graph_canvas_files(&vault));
     reports.sort();
     reports.dedup();
     let notes = root_wiki_notes(&vault);
@@ -11642,6 +11644,11 @@ mod tests {
             "# Wiki Graph Report\n\nDeepSeek evidence anchor warning for graph QA.\n",
         )
         .expect("write graph report");
+        write_text(
+            &vault.join("canvas").join("wiki-graph.canvas"),
+            "{\"nodes\":[{\"id\":\"deepseek\",\"label\":\"DeepSeek graph canvas\"}],\"edges\":[]}\n",
+        )
+        .expect("write graph canvas");
         let mut settings = DesktopSettings::default();
         settings.project_name = "DeepSeek Research Wiki".to_string();
         settings.project_purpose =
@@ -11674,6 +11681,11 @@ mod tests {
                 && file.path.ends_with(".graph/graph-report.md")
                 && file.title.as_deref() == Some("Wiki Graph Report")
         }));
+        assert!(status.files.iter().any(|file| {
+            file.kind == "report"
+                && file.path.ends_with("canvas/wiki-graph.canvas")
+                && file.name == "wiki-graph.canvas"
+        }));
 
         let search = agent_search_vault(&vault, "research direction", 10).expect("search notes");
         assert!(search.iter().any(|item| item.path == "purpose.md"));
@@ -11682,6 +11694,11 @@ mod tests {
         assert!(graph_search
             .iter()
             .any(|item| item.path == ".graph/graph-report.md"));
+        let canvas_search =
+            agent_search_vault(&vault, "graph canvas", 10).expect("search graph canvas");
+        assert!(canvas_search
+            .iter()
+            .any(|item| item.path == "canvas/wiki-graph.canvas"));
 
         let _ = fs::remove_dir_all(vault);
     }
@@ -15265,7 +15282,7 @@ fn open_vault_path(vault_path: String, path: String) -> Result<(), String> {
         .and_then(OsStr::to_str)
         .unwrap_or_default()
         .to_ascii_lowercase();
-    if matches!(extension.as_str(), "md" | "markdown") {
+    if matches!(extension.as_str(), "md" | "markdown" | "canvas") {
         open_obsidian_file(&vault, &target)
     } else {
         open_path(to_display(&target))
@@ -15279,7 +15296,7 @@ fn is_vault_text_preview_extension(path: &Path) -> bool {
             .unwrap_or_default()
             .to_ascii_lowercase()
             .as_str(),
-        "md" | "markdown" | "txt" | "json" | "jsonl" | "csv" | "tsv"
+        "md" | "markdown" | "canvas" | "txt" | "json" | "jsonl" | "csv" | "tsv"
     )
 }
 
