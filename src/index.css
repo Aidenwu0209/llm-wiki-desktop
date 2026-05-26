@@ -3146,6 +3146,13 @@ textarea {
   white-space: nowrap;
 }
 
+.raw-source-plan-missing {
+  margin: 8px 0 0;
+  color: #52635d;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .raw-source-actions {
   display: flex;
   flex-wrap: wrap;
