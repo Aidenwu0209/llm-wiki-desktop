@@ -1,4 +1,4 @@
-import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import {
   Bot,
   Check,
@@ -22,10 +22,10 @@ import {
   Sparkles,
   TerminalSquare,
 } from "lucide-react";
-import type { AgentReadApiServerInfo, DesktopSettings, LlmApiKeyCheckResult, LlmCliCheckResult, LlmProviderConfig } from "../../types";
+import type { AgentReadApiReadiness, AgentReadApiServerInfo, DesktopSettings, LlmApiKeyCheckResult, LlmCliCheckResult, LlmProviderConfig } from "../../types";
 import { languageName, type UiLanguage } from "../../i18n";
 import { isLoopbackHttpEndpoint } from "../../lib/local-endpoints";
-import { checkLlmApiKey, checkLocalLlmCli, startAgentReadApi, stopAgentReadApi } from "../../tauri";
+import { agentReadApiReadiness, checkLlmApiKey, checkLocalLlmCli, startAgentReadApi, stopAgentReadApi } from "../../tauri";
 import { BrandMark } from "../brand/BrandMark";
 
 type RuntimeSettingsPanelProps = {
@@ -330,6 +330,9 @@ export function RuntimeSettingsPanel({
   const [agentApiInfo, setAgentApiInfo] = useState<AgentReadApiServerInfo | null>(null);
   const [agentApiError, setAgentApiError] = useState<string | null>(null);
   const [agentApiBusy, setAgentApiBusy] = useState<"start" | "stop" | null>(null);
+  const [agentReadiness, setAgentReadiness] = useState<AgentReadApiReadiness | null>(null);
+  const [agentReadinessError, setAgentReadinessError] = useState<string | null>(null);
+  const [checkingAgentReadiness, setCheckingAgentReadiness] = useState(false);
   const center = useMemo(() => normalizeProviderSettings(settings), [settings]);
 
   const updateCenter = (nextCenter: typeof center) => {
@@ -370,14 +373,63 @@ export function RuntimeSettingsPanel({
     });
   };
 
+  const refreshAgentReadiness = async () => {
+    if (!vaultPath) {
+      setAgentReadiness(null);
+      setAgentReadinessError(null);
+      return;
+    }
+    setCheckingAgentReadiness(true);
+    setAgentReadinessError(null);
+    try {
+      setAgentReadiness(await agentReadApiReadiness(vaultPath));
+    } catch (err) {
+      setAgentReadiness(null);
+      setAgentReadinessError(String(err));
+    } finally {
+      setCheckingAgentReadiness(false);
+    }
+  };
+
+  useEffect(() => {
+    if (section !== "agent-api") return;
+    let cancelled = false;
+    if (!vaultPath) {
+      setAgentReadiness(null);
+      setAgentReadinessError(null);
+      setCheckingAgentReadiness(false);
+      return;
+    }
+    setCheckingAgentReadiness(true);
+    setAgentReadinessError(null);
+    agentReadApiReadiness(vaultPath)
+      .then((result) => {
+        if (!cancelled) setAgentReadiness(result);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setAgentReadiness(null);
+          setAgentReadinessError(String(err));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setCheckingAgentReadiness(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [section, vaultPath]);
+
   const handleStartAgentApi = async () => {
     if (!vaultPath) return;
     setAgentApiBusy("start");
     setAgentApiError(null);
     try {
       setAgentApiInfo(await startAgentReadApi(vaultPath));
+      await refreshAgentReadiness();
     } catch (err) {
       setAgentApiError(String(err));
+      await refreshAgentReadiness();
     } finally {
       setAgentApiBusy(null);
     }
@@ -388,6 +440,7 @@ export function RuntimeSettingsPanel({
     setAgentApiError(null);
     try {
       setAgentApiInfo(await stopAgentReadApi());
+      await refreshAgentReadiness();
     } catch (err) {
       setAgentApiError(String(err));
     } finally {
@@ -747,13 +800,24 @@ export function RuntimeSettingsPanel({
             {renderParserBlock()}
           </div>
         );
-      case "agent-api":
+      case "agent-api": {
+        const agentContractEndpoints = agentReadiness?.endpoints ?? agentApiInfo?.endpoints ?? [];
+        const blockedOperations = agentReadiness?.blockedOperations ?? agentApiInfo?.blockedOperations ?? [];
+        const gateLabel = agentApiInfo?.enabled
+          ? isZh ? "运行中" : "Running"
+          : checkingAgentReadiness
+            ? isZh ? "检查中" : "Checking"
+            : agentReadiness?.enabled
+              ? isZh ? "Ready" : "Ready"
+              : agentReadiness
+                ? isZh ? "未就绪" : "Deferred"
+                : isZh ? "关闭" : "Off";
         return (
           <div className="settings-section-page">
             {renderSectionHead(
               text.nav["agent-api"],
               isZh ? "给 Codex / Claude Code 暴露只读、本地、带 token 的 vault 查询接口。" : "Expose a read-only, local, token-protected vault API for Codex / Claude Code.",
-              sectionStatus(agentApiInfo?.enabled ? (isZh ? "运行中" : "Running") : (isZh ? "关闭" : "Off"), agentApiInfo?.enabled ? "available" : "disabled"),
+              sectionStatus(gateLabel, agentApiInfo?.enabled || agentReadiness?.enabled ? "available" : "disabled"),
             )}
             <div className="settings-block">
               <div className="settings-block-title"><TerminalSquare size={15} /><span>{isZh ? "本地只读 API" : "Local read API"}</span></div>
@@ -783,21 +847,73 @@ export function RuntimeSettingsPanel({
               {agentApiError && <div className="settings-notice">{agentApiError}</div>}
             </div>
             <div className="settings-block">
+              <div className="settings-block-title"><ShieldCheck size={15} /><span>{isZh ? "Readiness gate" : "Readiness gate"}</span></div>
+              {!vaultPath ? (
+                <div className="settings-notice">{isZh ? "先打开或创建知识库，再检查 Agent API readiness。" : "Open or create a vault before checking Agent API readiness."}</div>
+              ) : (
+                <>
+                  <div className="settings-grid">
+                    <label>{isZh ? "Gate" : "Gate"}<input value={agentReadiness?.enabled ? (isZh ? "可启动" : "ready") : (isZh ? "未就绪" : "deferred")} readOnly /></label>
+                    <label>{isZh ? "Bind host" : "Bind host"}<input value={agentReadiness?.bindHost ?? "127.0.0.1"} readOnly /></label>
+                    <label>{isZh ? "Token" : "Token"}<input value={agentReadiness?.tokenRequired ? (isZh ? "必须" : "required") : (isZh ? "未要求" : "not required")} readOnly /></label>
+                    <label>{isZh ? "Scorecard" : "Scorecard"}<input value={agentReadiness?.scorecard ? `${agentReadiness.scorecard.passed} pass / ${agentReadiness.scorecard.failed} fail / ${agentReadiness.scorecard.manual} manual / ${agentReadiness.scorecard.notRun} not run` : isZh ? "未加载" : "not loaded"} readOnly /></label>
+                  </div>
+                  <p className="settings-block-copy">
+                    {agentReadiness?.reason || agentReadinessError || (isZh ? "点击刷新查看 gate 状态。" : "Refresh to inspect the gate state.")}
+                  </p>
+                  {agentReadinessError && <div className="settings-notice danger">{agentReadinessError}</div>}
+                  <div className="inline-actions">
+                    <button type="button" onClick={refreshAgentReadiness} disabled={checkingAgentReadiness}>
+                      <RefreshCw size={14} />
+                      {checkingAgentReadiness ? (isZh ? "检查中" : "Checking") : (isZh ? "刷新状态" : "Refresh status")}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="settings-block">
+              <div className="settings-block-title"><ShieldCheck size={15} /><span>{isZh ? "必要指标" : "Required metrics"}</span></div>
+              <div className="settings-list">
+                {(agentReadiness?.requiredMetrics ?? []).map((metric) => (
+                  <code key={metric}>{metric}</code>
+                ))}
+                {!agentReadiness?.requiredMetrics.length && <code>{isZh ? "刷新后显示必要指标。" : "Refresh to show required metrics."}</code>}
+              </div>
+            </div>
+            <div className="settings-block">
+              <div className="settings-block-title"><Info size={15} /><span>{isZh ? "未满足要求" : "Unmet requirements"}</span></div>
+              <ul className="settings-change-list">
+                {(agentReadiness?.unmetRequirements ?? []).map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+                {agentReadiness && agentReadiness.unmetRequirements.length === 0 && <li>{isZh ? "没有未满足要求。" : "No unmet requirements."}</li>}
+                {!agentReadiness && <li>{agentReadinessError || (isZh ? "未加载 readiness。" : "Readiness has not been loaded.")}</li>}
+              </ul>
+            </div>
+            <div className="settings-block">
               <div className="settings-block-title"><KeyRound size={15} /><span>{isZh ? "开放范围" : "Exposed scope"}</span></div>
               <div className="settings-list">
-                {(agentApiInfo?.endpoints ?? []).map((endpoint) => (
+                {agentContractEndpoints.map((endpoint) => (
                   <code key={`${endpoint.method}-${endpoint.path}`}>{endpoint.method} {endpoint.path} - {endpoint.capability}</code>
                 ))}
-                {!agentApiInfo?.endpoints?.length && <code>{isZh ? "启动后显示只读 endpoint。" : "Start the API to show read-only endpoints."}</code>}
+                {!agentContractEndpoints.length && <code>{isZh ? "刷新 readiness 或启动后显示只读 endpoint。" : "Refresh readiness or start the API to show read-only endpoints."}</code>}
               </div>
               <div className="settings-notice">
                 {isZh
                   ? "不会暴露 apply、delete、set-status、parser、ingest、cloud OCR、外部搜索或写回应用 endpoint。"
                   : "No apply, delete, set-status, parser, ingest, cloud OCR, external search, or writeback-apply endpoint is exposed."}
               </div>
+              {blockedOperations.length > 0 && (
+                <ul className="settings-change-list">
+                  {blockedOperations.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
         );
+      }
       case "source-watch":
         return (
           <div className="settings-section-page">
