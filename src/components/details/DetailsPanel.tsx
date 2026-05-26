@@ -1,4 +1,4 @@
-import { isValidElement, useEffect, useState, type ReactNode } from "react";
+import { isValidElement, useEffect, useMemo, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
@@ -68,6 +68,7 @@ const detailsCopy = {
     inboundLinks: "反向链接",
     noLinks: "没有页面级 wikilink。",
     preview: "只读预览",
+    outline: "页面大纲",
     loadingPreview: "正在读取预览...",
     previewUnavailable: "无法读取预览",
     truncatedPreview: "内容较长，当前只显示前 64 KB。",
@@ -100,6 +101,7 @@ const detailsCopy = {
     inboundLinks: "Backlinks",
     noLinks: "No page-level wikilinks.",
     preview: "Read-only preview",
+    outline: "Outline",
     loadingPreview: "Loading preview...",
     previewUnavailable: "Preview unavailable",
     truncatedPreview: "Long file: showing the first 64 KB only.",
@@ -146,6 +148,12 @@ type MermaidPreviewState =
   | { status: "rendering" }
   | { status: "ready"; svg: string }
   | { status: "error"; error: string };
+
+type PreviewHeading = {
+  id: string;
+  level: number;
+  text: string;
+};
 
 const WIKILINK_HREF_PREFIX = "#__llmwiki__=";
 const VAULT_ROOT_RELATIVE_PREFIXES = new Set([
@@ -286,6 +294,74 @@ function imagePlaceholderText(alt?: string | null, src?: string | null) {
   return alt || src ? `Image: ${alt || src}` : "Image omitted";
 }
 
+function stripInlineMarkdown(value: string) {
+  return value
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2")
+    .replace(/\[\[([^\]]+)\]\]/g, "$1")
+    .replace(/[`*_~]/g, "")
+    .trim();
+}
+
+function headingBaseId(text: string) {
+  let id = "";
+  let pendingDash = false;
+  for (const char of text.trim().toLowerCase()) {
+    if (/\s/.test(char) || char === "-" || char === "_") {
+      pendingDash = id.length > 0;
+      continue;
+    }
+    if (/^[a-z0-9]$/.test(char) || char.charCodeAt(0) > 127) {
+      if (pendingDash) {
+        id += "-";
+        pendingDash = false;
+      }
+      id += char;
+    }
+  }
+  return id.replace(/^-+|-+$/g, "") || "heading";
+}
+
+function uniqueHeadingId(text: string, counts: Map<string, number>) {
+  const base = headingBaseId(text);
+  const seen = counts.get(base) ?? 0;
+  counts.set(base, seen + 1);
+  return seen === 0 ? base : `${base}-${seen + 1}`;
+}
+
+function textFromReactNode(node: ReactNode): string {
+  if (node === null || node === undefined || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(textFromReactNode).join("");
+  if (isValidElement(node)) return textFromReactNode((node.props as { children?: ReactNode }).children);
+  return "";
+}
+
+function extractPreviewHeadings(markdown: string) {
+  const counts = new Map<string, number>();
+  const headings: PreviewHeading[] = [];
+  let fenced = false;
+  for (const line of markdown.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (/^(```|~~~)/.test(trimmed)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced) continue;
+    const match = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(trimmed);
+    if (!match) continue;
+    const text = stripInlineMarkdown(match[2]);
+    if (!text) continue;
+    headings.push({ id: uniqueHeadingId(text, counts), level: match[1].length, text });
+  }
+  return headings;
+}
+
+function scrollToPreviewHeading(id: string) {
+  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 function DetailActions({
   text,
   path,
@@ -402,6 +478,30 @@ function MarkdownPreview({
   outboundLinks?: string[];
   onOpenVaultPath: (path?: string | null) => void;
 }) {
+  const headingCounts = new Map<string, number>();
+
+  function renderHeading(level: 1 | 2 | 3 | 4 | 5 | 6, children: ReactNode) {
+    const text = textFromReactNode(children);
+    const id = uniqueHeadingId(text || `heading ${level}`, headingCounts);
+    const Tag = `h${level}` as keyof JSX.IntrinsicElements;
+    return (
+      <Tag id={id} className="details-markdown-heading">
+        <a
+          aria-label={`Jump to ${text || id}`}
+          className="details-heading-anchor"
+          href={`#${encodeURIComponent(id)}`}
+          onClick={(event) => {
+            event.preventDefault();
+            scrollToPreviewHeading(id);
+          }}
+        >
+          #
+        </a>
+        {children}
+      </Tag>
+    );
+  }
+
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkMath]}
@@ -410,17 +510,27 @@ function MarkdownPreview({
         a: ({ children, href }) => {
           const target = typeof href === "string" ? href : "";
           const isWikilink = target.startsWith(WIKILINK_HREF_PREFIX);
+          const isHeadingAnchor = target.startsWith("#") && target.length > 1;
           const markdownVaultTarget = isWikilink ? "" : resolveMarkdownVaultLinkTarget(target, currentPath);
           const isVaultLink = Boolean(markdownVaultTarget);
           return (
             <a
               href={target || undefined}
-              rel={isWikilink || isVaultLink ? undefined : "noreferrer"}
-              target={isWikilink || isVaultLink ? undefined : "_blank"}
+              rel={isWikilink || isVaultLink || isHeadingAnchor ? undefined : "noreferrer"}
+              target={isWikilink || isVaultLink || isHeadingAnchor ? undefined : "_blank"}
               className={classNames(isWikilink && "details-wikilink", isVaultLink && "details-vault-link")}
               onClick={(event) => {
-                if (!isWikilink && !isVaultLink) return;
+                if (!isWikilink && !isVaultLink && !isHeadingAnchor) return;
                 event.preventDefault();
+                if (isHeadingAnchor) {
+                  const raw = target.slice(1);
+                  try {
+                    scrollToPreviewHeading(decodeURIComponent(raw));
+                  } catch {
+                    scrollToPreviewHeading(raw);
+                  }
+                  return;
+                }
                 if (isVaultLink) {
                   onOpenVaultPath(markdownVaultTarget);
                   return;
@@ -448,6 +558,12 @@ function MarkdownPreview({
             vaultPath={vaultPath}
           />
         ),
+        h1: ({ children }) => renderHeading(1, children),
+        h2: ({ children }) => renderHeading(2, children),
+        h3: ({ children }) => renderHeading(3, children),
+        h4: ({ children }) => renderHeading(4, children),
+        h5: ({ children }) => renderHeading(5, children),
+        h6: ({ children }) => renderHeading(6, children),
         pre: ({ children, ...props }) => {
           const mermaid = unwrapMermaidPre(children);
           if (mermaid) return <>{mermaid}</>;
@@ -467,6 +583,33 @@ function MarkdownPreview({
     >
       {transformWikilinks(content)}
     </ReactMarkdown>
+  );
+}
+
+function PreviewOutline({
+  headings,
+  title,
+}: {
+  headings: PreviewHeading[];
+  title: string;
+}) {
+  if (headings.length === 0) return null;
+  return (
+    <nav className="details-preview-outline" aria-label={title}>
+      <strong>{title}</strong>
+      <div>
+        {headings.slice(0, 24).map((heading) => (
+          <button
+            key={heading.id}
+            className={`level-${Math.min(Math.max(heading.level, 1), 6)}`}
+            type="button"
+            onClick={() => scrollToPreviewHeading(heading.id)}
+          >
+            <span>{heading.text}</span>
+          </button>
+        ))}
+      </div>
+    </nav>
   );
 }
 
@@ -574,6 +717,10 @@ export function DetailsPanel({
   const text = detailsCopy[language];
   const sourcePreviewPath = selection.kind === "source" ? selection.file.path : null;
   const [previewState, setPreviewState] = useState<PreviewState>({ status: "idle" });
+  const previewHeadings = useMemo(
+    () => (previewState.status === "ready" ? extractPreviewHeadings(previewState.preview.content) : []),
+    [previewState],
+  );
 
   useEffect(() => {
     if (!vaultPath || !canPreviewVaultText(sourcePreviewPath)) {
@@ -652,6 +799,7 @@ export function DetailsPanel({
               )}
               {previewState.status === "ready" && (
                 <>
+                  <PreviewOutline headings={previewHeadings} title={text.outline} />
                   <div className="details-markdown-preview">
                     <MarkdownPreview
                       content={previewState.preview.content}
