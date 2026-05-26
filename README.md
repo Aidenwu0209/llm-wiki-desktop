@@ -125,7 +125,7 @@ log-archive/desktop/
 - 为每个 runtime command 保存可查看的任务日志到 `log-archive/desktop/`。
 - 显示 claims、science review queue、growth queue 等 review 状态。
 - 提供 Chat / Search 入口：搜索 sources、claims、concepts、reviews、traceability warnings 和 query writeback proposals，并把带 evidence map 的研究问题转成 proposal。
-- 提供基础 Graph 入口：展示 source -> claim -> concept / review / proposal / warning 的证据关系，并补充 Obsidian `[[wikilink]]` 与 frontmatter `sources:` / `source_path:` 共享来源关系，帮助定位 traceability break、阅读路径和 insight 写回位置。
+- 提供基础 Graph 入口：展示 source -> claim -> concept / review / proposal / warning 的证据关系，并补充 Obsidian `[[wikilink]]`、frontmatter `sources:` / `source_path:` 共享来源关系和共享邻居推荐，帮助定位 traceability break、阅读路径和 insight 写回位置。
 
 ## 安全边界
 
@@ -295,7 +295,7 @@ npm run build:app
 
 - 本仓库仍是源码级 release candidate；正式分发还需要 Developer ID signing、hardened runtime、notarization 和 clean-profile install smoke test。
 - `Chat / Search` 当前以 vault-local evidence index 和 proposal handoff 为主，不是无证据通用 RAG。
-- `Graph` 当前是 evidence navigation graph，优先可追踪性和断点定位，不追求复杂社区发现或布局算法。
+- `Graph` 当前是 evidence navigation graph，优先可追踪性、断点定位和共享邻居阅读推荐，不追求复杂社区发现或布局算法。
 - 外部模型 provider 只保存 provider/model/context/reasoning 配置，不在 UI 明文保存或展示 API key。
 
 ## Runtime 设置
