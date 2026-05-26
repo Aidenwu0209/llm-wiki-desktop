@@ -41,6 +41,15 @@ type ResearchGraphEdge = {
   status?: string | null;
 };
 
+type ResearchGraphCommunity = {
+  id: string;
+  size: number;
+  edgeCount: number;
+  density: number;
+  types: Partial<Record<ResearchNodeType, number>>;
+  labels: string[];
+};
+
 type ResearchGraph = {
   nodes: ResearchGraphNode[];
   edges: ResearchGraphEdge[];
@@ -51,6 +60,10 @@ type ResearchGraph = {
     traceabilityBreaks: number;
     writebackInsights: number;
     sourceBackedClaims: number;
+    communities: ResearchGraphCommunity[];
+    largestCommunity?: ResearchGraphCommunity;
+    lowConnectionNodes: number;
+    sparseCommunities: number;
   };
 };
 
@@ -112,6 +125,11 @@ const graphCopy = {
     vaultSummary: "该证据图谱连接当前知识库中的资料、论断、概念、审核、可追踪性警告和写回提案。",
     noVaultSummary: "打开已生成的知识库后即可构建证据图谱。",
     keyConcepts: "关键概念",
+    knowledgeClusters: "知识簇",
+    largestCluster: "最大簇",
+    noCluster: "暂无知识簇",
+    clusterHealth: (lowConnectionNodes: number, sparseCommunities: number) =>
+      `${lowConnectionNodes} 个低连接节点 · ${sparseCommunities} 个低密度簇`,
     noneYet: "暂未生成",
     evidenceBreaks: "证据断点",
     noneSurfaced: "暂无",
@@ -188,6 +206,11 @@ const graphCopy = {
     vaultSummary: "This graph links generated sources, claims, concepts, reviews, traceability warnings, and writeback proposals from the selected vault.",
     noVaultSummary: "Open a generated vault to build the Evidence Graph.",
     keyConcepts: "Key concepts",
+    knowledgeClusters: "Knowledge clusters",
+    largestCluster: "Largest cluster",
+    noCluster: "No clusters yet",
+    clusterHealth: (lowConnectionNodes: number, sparseCommunities: number) =>
+      `${lowConnectionNodes} low-link nodes · ${sparseCommunities} sparse clusters`,
     noneYet: "none yet",
     evidenceBreaks: "Evidence breaks",
     noneSurfaced: "none surfaced",
@@ -345,6 +368,67 @@ function addAlias(aliases: Map<string, string>, nodeId: string, ...values: Array
 function addEdge(edges: Map<string, ResearchGraphEdge>, edge: ResearchGraphEdge) {
   if (edge.from === edge.to) return;
   edges.set(edge.id, edge);
+}
+
+function graphCommunities(nodes: ResearchGraphNode[], edges: ResearchGraphEdge[]) {
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const adjacency = new Map(nodes.map((node) => [node.id, new Set<string>()]));
+  const edgePairs = new Set<string>();
+
+  for (const edge of edges) {
+    if (!nodeById.has(edge.from) || !nodeById.has(edge.to)) continue;
+    adjacency.get(edge.from)?.add(edge.to);
+    adjacency.get(edge.to)?.add(edge.from);
+    edgePairs.add([edge.from, edge.to].sort().join("\u0000"));
+  }
+
+  const visited = new Set<string>();
+  const components: Array<Omit<ResearchGraphCommunity, "id">> = [];
+
+  for (const node of nodes) {
+    if (visited.has(node.id)) continue;
+    const queue = [node.id];
+    const ids: string[] = [];
+    visited.add(node.id);
+
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      ids.push(current);
+      for (const next of adjacency.get(current) || []) {
+        if (visited.has(next)) continue;
+        visited.add(next);
+        queue.push(next);
+      }
+    }
+
+    const componentNodes = ids
+      .map((id) => nodeById.get(id))
+      .filter((item): item is ResearchGraphNode => Boolean(item))
+      .sort((a, b) => typeOrder[a.type] - typeOrder[b.type] || a.label.localeCompare(b.label));
+    const componentIds = new Set(componentNodes.map((item) => item.id));
+    const edgeCount = Array.from(edgePairs).filter((pair) => {
+      const [from, to] = pair.split("\u0000");
+      return componentIds.has(from) && componentIds.has(to);
+    }).length;
+    const possibleEdges = componentNodes.length > 1 ? (componentNodes.length * (componentNodes.length - 1)) / 2 : 0;
+    const density = possibleEdges > 0 ? edgeCount / possibleEdges : 0;
+    const types = componentNodes.reduce<Partial<Record<ResearchNodeType, number>>>((acc, item) => {
+      acc[item.type] = (acc[item.type] || 0) + 1;
+      return acc;
+    }, {});
+
+    components.push({
+      size: componentNodes.length,
+      edgeCount,
+      density,
+      types,
+      labels: componentNodes.slice(0, 4).map((item) => item.label),
+    });
+  }
+
+  return components
+    .sort((a, b) => b.size - a.size || b.edgeCount - a.edgeCount || a.labels.join(" ").localeCompare(b.labels.join(" ")))
+    .map((component, index) => ({ ...component, id: `cluster-${index + 1}` }));
 }
 
 function claimNodeId(claimId: string) {
@@ -679,6 +763,7 @@ export function buildResearchGraph(input: {
     .filter((node) => node.type === "concept")
     .sort((a, b) => (degree.get(b.id) || 0) - (degree.get(a.id) || 0) || a.label.localeCompare(b.label))
     .slice(0, 5);
+  const communities = graphCommunities(graphNodes, graphEdges);
 
   return {
     nodes: graphNodes,
@@ -690,6 +775,10 @@ export function buildResearchGraph(input: {
       traceabilityBreaks: graphNodes.filter((node) => node.type === "warning").length,
       writebackInsights: graphNodes.filter((node) => node.type === "proposal").length,
       sourceBackedClaims: graphEdges.filter((edge) => edge.type === "source_claim").length,
+      communities,
+      largestCommunity: communities[0],
+      lowConnectionNodes: graphNodes.filter((node) => (degree.get(node.id) || 0) <= 1).length,
+      sparseCommunities: communities.filter((community) => community.size >= 3 && community.density < 0.15).length,
     },
   };
 }
@@ -765,10 +854,12 @@ function graphPositions(nodes: ResearchGraphNode[]) {
 function graphSummaryText(graph: ResearchGraph, language: UiLanguage) {
   const concepts = graph.summary.keyConcepts.map((node) => node.label).join(", ") || (language === "zh" ? "暂无概念连接" : "no concept links yet");
   const reviewPressure = graph.summary.reviewNodes + graph.summary.traceabilityBreaks;
+  const largestCluster = graph.summary.largestCommunity?.labels.join(", ") || (language === "zh" ? "暂无知识簇" : "no clusters yet");
   if (language === "zh") {
     return [
       `${graph.summary.sourcesPapers} 个资料节点支撑 ${graph.summary.sourceBackedClaims} 条资料到论断证据链。`,
       `连接最多的概念：${concepts}。`,
+      `${graph.summary.communities.length} 个知识簇；最大簇从 ${largestCluster} 开始，${graph.summary.lowConnectionNodes} 个节点仍然低连接。`,
       `${reviewPressure} 个审核或可追踪性节点需要处理后，才能把生成洞察视为稳定内容。`,
       `${graph.summary.writebackInsights} 个写回提案在批准前保持先提案后写回。`,
     ];
@@ -776,6 +867,7 @@ function graphSummaryText(graph: ResearchGraph, language: UiLanguage) {
   return [
     `${graph.summary.sourcesPapers} source nodes feed ${graph.summary.sourceBackedClaims} source-to-claim evidence links.`,
     `Most connected concepts: ${concepts}.`,
+    `${graph.summary.communities.length} knowledge clusters are connected; the largest starts with ${largestCluster}, and ${graph.summary.lowConnectionNodes} nodes remain low-link.`,
     `${reviewPressure} review or traceability nodes require attention before treating generated proposal content as stable.`,
     `${graph.summary.writebackInsights} writeback proposal nodes remain proposal-first until approved.`,
   ];
@@ -941,6 +1033,16 @@ export function ResearchGraphPage({
         <div>
           <span>{text.keyConcepts}</span>
           <em>{graph.summary.keyConcepts.map((node) => node.label).join(", ") || text.noneYet}</em>
+        </div>
+        <div>
+          <span>{text.knowledgeClusters}</span>
+          <strong>{graph.summary.communities.length}</strong>
+          <em>
+            {graph.summary.largestCommunity
+              ? `${text.largestCluster}: ${graph.summary.largestCommunity.labels.join(", ")}`
+              : text.noCluster}
+          </em>
+          <code>{text.clusterHealth(graph.summary.lowConnectionNodes, graph.summary.sparseCommunities)}</code>
         </div>
         <div>
           <span>{text.evidenceBreaks}</span>

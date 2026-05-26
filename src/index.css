@@ -3032,7 +3032,7 @@ textarea {
 
 .graph-insight-strip {
   display: grid;
-  grid-template-columns: minmax(320px, 1.2fr) minmax(220px, 0.8fr) minmax(220px, 0.8fr);
+  grid-template-columns: minmax(300px, 1.25fr) repeat(3, minmax(190px, 0.75fr));
   gap: 8px;
 }
 
@@ -3061,6 +3061,18 @@ textarea {
   color: #26312d;
   font-size: 12px;
   font-style: normal;
+}
+
+.graph-insight-strip code {
+  display: block;
+  margin-top: 8px;
+  border: 1px solid #d8ded9;
+  border-radius: 5px;
+  background: #f5f8f6;
+  padding: 5px 7px;
+  color: #40514a;
+  font-size: 11px;
+  white-space: normal;
 }
 
 .graph-control-panel {
