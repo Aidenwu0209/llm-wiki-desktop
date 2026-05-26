@@ -4288,9 +4288,7 @@ fn inspect_vault(vault_path: String) -> Result<VaultStatus, String> {
     for path in &reports {
         files.push(file_item(&vault, path, "report", &wikilinks));
     }
-    let mut inbox_files = Vec::new();
-    collect_inbox_files(&vault.join("raw").join("inbox"), &mut inbox_files);
-    for path in inbox_files {
+    for path in collect_ingest_inputs(&vault) {
         files.push(VaultFile {
             name: path
                 .file_name()
@@ -5137,10 +5135,6 @@ fn collect_raw_ingest_files(dir: &Path, out: &mut Vec<PathBuf>) {
             }
         }
     }
-}
-
-fn collect_inbox_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    collect_raw_ingest_files(dir, out);
 }
 
 fn collect_ingest_inputs(vault: &Path) -> Vec<PathBuf> {
@@ -11995,6 +11989,59 @@ mod tests {
         {
             let _ = fs::remove_dir_all(external_raw);
             let _ = fs::remove_dir_all(external_artifact);
+        }
+    }
+
+    #[test]
+    fn inspect_vault_counts_nested_raw_corpus_sources() {
+        let vault = test_vault("nested-raw-corpus-status");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        let corpus = vault.join("raw").join("deepseek_paper");
+        fs::create_dir_all(&corpus).expect("create corpus dir");
+        fs::write(corpus.join("DeepSeek_Test_2401.00001.pdf"), b"pdf bytes")
+            .expect("write nested pdf");
+        write_text(
+            &corpus.join("索引.md"),
+            "# deepseek_paper 中文转换索引\n\n- helper note, not evidence\n",
+        )
+        .expect("write support index");
+        let artifact_dir = corpus.join("DeepSeek_Test_2401.00001_markdown");
+        fs::create_dir_all(&artifact_dir).expect("create parser artifact dir");
+        write_text(&artifact_dir.join("combined.md"), "# parsed\n").expect("write artifact");
+        #[cfg(unix)]
+        let external_raw = {
+            let external = test_vault("nested-raw-corpus-status-external");
+            fs::write(external.join("outside.pdf"), b"outside pdf").expect("write outside raw");
+            std::os::unix::fs::symlink(&external, corpus.join("linked-external"))
+                .expect("create external raw symlink");
+            external
+        };
+
+        let status = inspect_vault(to_display(&vault)).expect("inspect nested raw corpus");
+
+        assert_eq!(status.counts.inbox, 1);
+        let raw_files = status
+            .files
+            .iter()
+            .filter(|file| file.kind == "inbox")
+            .map(|file| file.path.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(raw_files.len(), 1);
+        assert!(raw_files[0].ends_with("raw/deepseek_paper/DeepSeek_Test_2401.00001.pdf"));
+        assert!(status.files.iter().all(|file| file.name != "索引.md"));
+        assert!(status
+            .files
+            .iter()
+            .all(|file| !file.path.contains("linked-external")));
+        assert!(status
+            .files
+            .iter()
+            .all(|file| !file.path.ends_with("_markdown/combined.md")));
+
+        let _ = fs::remove_dir_all(vault);
+        #[cfg(unix)]
+        {
+            let _ = fs::remove_dir_all(external_raw);
         }
     }
 

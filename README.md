@@ -100,7 +100,7 @@ log-archive/desktop/
 - 创建或打开 open-llm-wiki vault；新建 vault 时会拒绝带尾随空格的路径段，避免生成跨设备不稳定的目录名。
 - 将 PDF / Markdown / txt / zip 导入到 `raw/inbox/`，并按 SHA-256 跳过重复文件；zip 会作为 corpus package 进入 plan，先提示解包再进入逐篇解析。
 - 文件夹导入会保留目录上下文，但不会跟随 symlink，避免把未显式选择的外部文件复制进 raw evidence。
-- 生成桌面端 ingest plan：扫描 `raw/inbox/` 与 `raw/*_markdown/combined.md`，按 SHA-256 标记 desktop-only 的 `ready`、`stageable`、`blocked`、`cached`、`published`，并写入 `_state/desktop-ingest-plan.json`。
+- 生成桌面端 ingest plan：递归扫描 `raw/` 下的显式 evidence 文件与嵌套 `*_markdown/combined.md`，按 SHA-256 标记 desktop-only 的 `ready`、`stageable`、`blocked`、`cached`、`published`，并写入 `_state/desktop-ingest-plan.json`。
 - 对 Markdown / txt 输入执行本地 staging，生成 `raw/<source>_markdown/combined.md`、`manifest.json` 和 `chunks.jsonl`，再交给 open-llm-wiki runtime。
 - 对 PDF 输入优先调用 runtime `pdf_to_markdown.py --parser auto` 本地解析；只有用户显式选择 `layout-api` 且允许云解析时，才允许外部 parser 路径。
 - 一键运行串行 ingest pipeline：PDF parse -> source discovery -> corpus ingest -> claims -> normalize -> semantic QA -> contradictions -> science review -> concept revision -> lint -> dashboard refresh。
