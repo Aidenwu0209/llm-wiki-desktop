@@ -8726,6 +8726,80 @@ fn load_writeback_proposal(vault: &Path, proposal_id: &str) -> Result<WritebackP
         .map_err(|e| format!("failed to parse {}: {e}", path.display()))
 }
 
+fn markdown_bullet_value(text: &str, key: &str) -> Option<String> {
+    let prefix = format!("- {key}:");
+    text.lines().find_map(|line| {
+        let trimmed = line.trim();
+        trimmed
+            .strip_prefix(&prefix)
+            .map(|value| value.trim().trim_matches('`').trim_matches('"').to_string())
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn fenced_diff(text: &str) -> String {
+    let mut in_diff = false;
+    let mut diff = String::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if !in_diff && trimmed == "```diff" {
+            in_diff = true;
+            continue;
+        }
+        if in_diff && trimmed == "```" {
+            break;
+        }
+        if in_diff {
+            diff.push_str(line);
+            diff.push('\n');
+        }
+    }
+    diff
+}
+
+fn review_artifact_writeback_proposal(vault: &Path, path: &Path) -> Option<WritebackProposal> {
+    let text = read_text(path);
+    if !text.contains("# Query Writeback Proposal") || !text.contains("writeback_applied: false") {
+        return None;
+    }
+    let relative = rel_path(vault, path);
+    let now = fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .map(|modified| {
+            let datetime: DateTime<Local> = modified.into();
+            datetime.to_rfc3339()
+        })
+        .unwrap_or_else(|_| Local::now().to_rfc3339());
+    let timestamp = markdown_bullet_value(&text, "generated_at")
+        .or_else(|| markdown_bullet_value(&text, "created_at"))
+        .unwrap_or(now);
+    let title = markdown_bullet_value(&text, "title")
+        .or_else(|| markdown_bullet_value(&text, "query"))
+        .unwrap_or_else(|| {
+            path.file_stem()
+                .and_then(OsStr::to_str)
+                .unwrap_or("query writeback proposal")
+                .replace(['-', '_'], " ")
+        });
+    let diff = fenced_diff(&text);
+    Some(WritebackProposal {
+        proposal_id: format!("artifact-{}", short_hash(&sha256_text(&relative))),
+        target_path: relative,
+        title,
+        status: "review_only".to_string(),
+        diff: if diff.trim().is_empty() {
+            text.clone()
+        } else {
+            diff
+        },
+        content: text,
+        created_at: timestamp.clone(),
+        updated_at: timestamp,
+        applied_at: None,
+        log_path: None,
+    })
+}
+
 struct QueryEvidenceGate {
     freshness_status: String,
     blocked_reason: Option<String>,
@@ -9347,7 +9421,22 @@ fn create_writeback_proposal(
 fn list_writeback_proposals(vault_path: String) -> Result<Vec<WritebackProposal>, String> {
     let vault = PathBuf::from(vault_path);
     require_existing_dir(&vault, "vault")?;
-    Ok(read_writeback_proposal_state(&vault).proposals)
+    let mut proposals = read_writeback_proposal_state(&vault).proposals;
+    let managed_targets = proposals
+        .iter()
+        .map(|proposal| proposal.target_path.clone())
+        .collect::<HashSet<_>>();
+    for path in list_markdown(&vault.join("reviews").join("query-writeback")) {
+        let relative = rel_path(&vault, &path);
+        if managed_targets.contains(&relative) {
+            continue;
+        }
+        if let Some(proposal) = review_artifact_writeback_proposal(&vault, &path) {
+            proposals.push(proposal);
+        }
+    }
+    proposals.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    Ok(proposals)
 }
 
 #[tauri::command]
@@ -12092,6 +12181,37 @@ mod tests {
 
         let _ = fs::remove_dir_all(vault);
         let _ = fs::remove_dir_all(outside);
+    }
+
+    #[test]
+    fn list_writebacks_includes_review_only_markdown_artifacts() {
+        let vault = test_vault("writeback-review-artifact-discovery");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        let artifact = vault
+            .join("reviews")
+            .join("query-writeback")
+            .join("deepseek-research-insights.md");
+        write_text(
+            &artifact,
+            "# Query Writeback Proposal\n\n- generated_at: 2026-05-26 04:22\n- target: concepts/deepseek-research-strategy.md\n- query: DeepSeek research strategy\n- writeback_applied: false\n- approval_required: true\n\n## Proposed Diff\n\n```diff\n--- a/concepts/deepseek-research-strategy.md\n+++ b/concepts/deepseek-research-strategy.md\n+Evidence-backed insight.\n```\n\n## Proposed Log Entry\n\n```text\n[2026-05-26 04:22] query-writeback | concepts/deepseek-research-strategy.md | agent | query: 'DeepSeek research strategy'\n```\n",
+        )
+        .expect("write review artifact");
+
+        let proposals =
+            list_writeback_proposals(to_display(&vault)).expect("list writeback proposals");
+        let proposal = proposals
+            .iter()
+            .find(|item| {
+                item.target_path == "reviews/query-writeback/deepseek-research-insights.md"
+            })
+            .expect("review artifact proposal");
+        assert!(proposal.proposal_id.starts_with("artifact-"));
+        assert_eq!(proposal.status, "review_only");
+        assert_eq!(proposal.title, "DeepSeek research strategy");
+        assert!(proposal.diff.contains("+Evidence-backed insight."));
+        assert!(proposal.content.contains("approval_required: true"));
+
+        let _ = fs::remove_dir_all(vault);
     }
 
     #[test]
