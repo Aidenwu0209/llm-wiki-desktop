@@ -4027,11 +4027,18 @@ fn supported_import_file(path: &Path) -> bool {
     )
 }
 
+fn is_symlink_path(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+}
+
 fn collect_import_dir(
     root: &Path,
     current: &Path,
     preserve_folders: bool,
     out: &mut Vec<ImportCandidate>,
+    errors: &mut Vec<String>,
 ) {
     if let Ok(read_dir) = fs::read_dir(current) {
         let mut entries = read_dir
@@ -4047,8 +4054,12 @@ fn collect_import_dir(
             {
                 continue;
             }
+            if is_symlink_path(&path) {
+                errors.push(format!("skipped symlink import path: {}", path.display()));
+                continue;
+            }
             if path.is_dir() {
-                collect_import_dir(root, &path, preserve_folders, out);
+                collect_import_dir(root, &path, preserve_folders, out, errors);
             } else if path.is_file() && supported_import_file(&path) {
                 let folder_context = if preserve_folders {
                     path.parent()
@@ -4075,8 +4086,10 @@ fn collect_import_candidates(
     let mut errors = Vec::new();
     for raw_path in paths {
         let path = PathBuf::from(&raw_path);
-        if path.is_dir() {
-            collect_import_dir(&path, &path, preserve_folders, &mut candidates);
+        if is_symlink_path(&path) {
+            errors.push(format!("skipped symlink input: {raw_path}"));
+        } else if path.is_dir() {
+            collect_import_dir(&path, &path, preserve_folders, &mut candidates, &mut errors);
         } else if path.is_file() {
             if supported_import_file(&path) {
                 candidates.push(ImportCandidate {
@@ -11122,6 +11135,61 @@ mod tests {
 
         let _ = fs::remove_dir_all(vault);
         let _ = fs::remove_dir_all(import_root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn folder_import_skips_symlinks_to_keep_raw_evidence_explicit() {
+        let vault = test_vault("folder-import-symlink");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        let import_root = test_vault("external-folder-symlink-root");
+        let external_root = test_vault("external-folder-symlink-target");
+        let nested = import_root.join("papers").join("vision");
+        fs::create_dir_all(&nested).expect("create nested import folder");
+        let regular = nested.join("regular.md");
+        write_text(&regular, "# Regular\n").expect("write regular source");
+        let external = external_root.join("external.md");
+        write_text(&external, "# External\n").expect("write external source");
+        let symlink_file = nested.join("external-link.md");
+        std::os::unix::fs::symlink(&external, &symlink_file).expect("create symlink file");
+        let symlink_dir = import_root.join("linked-external");
+        std::os::unix::fs::symlink(&external_root, &symlink_dir).expect("create symlink dir");
+
+        let batch = import_sources_impl(&vault, vec![to_display(&import_root)], false, true)
+            .expect("import folder with symlinks");
+        assert_eq!(batch.imported.len(), 1);
+        assert_eq!(batch.imported[0].file_name, "regular.md");
+        assert!(batch
+            .errors
+            .iter()
+            .any(|error| error.contains("skipped symlink import path")
+                && error.contains("external-link.md")));
+        assert!(batch
+            .errors
+            .iter()
+            .any(|error| error.contains("skipped symlink import path")
+                && error.contains("linked-external")));
+        assert!(!vault.join("raw").join("inbox").join("external.md").exists());
+        assert!(!vault
+            .join("raw")
+            .join("inbox")
+            .join("papers")
+            .join("vision")
+            .join("external-link.md")
+            .exists());
+
+        let direct = import_sources_impl(&vault, vec![to_display(&symlink_file)], false, false)
+            .expect("direct symlink import is handled");
+        assert_eq!(direct.imported.len(), 0);
+        assert!(direct
+            .errors
+            .iter()
+            .any(|error| error.contains("skipped symlink input")
+                && error.contains("external-link.md")));
+
+        let _ = fs::remove_dir_all(vault);
+        let _ = fs::remove_dir_all(import_root);
+        let _ = fs::remove_dir_all(external_root);
     }
 
     #[test]
