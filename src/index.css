@@ -5088,10 +5088,11 @@ button.primary:hover:not(:disabled),
 }
 
 .continue-project {
-  display: flex;
+  display: grid;
   align-items: center;
-  justify-content: space-between;
-  gap: 14px;
+  justify-content: stretch;
+  justify-items: start;
+  gap: 8px;
   border: 1px solid #d8ded9;
   border-radius: 8px;
   background: #fbfcfa;
@@ -5102,6 +5103,19 @@ button.primary:hover:not(:disabled),
 .continue-project strong,
 .continue-project code {
   display: block;
+}
+
+.continue-project .continue-project-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.continue-project .welcome-path-risk {
+  display: inline-flex;
+  color: #7a4a00;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .continue-project span {
@@ -5257,6 +5271,9 @@ button.primary:hover:not(:disabled),
 }
 
 .project-path-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
   border: 1px solid #d07878;
   border-radius: 6px;
   background: #fff7f5;
@@ -5264,6 +5281,11 @@ button.primary:hover:not(:disabled),
   color: #a43131;
   font-size: 12px;
   line-height: 1.45;
+}
+
+.project-path-warning svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
 }
 
 .logo-lockup {
@@ -5355,7 +5377,8 @@ button.primary:hover:not(:disabled),
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:
     "name state"
-    "path path";
+    "path path"
+    "risk risk";
   justify-items: start;
   gap: 4px 9px;
   height: auto;
@@ -5379,6 +5402,28 @@ button.primary:hover:not(:disabled),
   overflow-wrap: anywhere;
   color: #40514a;
   font-size: 11px;
+}
+
+.welcome-path-risk {
+  grid-area: risk;
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: 100%;
+  border: 1px solid #d8a246;
+  border-radius: 6px;
+  background: #fff8e6;
+  padding: 5px 7px;
+  color: #7a4a00;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.welcome-path-risk svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
 }
 
 .project-modal-head p {
