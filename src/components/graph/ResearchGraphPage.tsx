@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Copy, ExternalLink, FolderOpen, GitCompare, Maximize, Network, RotateCcw, Search, ShieldAlert, SquareStack, ZoomIn, ZoomOut } from "lucide-react";
+import { Copy, ExternalLink, FolderOpen, GitCompare, Lightbulb, Maximize, Network, RotateCcw, Search, ShieldAlert, SquareStack, ZoomIn, ZoomOut } from "lucide-react";
 import type { UiLanguage } from "../../i18n";
 import type {
   ClaimLedgerItem,
@@ -121,6 +121,7 @@ type ResearchGraphPageProps = {
   onOpenSources: () => void;
   onPlanIngest: () => void;
   onRunPipeline: () => void;
+  onCreateResearchTopic: (question: string, targetPath: string) => void;
   resolveVaultPath: (path?: string | null) => string;
 };
 
@@ -179,6 +180,7 @@ const graphCopy = {
     surprisingConnections: "意外连接",
     noSurprisingConnections: "暂无意外连接",
     surpriseDetail: (score: number, reasons: string) => `惊讶度 ${score.toFixed(1)} · ${reasons}`,
+    createResearchTopic: "生成研究主题",
     noneYet: "暂未生成",
     evidenceBreaks: "证据断点",
     noneSurfaced: "暂无",
@@ -295,6 +297,7 @@ const graphCopy = {
     surprisingConnections: "Surprising connections",
     noSurprisingConnections: "No surprising connections yet",
     surpriseDetail: (score: number, reasons: string) => `surprise ${score.toFixed(1)} · ${reasons}`,
+    createResearchTopic: "Create research topic",
     noneYet: "none yet",
     evidenceBreaks: "Evidence breaks",
     noneSurfaced: "none surfaced",
@@ -418,6 +421,22 @@ function compact(value?: string | null, max = 96) {
 
 function key(value?: string | null) {
   return encodeURIComponent((value || "unknown").trim().toLowerCase());
+}
+
+function pathSlug(value?: string | null) {
+  const source = (value || "graph-insight").trim() || "graph-insight";
+  const normalized = source
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (normalized) return normalized;
+
+  let hash = 0;
+  for (const char of source) {
+    hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  }
+  return `node-${hash.toString(36)}`;
 }
 
 function basename(path?: string | null) {
@@ -1338,6 +1357,7 @@ export function ResearchGraphPage({
   onOpenSources,
   onPlanIngest,
   onRunPipeline,
+  onCreateResearchTopic,
   resolveVaultPath,
 }: ResearchGraphPageProps) {
   const text = graphCopy[language];
@@ -1453,6 +1473,31 @@ export function ResearchGraphPage({
   const endpointLabel = (id: string) => nodeById.get(id)?.label || id;
   const surpriseReasonLabels = (reasons: ResearchGraphSurpriseReason[]) =>
     reasons.map((reason) => text.surpriseReasons[reason]).join(", ");
+  const graphInsightTarget = (kind: string, label: string) =>
+    `reviews/query-writeback/graph-${kind}-${pathSlug(label)}.md`;
+  const createBridgeResearchTopic = (bridge: ResearchGraphBridgeNode) => {
+    const label = endpointLabel(bridge.nodeId);
+    const neighborhoods = bridge.groups.map((group) => group.join(", ")).join(" | ");
+    const question = language === "zh"
+      ? `基于当前 LLM Wiki，请围绕图谱桥接节点「${label}」生成一个可审核的 Deep Research / query writeback 研究主题。\n要求：\n1. 解释它为什么连接 ${bridge.groupCount} 个分离邻域，并列出相关邻域：${neighborhoods || "暂无邻域标签"}。\n2. 所有确定性结论必须引用当前 wiki 的 source / claim / concept 证据。\n3. 区分 evidence、inference、hypothesis、forecast。\n4. 标出需要补充资料或外部检索的问题，但不要把预测写成事实。\n5. 只生成写回提案，不要静默写入 source/concept 页面。`
+      : `Using the current LLM Wiki, create a reviewable Deep Research / query writeback topic around the graph bridge node "${label}".\nRequirements:\n1. Explain why it connects ${bridge.groupCount} separated neighborhoods and list the neighborhoods: ${neighborhoods || "no neighborhood labels yet"}.\n2. Cite current wiki source / claim / concept evidence for every firm conclusion.\n3. Distinguish evidence, inference, hypothesis, and forecast.\n4. Identify missing evidence or external research questions without presenting forecasts as facts.\n5. Generate a writeback proposal only; do not silently write into source or concept pages.`;
+    onCreateResearchTopic(question, graphInsightTarget("bridge", label));
+  };
+  const createSurprisingConnectionResearchTopic = (connection: ResearchGraphSurprisingConnection) => {
+    const from = endpointLabel(connection.from);
+    const to = endpointLabel(connection.to);
+    const reasons = surpriseReasonLabels(connection.reasons);
+    const question = language === "zh"
+      ? `基于当前 LLM Wiki，请围绕图谱意外连接「${from} -> ${to}」生成一个可审核的 Deep Research / query writeback 研究主题。\n要求：\n1. 解释这条连接为什么值得追踪，当前图谱原因是：${reasons}，惊讶度 ${connection.score.toFixed(1)}。\n2. 用当前 wiki 的 source / claim / concept 证据支撑确定性结论。\n3. 区分 evidence、inference、hypothesis、forecast。\n4. 列出需要人工确认或补充资料的问题。\n5. 只生成写回提案，不要静默写入 source/concept 页面。`
+      : `Using the current LLM Wiki, create a reviewable Deep Research / query writeback topic around the surprising graph connection "${from} -> ${to}".\nRequirements:\n1. Explain why this connection is worth investigating; current graph reasons: ${reasons}; surprise score ${connection.score.toFixed(1)}.\n2. Support firm conclusions with current wiki source / claim / concept evidence.\n3. Distinguish evidence, inference, hypothesis, and forecast.\n4. List questions needing human confirmation or more evidence.\n5. Generate a writeback proposal only; do not silently write into source or concept pages.`;
+    onCreateResearchTopic(question, graphInsightTarget("surprise", `${from}-${to}`));
+  };
+  const createKnowledgeGapResearchTopic = () => {
+    const question = language === "zh"
+      ? `基于当前 LLM Wiki，请围绕图谱知识缺口生成一个可审核的 Deep Research / query writeback 研究主题。\n当前阅读质量信号：${knowledgeGapSummary}。\n要求：\n1. 判断哪些 concept 是孤立或低综合的，并引用当前 wiki 证据。\n2. 说明这些缺口会如何影响 source -> claim -> concept 的可信演进。\n3. 区分 evidence、inference、hypothesis、forecast。\n4. 列出需要补充资料、人工审核或外部检索的问题。\n5. 只生成写回提案，不要静默写入 source/concept 页面。`
+      : `Using the current LLM Wiki, create a reviewable Deep Research / query writeback topic around current graph knowledge gaps.\nCurrent reading-quality signal: ${knowledgeGapSummary}.\nRequirements:\n1. Identify orphan or low-synthesis concepts and cite current wiki evidence.\n2. Explain how these gaps affect trustworthy source -> claim -> concept evolution.\n3. Distinguish evidence, inference, hypothesis, and forecast.\n4. List questions needing more sources, human review, or external research.\n5. Generate a writeback proposal only; do not silently write into source or concept pages.`;
+    onCreateResearchTopic(question, "reviews/query-writeback/graph-knowledge-gaps.md");
+  };
   const resetGraphFilters = () => {
     setQuery("");
     setTypeFilter("all");
@@ -1531,6 +1576,12 @@ export function ResearchGraphPage({
               {endpointLabel(bridge.nodeId)}
             </button>
           ))}
+          {graph.summary.bridgeNodes[0] && (
+            <button className="graph-insight-link" onClick={() => createBridgeResearchTopic(graph.summary.bridgeNodes[0])}>
+              <Lightbulb size={14} />
+              {text.createResearchTopic}
+            </button>
+          )}
         </div>
         <div>
           <span>{text.surprisingConnections}</span>
@@ -1553,6 +1604,12 @@ export function ResearchGraphPage({
               {endpointLabel(connection.from)} {"->"} {endpointLabel(connection.to)}
             </button>
           ))}
+          {graph.summary.surprisingConnections[0] && (
+            <button className="graph-insight-link" onClick={() => createSurprisingConnectionResearchTopic(graph.summary.surprisingConnections[0])}>
+              <Lightbulb size={14} />
+              {text.createResearchTopic}
+            </button>
+          )}
         </div>
         <div>
           <span>{text.evidenceBreaks}</span>
@@ -1565,6 +1622,12 @@ export function ResearchGraphPage({
             <button className="graph-insight-link" onClick={() => onOpenPath(resolveVaultPath(readingQualityReportPath))}>
               <FolderOpen size={14} />
               {text.readingQualityReport}
+            </button>
+          )}
+          {knowledgeGaps > 0 && (
+            <button className="graph-insight-link" onClick={createKnowledgeGapResearchTopic}>
+              <Lightbulb size={14} />
+              {text.createResearchTopic}
             </button>
           )}
         </div>

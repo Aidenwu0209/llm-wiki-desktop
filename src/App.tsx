@@ -1459,6 +1459,16 @@ function App() {
     }
   }
 
+  function handleGraphResearchTopic(question: string, targetPath: string) {
+    const target = targetPath.trim() || "reviews/query-writeback/graph-research-topic.md";
+    setQueryText(question);
+    setQueryTarget(target);
+    setQueryDraft(null);
+    setWritebackApplyStatus(null);
+    setError(null);
+    setActivePage("writeback");
+  }
+
   async function handleOpenObsidian() {
     if (!vaultPath) return;
     setBusy("obsidian_open");
@@ -2544,6 +2554,7 @@ function App() {
           onOpenSources={() => setActivePage("sources")}
           onPlanIngest={handlePlanIngest}
           onRunPipeline={handleIngestPipeline}
+          onCreateResearchTopic={handleGraphResearchTopic}
           resolveVaultPath={vaultFilePath}
         />
 
