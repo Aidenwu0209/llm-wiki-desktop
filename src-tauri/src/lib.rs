@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 const MAX_VAULT_TEXT_PREVIEW_BYTES: u64 = 64 * 1024;
+const MAX_VAULT_IMAGE_PREVIEW_BYTES: u64 = 5 * 1024 * 1024;
 const GENERATED_PURPOSE_MARKER: &str = "<!-- llm-wiki-desktop:generated-purpose -->";
 
 #[derive(Debug, Serialize, Clone)]
@@ -186,6 +187,15 @@ struct VaultTextFilePreview {
     size_bytes: u64,
     content: String,
     truncated: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct VaultImageFilePreview {
+    path: String,
+    size_bytes: u64,
+    mime_type: String,
+    bytes: Vec<u8>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -14333,6 +14343,28 @@ mod tests {
     }
 
     #[test]
+    fn vault_image_preview_reads_supported_images_and_rejects_unsafe_targets() {
+        let vault = test_vault("vault-image-preview");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        fs::create_dir_all(vault.join("media")).unwrap();
+        fs::write(vault.join("media/chart.png"), b"\x89PNG\r\n\x1a\npreview").unwrap();
+        write_text(&vault.join("media").join("not-image.md"), "not an image").expect("not image");
+
+        let preview = read_vault_image_file(to_display(&vault), "media/chart.png".to_string())
+            .expect("preview png");
+        assert_eq!(preview.path, "media/chart.png");
+        assert_eq!(preview.mime_type, "image/png");
+        assert_eq!(preview.bytes, b"\x89PNG\r\n\x1a\npreview");
+
+        assert!(
+            read_vault_image_file(to_display(&vault), "media/not-image.md".to_string()).is_err()
+        );
+        assert!(read_vault_image_file(to_display(&vault), "../outside.png".to_string()).is_err());
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
     fn runtime_probe_commands_are_deterministic() {
         let cancel = runtime_probe_command("cancel_probe").expect("cancel probe");
         assert_eq!(cancel.1, 45);
@@ -15300,6 +15332,24 @@ fn is_vault_text_preview_extension(path: &Path) -> bool {
     )
 }
 
+fn vault_image_mime_type(path: &Path) -> Option<&'static str> {
+    match path
+        .extension()
+        .and_then(OsStr::to_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        "bmp" => Some("image/bmp"),
+        "svg" => Some("image/svg+xml"),
+        _ => None,
+    }
+}
+
 #[tauri::command]
 fn read_vault_text_file(vault_path: String, path: String) -> Result<VaultTextFilePreview, String> {
     let vault = PathBuf::from(vault_path);
@@ -15342,6 +15392,51 @@ fn read_vault_text_file(vault_path: String, path: String) -> Result<VaultTextFil
         size_bytes,
         content: String::from_utf8_lossy(&buffer).into_owned(),
         truncated,
+    })
+}
+
+#[tauri::command]
+fn read_vault_image_file(
+    vault_path: String,
+    path: String,
+) -> Result<VaultImageFilePreview, String> {
+    let vault = PathBuf::from(vault_path);
+    let target = resolve_vault_item_path(&vault, &path)?;
+    let vault_resolved = vault
+        .canonicalize()
+        .map_err(|e| format!("failed to resolve vault {}: {e}", vault.display()))?;
+    let target_resolved = target
+        .canonicalize()
+        .map_err(|e| format!("failed to resolve {}: {e}", target.display()))?;
+    if !target_resolved.starts_with(&vault_resolved) {
+        return Err("vault image preview must stay inside the vault".to_string());
+    }
+    if !target.is_file() {
+        return Err(format!("vault item is not a file: {}", target.display()));
+    }
+    let mime_type = vault_image_mime_type(&target).ok_or_else(|| {
+        format!(
+            "vault item is not a supported image preview: {}",
+            target.display()
+        )
+    })?;
+    let metadata = target_resolved
+        .metadata()
+        .map_err(|e| format!("failed to inspect {}: {e}", target_resolved.display()))?;
+    let size_bytes = metadata.len();
+    if size_bytes > MAX_VAULT_IMAGE_PREVIEW_BYTES {
+        return Err(format!(
+            "vault image is too large to preview: {} bytes exceeds {} bytes",
+            size_bytes, MAX_VAULT_IMAGE_PREVIEW_BYTES
+        ));
+    }
+    let bytes = fs::read(&target_resolved)
+        .map_err(|e| format!("failed to read {}: {e}", target_resolved.display()))?;
+    Ok(VaultImageFilePreview {
+        path: rel_path(&vault_resolved, &target_resolved),
+        size_bytes,
+        mime_type: mime_type.to_string(),
+        bytes,
     })
 }
 
@@ -15439,6 +15534,7 @@ pub fn run() {
             reveal_path,
             open_vault_path,
             read_vault_text_file,
+            read_vault_image_file,
             resolve_vault_entry_note,
             open_obsidian_vault
         ])

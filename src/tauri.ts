@@ -22,6 +22,7 @@ import type {
   RuntimeJobEvent,
   TraceabilityWarning,
   VaultEntryNote,
+  VaultImageFilePreview,
   VaultRestoreResult,
   VaultTextFilePreview,
   VaultSuggestion,
@@ -324,6 +325,10 @@ export function openVaultPath(vaultPath: string, path: string): Promise<void> {
 
 export function readVaultTextFile(vaultPath: string, path: string): Promise<VaultTextFilePreview> {
   return invoke("read_vault_text_file", { vaultPath, path });
+}
+
+export function readVaultImageFile(vaultPath: string, path: string): Promise<VaultImageFilePreview> {
+  return invoke("read_vault_image_file", { vaultPath, path });
 }
 
 export function resolveVaultEntryNote(vaultPath: string): Promise<VaultEntryNote> {

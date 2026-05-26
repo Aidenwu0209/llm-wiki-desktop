@@ -2139,6 +2139,25 @@ textarea {
   font-size: 11px;
 }
 
+.details-markdown-image-frame {
+  margin: 10px 0;
+}
+
+.details-markdown-image {
+  display: block;
+  max-width: 100%;
+  max-height: 420px;
+  border: 1px solid #d8ded9;
+  border-radius: 6px;
+  object-fit: contain;
+}
+
+.details-markdown-image-frame figcaption {
+  margin-top: 4px;
+  color: #52625b;
+  font-size: 11px;
+}
+
 .details-diff {
   max-height: 190px;
   overflow: auto;
