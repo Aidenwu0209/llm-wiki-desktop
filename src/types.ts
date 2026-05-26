@@ -1,5 +1,6 @@
 export type VaultCounts = {
   inbox: number;
+  notes: number;
   sources: number;
   drafts: number;
   concepts: number;
@@ -72,7 +73,7 @@ export type AgentReadApiServerInfo = {
 export type VaultFile = {
   name: string;
   path: string;
-  kind: "source" | "draft" | "concept" | "report" | "inbox";
+  kind: "source" | "draft" | "concept" | "report" | "inbox" | "note";
   sourceId?: string | null;
   title?: string | null;
   excerpt?: string | null;

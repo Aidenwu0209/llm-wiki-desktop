@@ -22,6 +22,7 @@ const GENERATED_PURPOSE_MARKER: &str = "<!-- llm-wiki-desktop:generated-purpose 
 #[serde(rename_all = "camelCase")]
 struct VaultCounts {
     inbox: usize,
+    notes: usize,
     sources: usize,
     drafts: usize,
     concepts: usize,
@@ -1770,6 +1771,25 @@ fn list_markdown(dir: &Path) -> Vec<PathBuf> {
     files
 }
 
+fn root_wiki_notes(vault: &Path) -> Vec<PathBuf> {
+    let mut notes = [
+        "purpose.md",
+        "LLM Wiki Home.md",
+        "_dashboard.md",
+        "index.md",
+        "log.md",
+        "README.md",
+        "SCHEMA.md",
+    ]
+    .into_iter()
+    .map(|name| vault.join(name))
+    .filter(|path| path.is_file() && is_markdown_path(path))
+    .collect::<Vec<_>>();
+    notes.sort();
+    notes.dedup();
+    notes
+}
+
 fn count_jsonl(path: &Path) -> usize {
     read_text(path)
         .lines()
@@ -3246,6 +3266,7 @@ fn agent_search_vault(
         return Ok(Vec::new());
     }
     let mut candidates = Vec::new();
+    candidates.extend(root_wiki_notes(vault));
     for dir in [
         "sources",
         "concepts",
@@ -4328,15 +4349,20 @@ fn inspect_vault(vault_path: String) -> Result<VaultStatus, String> {
     let drafts = list_markdown(&vault.join("drafts"));
     let concepts = list_markdown(&vault.join("concepts"));
     let reports = list_markdown(&vault.join("qa-reports"));
+    let notes = root_wiki_notes(&vault);
     let markdown_files = sources
         .iter()
         .chain(drafts.iter())
         .chain(concepts.iter())
         .chain(reports.iter())
+        .chain(notes.iter())
         .cloned()
         .collect::<Vec<_>>();
     let wikilinks = build_wikilink_context(&vault, &markdown_files);
     let mut files = Vec::new();
+    for path in &notes {
+        files.push(file_item(&vault, path, "note", &wikilinks));
+    }
     for path in &sources {
         files.push(file_item(&vault, path, "source", &wikilinks));
     }
@@ -4391,6 +4417,7 @@ fn inspect_vault(vault_path: String) -> Result<VaultStatus, String> {
         last_updated: latest_modified_time(&vault),
         counts: VaultCounts {
             inbox: files.iter().filter(|item| item.kind == "inbox").count(),
+            notes: notes.len(),
             sources: sources.len(),
             drafts: drafts.len(),
             concepts: concepts.len(),
@@ -11565,6 +11592,44 @@ mod tests {
         assert!(purpose.contains("Do not replace this user-authored note."));
         assert!(!purpose.contains(GENERATED_PURPOSE_MARKER));
         assert!(!purpose.contains("Generated purpose should not overwrite manual text."));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn inspect_vault_and_agent_search_surface_root_wiki_notes() {
+        let vault = test_vault("root-wiki-notes");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        let mut settings = DesktopSettings::default();
+        settings.project_name = "DeepSeek Research Wiki".to_string();
+        settings.project_purpose =
+            "Keep DeepSeek research direction visible before ingest and writeback.".to_string();
+        save_desktop_settings(to_display(&vault), settings).expect("save settings");
+
+        let status = inspect_vault(to_display(&vault)).expect("inspect vault");
+        let note_paths = status
+            .files
+            .iter()
+            .filter(|file| file.kind == "note")
+            .map(|file| rel_path(&vault, &PathBuf::from(&file.path)))
+            .collect::<Vec<_>>();
+
+        assert!(status.counts.notes >= 5);
+        assert!(note_paths.contains(&"purpose.md".to_string()));
+        assert!(note_paths.contains(&"index.md".to_string()));
+        assert!(note_paths.contains(&"log.md".to_string()));
+        assert!(status.files.iter().any(|file| {
+            file.kind == "note"
+                && file.name == "purpose.md"
+                && file.title.as_deref() == Some("DeepSeek Research Wiki")
+                && file
+                    .excerpt
+                    .as_deref()
+                    .is_some_and(|excerpt| excerpt.contains("research direction"))
+        }));
+
+        let search = agent_search_vault(&vault, "research direction", 10).expect("search notes");
+        assert!(search.iter().any(|item| item.path == "purpose.md"));
 
         let _ = fs::remove_dir_all(vault);
     }

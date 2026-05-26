@@ -835,7 +835,7 @@ function App() {
   const copy = shellCopy[interfaceLanguage];
 
   const grouped = useMemo(() => {
-    const groups: Record<string, VaultFile[]> = { source: [], draft: [], concept: [], report: [], inbox: [] };
+    const groups: Record<string, VaultFile[]> = { note: [], source: [], draft: [], concept: [], report: [], inbox: [] };
     for (const file of status?.files ?? []) groups[file.kind]?.push(file);
     return groups;
   }, [status]);
@@ -2657,6 +2657,7 @@ function App() {
               <span>{registry.length} {interfaceLanguage === "zh" ? "登记行" : "registry rows"}</span>
             </div>
             <div className="browser concept-browser">
+              <FileColumn title={interfaceLanguage === "zh" ? "知识库笔记" : "Wiki Notes"} files={grouped.note} onSelect={selectFileForDetails} />
               <FileColumn title={interfaceLanguage === "zh" ? "资料" : "Sources"} files={[...grouped.source, ...grouped.draft]} onSelect={selectFileForDetails} />
               <FileColumn title={interfaceLanguage === "zh" ? "报告" : "Reports"} files={grouped.report} onSelect={selectFileForDetails} />
               <FileColumn title={interfaceLanguage === "zh" ? "收件箱" : "Inbox"} files={grouped.inbox} onSelect={selectFileForDetails} />
