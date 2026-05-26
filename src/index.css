@@ -2020,6 +2020,21 @@ textarea {
   line-height: 1.45;
 }
 
+.details-preview-toolbar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.details-preview-toolbar button {
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
 .details-markdown-preview {
   max-height: 320px;
   overflow: auto;
@@ -2090,6 +2105,113 @@ textarea {
 .details-preview-outline .level-5,
 .details-preview-outline .level-6 {
   padding-left: 36px;
+}
+
+.details-reader-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  background: rgba(23, 32, 29, 0.58);
+  padding: 24px;
+}
+
+.details-reader-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(1120px, calc(100vw - 48px));
+  height: min(820px, calc(100vh - 48px));
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #c8d5ce;
+  border-radius: 8px;
+  background: #fbfcfa;
+  box-shadow: 0 24px 70px rgba(23, 32, 29, 0.34);
+}
+
+.details-reader-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  border-bottom: 1px solid #d8ded9;
+  background: #ffffff;
+  padding: 12px 14px;
+}
+
+.details-reader-header div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.details-reader-header strong,
+.details-reader-header code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.details-reader-header strong {
+  color: #17201d;
+  font-size: 15px;
+}
+
+.details-reader-header code {
+  color: #64706a;
+  font-size: 11px;
+}
+
+.details-reader-header button {
+  width: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+}
+
+.details-reader-body {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+  min-width: 0;
+  padding: 12px;
+}
+
+.details-reader-outline {
+  min-width: 0;
+  overflow: auto;
+}
+
+.details-reader-outline .details-preview-outline {
+  position: sticky;
+  top: 0;
+}
+
+.details-reader-outline .details-preview-outline div {
+  max-height: calc(100vh - 190px);
+}
+
+.details-reader-markdown {
+  max-height: none;
+  overflow: auto;
+  padding: 18px;
+  font-size: 14px;
+  line-height: 1.68;
+}
+
+.details-reader-markdown h1,
+.details-reader-markdown h2,
+.details-reader-markdown h3 {
+  font-size: 18px;
+}
+
+.details-reader-markdown h4,
+.details-reader-markdown h5,
+.details-reader-markdown h6 {
+  font-size: 14px;
 }
 
 .details-markdown-preview > *:first-child {
