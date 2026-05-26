@@ -137,6 +137,65 @@ function canPreviewVaultText(path?: string | null) {
   return Boolean(path && /\.(md|markdown|txt|json|jsonl|csv|tsv)$/i.test(path));
 }
 
+function transformWikilinks(markdown: string) {
+  if (!markdown.includes("[[")) return markdown;
+  return markdown
+    .split(/(```[\s\S]*?```)/g)
+    .map((part, index) => (index % 2 === 1 ? part : transformWikilinksOutsideCode(part)))
+    .join("");
+}
+
+function transformWikilinksOutsideCode(markdown: string) {
+  if (!markdown.includes("[[")) return markdown;
+  return markdown
+    .split(/(`[^`\n]+`)/g)
+    .map((part, index) => (index % 2 === 1 ? part : replaceWikilinks(part)))
+    .join("");
+}
+
+function replaceWikilinks(markdown: string) {
+  return markdown.replace(/\[\[([^\]|\n]+)(?:\|([^\]\n]*))?\]\]/g, (_match, rawTarget: string, rawAlias?: string) => {
+    const target = rawTarget.trim();
+    const alias = rawAlias?.trim() || target;
+    if (!target) return alias;
+    return `[${alias.replace(/\[/g, "\\[").replace(/\]/g, "\\]")}](#${encodeURIComponent(target)})`;
+  });
+}
+
+function normalizeWikilinkTarget(value?: string | null) {
+  return (value || "")
+    .split("|")[0]
+    .split("#")[0]
+    .replace(/\\/g, "/")
+    .replace(/^\.?\//, "")
+    .replace(/^\/+|\/+$/g, "")
+    .replace(/\.(md|markdown)$/i, "")
+    .trim()
+    .toLowerCase();
+}
+
+function wikilinkCandidateKeys(path?: string | null) {
+  const normalized = normalizeWikilinkTarget(path);
+  const basename = normalized.split("/").filter(Boolean).pop() || normalized;
+  return [normalized, basename].filter(Boolean);
+}
+
+function resolveWikilinkTarget(target: string, outboundLinks?: string[]) {
+  const targetKey = normalizeWikilinkTarget(target);
+  if (!targetKey) return "";
+  for (const link of outboundLinks || []) {
+    if (wikilinkCandidateKeys(link).includes(targetKey)) return link;
+  }
+  const fallbackPath = target
+    .split("#")[0]
+    .replace(/\\/g, "/")
+    .replace(/^\.?\//, "")
+    .replace(/^\/+|\/+$/g, "")
+    .trim();
+  if (fallbackPath.includes("/")) return /\.(md|markdown)$/i.test(fallbackPath) ? fallbackPath : `${fallbackPath}.md`;
+  return fallbackPath;
+}
+
 function DetailActions({
   text,
   path,
@@ -174,6 +233,58 @@ function DetailActions({
         <SquareStack size={14} />Obsidian
       </button>
     </div>
+  );
+}
+
+function MarkdownPreview({
+  content,
+  outboundLinks,
+  onOpenVaultPath,
+}: {
+  content: string;
+  outboundLinks?: string[];
+  onOpenVaultPath: (path?: string | null) => void;
+}) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        a: ({ children, href }) => {
+          const target = typeof href === "string" ? href : "";
+          const isWikilink = target.startsWith("#");
+          return (
+            <a
+              href={target || undefined}
+              rel={isWikilink ? undefined : "noreferrer"}
+              target={isWikilink ? undefined : "_blank"}
+              className={isWikilink ? "details-wikilink" : undefined}
+              onClick={(event) => {
+                if (!isWikilink) return;
+                event.preventDefault();
+                const raw = target.slice(1);
+                const decoded = (() => {
+                  try {
+                    return decodeURIComponent(raw);
+                  } catch {
+                    return raw;
+                  }
+                })();
+                onOpenVaultPath(resolveWikilinkTarget(decoded, outboundLinks));
+              }}
+            >
+              {children}
+            </a>
+          );
+        },
+        img: ({ alt, src }) => (
+          <span className="details-markdown-image-placeholder">
+            {alt || src ? `Image: ${alt || src}` : "Image omitted"}
+          </span>
+        ),
+      }}
+    >
+      {transformWikilinks(content)}
+    </ReactMarkdown>
   );
 }
 
@@ -295,23 +406,11 @@ export function DetailsPanel({
               {previewState.status === "ready" && (
                 <>
                   <div className="details-markdown-preview">
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={{
-                        a: ({ children, href }) => (
-                          <a href={href} rel="noreferrer" target="_blank">
-                            {children}
-                          </a>
-                        ),
-                        img: ({ alt, src }) => (
-                          <span className="details-markdown-image-placeholder">
-                            {alt || src ? `Image: ${alt || src}` : "Image omitted"}
-                          </span>
-                        ),
-                      }}
-                    >
-                      {previewState.preview.content}
-                    </ReactMarkdown>
+                    <MarkdownPreview
+                      content={previewState.preview.content}
+                      outboundLinks={selection.file.outboundLinks}
+                      onOpenVaultPath={onOpenVaultPath}
+                    />
                   </div>
                   {previewState.preview.truncated && <p>{text.truncatedPreview}</p>}
                 </>

@@ -2104,6 +2104,24 @@ textarea {
   color: #40514a;
 }
 
+.details-markdown-preview a {
+  color: #245b93;
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-color: rgba(36, 91, 147, 0.35);
+  text-underline-offset: 2px;
+}
+
+.details-markdown-preview a:hover {
+  text-decoration-color: #245b93;
+}
+
+.details-markdown-preview .details-wikilink {
+  border-radius: 4px;
+  background: #eef6ff;
+  padding: 0 3px;
+}
+
 .details-markdown-image-placeholder {
   display: inline-block;
   max-width: 100%;
