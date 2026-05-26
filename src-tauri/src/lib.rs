@@ -1797,6 +1797,31 @@ fn graph_report_notes(vault: &Path) -> Vec<PathBuf> {
     reports
 }
 
+fn collect_files_by_extension_recursive(dir: &Path, extension: &str, files: &mut Vec<PathBuf>) {
+    if let Ok(read_dir) = fs::read_dir(dir) {
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_files_by_extension_recursive(&path, extension, files);
+            } else if path
+                .extension()
+                .and_then(OsStr::to_str)
+                .is_some_and(|ext| ext.eq_ignore_ascii_case(extension))
+            {
+                files.push(path);
+            }
+        }
+    }
+}
+
+fn graph_canvas_files(vault: &Path) -> Vec<PathBuf> {
+    let mut canvases = Vec::new();
+    collect_files_by_extension_recursive(&vault.join("canvas"), "canvas", &mut canvases);
+    canvases.sort();
+    canvases.dedup();
+    canvases
+}
+
 fn count_jsonl(path: &Path) -> usize {
     read_text(path)
         .lines()
@@ -13253,6 +13278,16 @@ mod tests {
         )
         .expect("concept page");
         write_text(
+            &vault.join(".graph").join("graph-report.md"),
+            "# Graph Report\n\nTraceability warning.\n",
+        )
+        .expect("graph report");
+        write_text(
+            &vault.join("canvas").join("wiki-graph.canvas"),
+            "{\"nodes\":[],\"edges\":[]}\n",
+        )
+        .expect("graph canvas");
+        write_text(
             &vault.join("_state").join("source-registry.jsonl"),
             "{\"source_uuid\":\"sha256:1\",\"source_id\":\"LLM-0001\",\"source_path\":\"raw/inbox/dfc.pdf\",\"source_sha256\":\"abc\",\"status\":\"published\",\"source_page\":\"sources/LLM-0001.md\"}\n{\"source_uuid\":\"sha256:2\",\"source_id\":\"LLM-0002\",\"source_path\":\"raw/inbox/stale.pdf\",\"source_sha256\":\"def\",\"status\":\"stale\"}\n",
         )
@@ -13297,6 +13332,11 @@ mod tests {
         assert!(home.contains("- Blocked sources: 1"));
         assert!(home.contains("[[sources/LLM-0001]]"));
         assert!(home.contains("[[concepts/research-strategy]]"));
+        assert!(home.contains("## Graph & Traceability"));
+        assert!(home.contains("- Graph reports: 1"));
+        assert!(home.contains("- Obsidian canvases: 1"));
+        assert!(home.contains("[[.graph/graph-report]]"));
+        assert!(home.contains("[[canvas/wiki-graph.canvas]]"));
         assert!(home.contains("## Reading Quality"));
         assert!(home.contains("_state/obsidian-reading-quality.json"));
         assert!(vault
@@ -15023,11 +15063,25 @@ fn generate_entry_note(vault: &Path) -> Result<PathBuf, String> {
         12,
     );
     let concept_links = markdown_list_links(vault, &concepts, "No concept pages yet.", 12);
+    let graph_reports = graph_report_notes(vault);
+    let graph_canvases = graph_canvas_files(vault);
+    let graph_report_links =
+        markdown_list_links(vault, &graph_reports, "No graph report generated yet.", 8);
+    let graph_canvas_links = markdown_list_links(
+        vault,
+        &graph_canvases,
+        "No Obsidian canvas generated yet.",
+        4,
+    );
     let rendered = format!(
-        "# LLM Wiki Home\n\n<!-- llm-wiki-desktop:generated-home -->\n\n## Start Here\n\n- Read the corpus map first to understand which source pages exist and which inputs are still stale or blocked.\n- Use the concept map for synthesis reading after checking the trust status below.\n- Resolve review-required claims before treating generated insights as stable knowledge.\n- Keep query writeback proposals in `reviews/query-writeback/` until a human explicitly approves them.\n\n## Corpus Map\n\n- Raw evidence inputs: {raw_evidence_count}\n- Registry candidates: {candidate_sources}\n- Pending parse or ingest: {pending_source_inputs}\n- Source pages: {source_count}\n- Published sources: {published_sources}\n- Stale sources: {stale_sources}\n- Blocked sources: {blocked_sources}\n\n### Raw Evidence Awaiting Ingest\n\n{raw_links}\n### Source Pages\n\n{source_links}\n## Concept Map\n\n- Concept pages: {concept_count}\n\n{concept_links}\n## Reading Quality\n\n- Report: [`{reading_report}`]({reading_report})\n- Findings: {reading_findings}\n- Trust issues: {reading_trust_issues}\n- Duplicate groups: {reading_duplicate_groups}\n- Orphan concepts: {reading_orphan_concepts}\n- Low-synthesis concepts: {reading_low_synthesis}\n\n## Trust Status\n\n- Claims: {claims}\n- Claims needing review: {claims_needing_review}\n- Stale claims: {stale_claims}\n- Contradicted claims: {contradicted_claims}\n- Science review queue: [`{review_path}`]({review_path}) ({reviews} items)\n- Traceability / lint findings: [`{lint_path}`]({lint_path}) ({lint_findings} items)\n- Query writeback proposals waiting for review: {proposed_writebacks}\n\n## Review Queue\n\n- Claims ledger: [`claims/claims.jsonl`](claims/claims.jsonl)\n- Science review queue: [`{review_path}`]({review_path})\n- Query writeback review area: [`reviews/query-writeback/`](reviews/query-writeback/)\n\n## Suggested Questions\n\n- Which raw evidence inputs are still waiting for parse or ingest?\n- Which sources are published, stale, or blocked, and what is the next action for each?\n- Which concepts are safe to read as stable synthesis, and which still depend on review-required claims?\n- What evidence supports the main research strategy, and which conclusions are inference or forecast?\n- Which query writeback proposals are still review-only and should not be copied into concept pages?\n\n## Trust Boundary\n\nThis generated home note is a navigation aid. Source pages, claims, science review, reading quality findings, and query writeback approval remain runtime-owned state. Do not treat proposed writeback content or review-required claims as approved knowledge.\n",
+        "# LLM Wiki Home\n\n<!-- llm-wiki-desktop:generated-home -->\n\n## Start Here\n\n- Read the corpus map first to understand which source pages exist and which inputs are still stale or blocked.\n- Use the concept map for synthesis reading after checking the trust status below.\n- Open graph and traceability reports before trusting cross-source synthesis.\n- Resolve review-required claims before treating generated insights as stable knowledge.\n- Keep query writeback proposals in `reviews/query-writeback/` until a human explicitly approves them.\n\n## Corpus Map\n\n- Raw evidence inputs: {raw_evidence_count}\n- Registry candidates: {candidate_sources}\n- Pending parse or ingest: {pending_source_inputs}\n- Source pages: {source_count}\n- Published sources: {published_sources}\n- Stale sources: {stale_sources}\n- Blocked sources: {blocked_sources}\n\n### Raw Evidence Awaiting Ingest\n\n{raw_links}\n### Source Pages\n\n{source_links}\n## Concept Map\n\n- Concept pages: {concept_count}\n\n{concept_links}\n## Graph & Traceability\n\n- Graph reports: {graph_report_count}\n- Obsidian canvases: {graph_canvas_count}\n\n### Graph Reports\n\n{graph_report_links}\n### Obsidian Canvases\n\n{graph_canvas_links}\n## Reading Quality\n\n- Report: [`{reading_report}`]({reading_report})\n- Findings: {reading_findings}\n- Trust issues: {reading_trust_issues}\n- Duplicate groups: {reading_duplicate_groups}\n- Orphan concepts: {reading_orphan_concepts}\n- Low-synthesis concepts: {reading_low_synthesis}\n\n## Trust Status\n\n- Claims: {claims}\n- Claims needing review: {claims_needing_review}\n- Stale claims: {stale_claims}\n- Contradicted claims: {contradicted_claims}\n- Science review queue: [`{review_path}`]({review_path}) ({reviews} items)\n- Traceability / lint findings: [`{lint_path}`]({lint_path}) ({lint_findings} items)\n- Query writeback proposals waiting for review: {proposed_writebacks}\n\n## Review Queue\n\n- Claims ledger: [`claims/claims.jsonl`](claims/claims.jsonl)\n- Science review queue: [`{review_path}`]({review_path})\n- Query writeback review area: [`reviews/query-writeback/`](reviews/query-writeback/)\n\n## Suggested Questions\n\n- Which raw evidence inputs are still waiting for parse or ingest?\n- Which sources are published, stale, or blocked, and what is the next action for each?\n- Which concepts are safe to read as stable synthesis, and which still depend on review-required claims?\n- What evidence supports the main research strategy, and which conclusions are inference or forecast?\n- Which graph report or canvas shows broken evidence paths, stale links, or disconnected concepts?\n- Which query writeback proposals are still review-only and should not be copied into concept pages?\n\n## Trust Boundary\n\nThis generated home note is a navigation aid. Source pages, claims, science review, reading quality findings, graph reports, and query writeback approval remain runtime-owned state. Do not treat proposed writeback content or review-required claims as approved knowledge.\n",
         raw_evidence_count = raw_evidence_inputs.len(),
         source_count = sources.len(),
         concept_count = concepts.len(),
+        graph_report_count = graph_reports.len(),
+        graph_canvas_count = graph_canvases.len(),
+        graph_report_links = graph_report_links,
+        graph_canvas_links = graph_canvas_links,
         reading_report = if reading_quality.report_path.is_empty() {
             "_state/obsidian-reading-quality.json"
         } else {
