@@ -2654,9 +2654,9 @@ fn build_product_scorecard_report(vault: &Path) -> ProductScorecardReport {
     let artifacts_count = count_jsonl(&vault.join("_state").join("artifacts.jsonl")).max(
         count_jsonl(&vault.join("_state").join("desktop-artifacts.jsonl")),
     );
-    let stale_artifacts = read_text(&vault.join("_state").join("artifacts.jsonl"))
-        .lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+    let stale_artifacts = ["artifacts.jsonl", "desktop-artifacts.jsonl"]
+        .into_iter()
+        .flat_map(|state_file| read_jsonl_values(&vault.join("_state").join(state_file)))
         .filter(|value| {
             json_string(value, "status").as_deref() == Some("stale")
                 || !json_bool(value, "contract_valid") && !json_bool(value, "contractValid")
@@ -12812,6 +12812,35 @@ mod tests {
             .counts
             .iter()
             .any(|detail| detail.contains("missing human approval gate")));
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn product_scorecard_fails_on_stale_desktop_artifacts() {
+        let vault = test_vault("product-scorecard-desktop-stale-artifact");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        write_text(
+            &vault.join("_state").join("source-registry.jsonl"),
+            "{\"source_uuid\":\"sha256:desktop\",\"source_id\":\"LLM-0001\",\"source_path\":\"raw/inbox/paper.pdf\",\"source_sha256\":\"paper-hash\",\"status\":\"published\",\"source_page\":\"sources/LLM-0001.md\",\"artifact_path\":\"raw/paper_markdown/combined.md\"}\n",
+        )
+        .expect("registry");
+        write_text(&vault.join("_state").join("artifacts.jsonl"), "").expect("runtime artifacts");
+        write_text(
+            &vault.join("_state").join("desktop-artifacts.jsonl"),
+            "{\"source_uuid\":\"sha256:desktop\",\"source_id\":\"LLM-0001\",\"artifact_path\":\"raw/paper_markdown/combined.md\",\"manifest_path\":\"raw/paper_markdown/manifest.json\",\"status\":\"stale\",\"contract_valid\":true}\n",
+        )
+        .expect("desktop artifacts");
+
+        let report = build_product_scorecard_report(&vault);
+        let registry_manifest = report
+            .metrics
+            .iter()
+            .find(|metric| metric.metric_id == "registry_manifest")
+            .expect("registry manifest metric");
+        assert_eq!(registry_manifest.status, "fail");
+        assert!(registry_manifest
+            .counts
+            .contains(&"stale_or_invalid_artifacts: 1".to_string()));
 
         let _ = fs::remove_dir_all(vault);
     }
