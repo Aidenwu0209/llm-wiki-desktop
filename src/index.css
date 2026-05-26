@@ -3358,6 +3358,11 @@ textarea {
   stroke-width: 2.4;
 }
 
+.research-graph-svg line.source_overlap {
+  stroke: #4c8a61;
+  stroke-dasharray: 4 3;
+}
+
 .research-graph-svg line.warning,
 .research-graph-svg line.broken {
   stroke: #b7552b;
