@@ -3268,6 +3268,10 @@ textarea {
   min-height: 440px;
 }
 
+.graph-canvas-wrap {
+  position: relative;
+}
+
 .research-graph-svg {
   width: 100%;
   min-height: 380px;
@@ -3278,6 +3282,33 @@ textarea {
     linear-gradient(rgba(35, 65, 83, 0.04) 1px, transparent 1px),
     #ffffff;
   background-size: 24px 24px;
+}
+
+.graph-zoom-controls {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1;
+  display: grid;
+  gap: 5px;
+}
+
+.graph-zoom-controls button {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  border-color: #d8ded9;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 0;
+  color: #26312d;
+  box-shadow: 0 8px 20px rgba(31, 43, 38, 0.08);
+}
+
+.graph-zoom-controls button:hover:not(:disabled) {
+  border-color: #9ab0a4;
+  background: #ffffff;
 }
 
 .research-graph-svg line {

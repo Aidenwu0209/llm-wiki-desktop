@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Copy, ExternalLink, FolderOpen, GitCompare, Network, RotateCcw, Search, ShieldAlert, SquareStack } from "lucide-react";
+import { Copy, ExternalLink, FolderOpen, GitCompare, Maximize, Network, RotateCcw, Search, ShieldAlert, SquareStack, ZoomIn, ZoomOut } from "lucide-react";
 import type { UiLanguage } from "../../i18n";
 import type {
   ClaimLedgerItem,
@@ -113,6 +113,10 @@ const edgeTypes: Array<ResearchEdgeType | "all"> = [
 
 const VISUAL_NODE_LIMIT = 96;
 const VISUAL_EDGE_LIMIT = 120;
+const GRAPH_VIEWBOX = { width: 860, height: 360, centerX: 430, centerY: 180 };
+const GRAPH_ZOOM_MIN = 1;
+const GRAPH_ZOOM_MAX = 2.2;
+const GRAPH_ZOOM_STEP = 0.25;
 
 const graphCopy = {
   zh: {
@@ -148,6 +152,9 @@ const graphCopy = {
     noGraphDataPlan: "刷新计划",
     noGraphDataPipeline: "运行流程",
     resetGraphFilters: "清除筛选",
+    zoomIn: "放大图谱",
+    zoomOut: "缩小图谱",
+    resetZoom: "重置图谱缩放",
     limitHint: (visibleNodes: number, totalNodes: number, visibleEdges: number, totalEdges: number) =>
       `画布为性能只显示前 ${visibleNodes}/${totalNodes} 个节点和 ${visibleEdges}/${totalEdges} 条边；请用搜索或筛选缩小证据图谱。`,
     open: "打开",
@@ -231,6 +238,9 @@ const graphCopy = {
     noGraphDataPlan: "Refresh plan",
     noGraphDataPipeline: "Run pipeline",
     resetGraphFilters: "Clear filters",
+    zoomIn: "Zoom graph in",
+    zoomOut: "Zoom graph out",
+    resetZoom: "Reset graph zoom",
     limitHint: (visibleNodes: number, totalNodes: number, visibleEdges: number, totalEdges: number) =>
       `Canvas is performance-limited to the first ${visibleNodes}/${totalNodes} nodes and ${visibleEdges}/${totalEdges} edges; use search or filters to narrow the Evidence Graph.`,
     open: "open",
@@ -990,6 +1000,7 @@ export function ResearchGraphPage({
   const [edgeFilter, setEdgeFilter] = useState<ResearchEdgeType | "all">("all");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(1);
   const graph = useMemo(
     () => buildResearchGraph({ status, registry, claims, evidencePaths, reviewItems, writebacks, traceabilityWarnings }),
     [claims, evidencePaths, registry, reviewItems, status, traceabilityWarnings, writebacks],
@@ -1064,6 +1075,11 @@ export function ResearchGraphPage({
   const summary = graphSummaryText(graph, language);
   const hasGraphData = graph.nodes.length > 0;
   const graphFilterActive = Boolean(normalizedQuery) || typeFilter !== "all" || edgeFilter !== "all";
+  const graphViewBox = useMemo(() => {
+    const width = GRAPH_VIEWBOX.width / zoom;
+    const height = GRAPH_VIEWBOX.height / zoom;
+    return `${GRAPH_VIEWBOX.centerX - width / 2} ${GRAPH_VIEWBOX.centerY - height / 2} ${width} ${height}`;
+  }, [zoom]);
 
   useEffect(() => {
     if (!selectedId || !filteredNodes.some((node) => node.id === selectedId)) {
@@ -1083,6 +1099,9 @@ export function ResearchGraphPage({
     setTypeFilter("all");
     setEdgeFilter("all");
   };
+  const zoomInGraph = () => setZoom((value) => Math.min(GRAPH_ZOOM_MAX, Number((value + GRAPH_ZOOM_STEP).toFixed(2))));
+  const zoomOutGraph = () => setZoom((value) => Math.max(GRAPH_ZOOM_MIN, Number((value - GRAPH_ZOOM_STEP).toFixed(2))));
+  const resetGraphZoom = () => setZoom(1);
 
   return (
     <section className={["research-graph-page", className].filter(Boolean).join(" ")}>
@@ -1210,45 +1229,58 @@ export function ResearchGraphPage({
               )}
             </div>
           ) : (
-            <svg className="research-graph-svg" viewBox="0 0 860 360" role="img" aria-label="Research relationship graph">
-              <defs>
-                <marker id="graph-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-                  <path d="M 0 0 L 10 5 L 0 10 z" />
-                </marker>
-              </defs>
-              {visualEdges.map((edge) => {
-                const from = positions.get(edge.from);
-                const to = positions.get(edge.to);
-                if (!from || !to) return null;
-                const active = selected && (edge.from === selected.id || edge.to === selected.id);
-                return (
-                  <line
-                    key={edge.id}
-                    x1={from.x}
-                    y1={from.y}
-                    x2={to.x}
-                    y2={to.y}
-                    markerEnd="url(#graph-arrow)"
-                    className={classNames(edgeStatusClass(edge), active && "active")}
-                  />
-                );
-              })}
-              {visualNodes.map((node) => {
-                const position = positions.get(node.id);
-                if (!position) return null;
-                const active = selected?.id === node.id;
-                return (
-                  <g
-                    key={node.id}
-                    className={classNames(node.type, active && "active")}
-                    onClick={() => setSelectedId(node.id)}
-                  >
-                    <circle cx={position.x} cy={position.y} r={active ? 13 : 10} fill={typeColors[node.type]} />
-                    <text x={position.x + 15} y={position.y + 4}>{node.label.slice(0, 32)}</text>
-                  </g>
-                );
-              })}
-            </svg>
+            <div className="graph-canvas-wrap">
+              <div className="graph-zoom-controls" aria-label={text.relationshipMap}>
+                <button onClick={zoomInGraph} disabled={zoom >= GRAPH_ZOOM_MAX} title={text.zoomIn} aria-label={text.zoomIn}>
+                  <ZoomIn size={14} />
+                </button>
+                <button onClick={zoomOutGraph} disabled={zoom <= GRAPH_ZOOM_MIN} title={text.zoomOut} aria-label={text.zoomOut}>
+                  <ZoomOut size={14} />
+                </button>
+                <button onClick={resetGraphZoom} disabled={zoom === 1} title={text.resetZoom} aria-label={text.resetZoom}>
+                  <Maximize size={14} />
+                </button>
+              </div>
+              <svg className="research-graph-svg" viewBox={graphViewBox} role="img" aria-label="Research relationship graph">
+                <defs>
+                  <marker id="graph-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+                    <path d="M 0 0 L 10 5 L 0 10 z" />
+                  </marker>
+                </defs>
+                {visualEdges.map((edge) => {
+                  const from = positions.get(edge.from);
+                  const to = positions.get(edge.to);
+                  if (!from || !to) return null;
+                  const active = selected && (edge.from === selected.id || edge.to === selected.id);
+                  return (
+                    <line
+                      key={edge.id}
+                      x1={from.x}
+                      y1={from.y}
+                      x2={to.x}
+                      y2={to.y}
+                      markerEnd="url(#graph-arrow)"
+                      className={classNames(edgeStatusClass(edge), active && "active")}
+                    />
+                  );
+                })}
+                {visualNodes.map((node) => {
+                  const position = positions.get(node.id);
+                  if (!position) return null;
+                  const active = selected?.id === node.id;
+                  return (
+                    <g
+                      key={node.id}
+                      className={classNames(node.type, active && "active")}
+                      onClick={() => setSelectedId(node.id)}
+                    >
+                      <circle cx={position.x} cy={position.y} r={active ? 13 : 10} fill={typeColors[node.type]} />
+                      <text x={position.x + 15} y={position.y + 4}>{node.label.slice(0, 32)}</text>
+                    </g>
+                  );
+                })}
+              </svg>
+            </div>
           )}
           {graphIsTruncated && (
             <p className="empty">{text.limitHint(visualNodes.length, filteredNodes.length, visualEdges.length, visibleEdges.length)}</p>
