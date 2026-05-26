@@ -3633,6 +3633,7 @@ textarea {
 .research-graph-svg line {
   stroke: #aeb8b2;
   stroke-width: 1.2;
+  transition: opacity 140ms ease, stroke-width 140ms ease;
 }
 
 .research-graph-svg marker path {
@@ -3642,6 +3643,12 @@ textarea {
 .research-graph-svg line.active {
   stroke: #245b93;
   stroke-width: 2.4;
+  opacity: 1;
+}
+
+.research-graph-svg line.dimmed {
+  opacity: 0.16;
+  stroke-width: 0.9;
 }
 
 .research-graph-svg line.source_overlap {
@@ -3670,16 +3677,34 @@ textarea {
 
 .research-graph-svg g {
   cursor: pointer;
+  outline: none;
+  transition: opacity 140ms ease;
 }
 
 .research-graph-svg circle {
   stroke: #ffffff;
   stroke-width: 2;
+  transition: r 140ms ease, stroke-width 140ms ease, stroke 140ms ease;
 }
 
 .research-graph-svg g.active circle {
   stroke: #17201d;
   stroke-width: 3;
+}
+
+.research-graph-svg g.neighbor circle {
+  stroke: #89a799;
+  stroke-width: 2.6;
+}
+
+.research-graph-svg g.hovered circle,
+.research-graph-svg g:focus-visible circle {
+  stroke: #245b93;
+  stroke-width: 3.2;
+}
+
+.research-graph-svg g.dimmed {
+  opacity: 0.2;
 }
 
 .research-graph-svg text {
