@@ -68,6 +68,21 @@ type ResearchGraphBridgeNode = {
   groups: string[][];
 };
 
+type ResearchGraphSurpriseReason =
+  | "shared_source"
+  | "cross_type_wikilink"
+  | "cross_type_overlap"
+  | "peripheral_hub"
+  | "bridge_adjacent";
+
+type ResearchGraphSurprisingConnection = {
+  edgeId: string;
+  from: string;
+  to: string;
+  score: number;
+  reasons: ResearchGraphSurpriseReason[];
+};
+
 type ResearchGraph = {
   nodes: ResearchGraphNode[];
   edges: ResearchGraphEdge[];
@@ -82,6 +97,7 @@ type ResearchGraph = {
     communities: ResearchGraphCommunity[];
     largestCommunity?: ResearchGraphCommunity;
     bridgeNodes: ResearchGraphBridgeNode[];
+    surprisingConnections: ResearchGraphSurprisingConnection[];
     lowConnectionNodes: number;
     sparseCommunities: number;
   };
@@ -160,6 +176,9 @@ const graphCopy = {
     bridgeNodes: "桥接节点",
     noBridgeNodes: "暂无桥接节点",
     bridgeDetail: (groupCount: number, degree: number) => `${groupCount} 个分离邻域 · ${degree} 条关系`,
+    surprisingConnections: "意外连接",
+    noSurprisingConnections: "暂无意外连接",
+    surpriseDetail: (score: number, reasons: string) => `惊讶度 ${score.toFixed(1)} · ${reasons}`,
     noneYet: "暂未生成",
     evidenceBreaks: "证据断点",
     noneSurfaced: "暂无",
@@ -216,7 +235,15 @@ const graphCopy = {
     sourceOverlap: "来源重叠：共享同一 raw source 的页面关系",
     indirectRelatedContract: "间接推荐：共享邻居按 Adamic-Adar 式权重排序，并给同类页面 type affinity 加权，帮助选择下一篇要读的页面",
     bridgeNodeContract: "桥接节点：移除后会分开 3 个以上邻域的页面，用于定位跨知识区入口",
+    surprisingConnectionContract: "意外连接：共享来源、跨类型 Wiki 链接、外围节点到 hub、桥接节点相邻关系的高信号边",
     warningToClaim: "警告 -> 论断/资料：可追踪性警告",
+    surpriseReasons: {
+      shared_source: "共享来源",
+      cross_type_wikilink: "跨类型 Wiki 链接",
+      cross_type_overlap: "跨类型来源重叠",
+      peripheral_hub: "外围节点连接 hub",
+      bridge_adjacent: "邻近桥接节点",
+    } satisfies Record<ResearchGraphSurpriseReason, string>,
     nodes: "个节点",
     edges: "条边",
     linked: "已连接",
@@ -265,6 +292,9 @@ const graphCopy = {
     bridgeNodes: "Bridge nodes",
     noBridgeNodes: "No bridge nodes yet",
     bridgeDetail: (groupCount: number, degree: number) => `${groupCount} separated neighborhoods · ${degree} links`,
+    surprisingConnections: "Surprising connections",
+    noSurprisingConnections: "No surprising connections yet",
+    surpriseDetail: (score: number, reasons: string) => `surprise ${score.toFixed(1)} · ${reasons}`,
     noneYet: "none yet",
     evidenceBreaks: "Evidence breaks",
     noneSurfaced: "none surfaced",
@@ -321,7 +351,15 @@ const graphCopy = {
     sourceOverlap: "source overlap: pages sharing the same raw source",
     indirectRelatedContract: "indirect suggestions: shared neighbors ranked with an Adamic-Adar-style weight plus type affinity for next-page reading",
     bridgeNodeContract: "bridge nodes: pages whose removal splits 3+ neighborhoods, useful as cross-cluster reading entry points",
+    surprisingConnectionContract: "surprising connections: high-signal edges from shared sources, cross-type wiki links, peripheral-to-hub links, and bridge-adjacent links",
     warningToClaim: "warning -> claim/source: traceability warnings",
+    surpriseReasons: {
+      shared_source: "shared source",
+      cross_type_wikilink: "cross-type wiki link",
+      cross_type_overlap: "cross-type source overlap",
+      peripheral_hub: "peripheral-to-hub",
+      bridge_adjacent: "bridge-adjacent",
+    } satisfies Record<ResearchGraphSurpriseReason, string>,
     nodes: "nodes",
     edges: "edges",
     linked: "linked",
@@ -616,6 +654,76 @@ function graphBridgeNodes(nodes: ResearchGraphNode[], edges: ResearchGraphEdge[]
       || b.degree - a.degree
       || b.score - a.score
       || (nodeById.get(a.nodeId)?.label || a.nodeId).localeCompare(nodeById.get(b.nodeId)?.label || b.nodeId)
+    ))
+    .slice(0, 5);
+}
+
+function graphSurprisingConnections(
+  nodes: ResearchGraphNode[],
+  edges: ResearchGraphEdge[],
+  degree: Map<string, number>,
+  bridgeNodes: ResearchGraphBridgeNode[],
+) {
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const bridgeNodeIds = new Set(bridgeNodes.map((bridge) => bridge.nodeId));
+  const skipTypes = new Set<ResearchEdgeType>(["claim_review", "warning_claim", "warning_source"]);
+
+  const candidates: ResearchGraphSurprisingConnection[] = [];
+
+  for (const edge of edges) {
+    if (skipTypes.has(edge.type)) continue;
+    const from = nodeById.get(edge.from);
+    const to = nodeById.get(edge.to);
+    if (!from || !to || from.type === "warning" || to.type === "warning") continue;
+
+    const reasons: ResearchGraphSurpriseReason[] = [];
+    let score = 0;
+    const fromDegree = degree.get(edge.from) || 0;
+    const toDegree = degree.get(edge.to) || 0;
+    const degreeGap = Math.abs(fromDegree - toDegree);
+    const lowDegree = Math.min(fromDegree, toDegree);
+
+    if (edge.type === "source_overlap") {
+      reasons.push("shared_source");
+      score += 4;
+      if (from.type !== to.type) {
+        reasons.push("cross_type_overlap");
+        score += 2;
+      }
+    }
+
+    if (edge.type === "wikilink" && from.type !== to.type) {
+      reasons.push("cross_type_wikilink");
+      score += 3;
+    }
+
+    if (degreeGap >= 3 && lowDegree <= 2) {
+      reasons.push("peripheral_hub");
+      score += 2 + Math.min(degreeGap, 10) / 5;
+    }
+
+    if (bridgeNodeIds.has(edge.from) || bridgeNodeIds.has(edge.to)) {
+      reasons.push("bridge_adjacent");
+      score += 1.5;
+    }
+
+    if (reasons.length === 0) continue;
+
+    candidates.push({
+      edgeId: edge.id,
+      from: edge.from,
+      to: edge.to,
+      score,
+      reasons,
+    });
+  }
+
+  return candidates
+    .sort((a, b) => (
+      b.score - a.score
+      || b.reasons.length - a.reasons.length
+      || (nodeById.get(a.from)?.label || a.from).localeCompare(nodeById.get(b.from)?.label || b.from)
+      || (nodeById.get(a.to)?.label || a.to).localeCompare(nodeById.get(b.to)?.label || b.to)
     ))
     .slice(0, 5);
 }
@@ -1090,6 +1198,7 @@ export function buildResearchGraph(input: {
     .slice(0, 5);
   const communities = graphCommunities(graphNodes, graphEdges);
   const bridgeNodes = graphBridgeNodes(graphNodes, graphEdges);
+  const surprisingConnections = graphSurprisingConnections(graphNodes, graphEdges, degree, bridgeNodes);
 
   return {
     nodes: graphNodes,
@@ -1105,6 +1214,7 @@ export function buildResearchGraph(input: {
       communities,
       largestCommunity: communities[0],
       bridgeNodes,
+      surprisingConnections,
       lowConnectionNodes: graphNodes.filter((node) => (degree.get(node.id) || 0) <= 1).length,
       sparseCommunities: communities.filter((community) => community.size >= 3 && community.density < 0.15).length,
     },
@@ -1193,6 +1303,7 @@ function graphSummaryText(graph: ResearchGraph, language: UiLanguage) {
       `连接最多的概念：${concepts}。`,
       `${graph.summary.communities.length} 个知识簇；最大簇从 ${largestCluster} 开始，${graph.summary.lowConnectionNodes} 个节点仍然低连接。`,
       `${graph.summary.bridgeNodes.length} 个桥接节点可作为跨知识区阅读入口。`,
+      `${graph.summary.surprisingConnections.length} 条意外连接提示潜在跨区阅读线索。`,
       `${reviewPressure} 个审核或可追踪性节点需要处理后，才能把生成洞察视为稳定内容。`,
       `${graph.summary.writebackInsights} 个写回提案在批准前保持先提案后写回。`,
     ];
@@ -1203,6 +1314,7 @@ function graphSummaryText(graph: ResearchGraph, language: UiLanguage) {
     `Most connected concepts: ${concepts}.`,
     `${graph.summary.communities.length} knowledge clusters are connected; the largest starts with ${largestCluster}, and ${graph.summary.lowConnectionNodes} nodes remain low-link.`,
     `${graph.summary.bridgeNodes.length} bridge nodes can act as cross-cluster reading entry points.`,
+    `${graph.summary.surprisingConnections.length} surprising connections suggest cross-area reading paths.`,
     `${reviewPressure} review or traceability nodes require attention before treating generated proposal content as stable.`,
     `${graph.summary.writebackInsights} writeback proposal nodes remain proposal-first until approved.`,
   ];
@@ -1339,6 +1451,8 @@ export function ResearchGraphPage({
     if (node.path) onRevealPath(resolveVaultPath(node.path));
   };
   const endpointLabel = (id: string) => nodeById.get(id)?.label || id;
+  const surpriseReasonLabels = (reasons: ResearchGraphSurpriseReason[]) =>
+    reasons.map((reason) => text.surpriseReasons[reason]).join(", ");
   const resetGraphFilters = () => {
     setQuery("");
     setTypeFilter("all");
@@ -1415,6 +1529,28 @@ export function ResearchGraphPage({
             <button key={bridge.nodeId} className="graph-insight-link" onClick={() => setSelectedId(bridge.nodeId)}>
               <Network size={14} />
               {endpointLabel(bridge.nodeId)}
+            </button>
+          ))}
+        </div>
+        <div>
+          <span>{text.surprisingConnections}</span>
+          <em>
+            {graph.summary.surprisingConnections.slice(0, 2).map((connection) =>
+              `${endpointLabel(connection.from)} -> ${endpointLabel(connection.to)}`,
+            ).join(", ") || text.noSurprisingConnections}
+          </em>
+          {graph.summary.surprisingConnections[0] && (
+            <code>
+              {text.surpriseDetail(
+                graph.summary.surprisingConnections[0].score,
+                surpriseReasonLabels(graph.summary.surprisingConnections[0].reasons),
+              )}
+            </code>
+          )}
+          {graph.summary.surprisingConnections.slice(0, 3).map((connection) => (
+            <button key={connection.edgeId} className="graph-insight-link" onClick={() => setSelectedId(connection.to)}>
+              <GitCompare size={14} />
+              {endpointLabel(connection.from)} {"->"} {endpointLabel(connection.to)}
             </button>
           ))}
         </div>
@@ -1727,6 +1863,7 @@ export function ResearchGraphPage({
             <p>{text.sourceOverlap}</p>
             <p>{text.indirectRelatedContract}</p>
             <p>{text.bridgeNodeContract}</p>
+            <p>{text.surprisingConnectionContract}</p>
             <p>{text.proposalToTarget}</p>
             <p>{text.warningToClaim}</p>
           </div>
