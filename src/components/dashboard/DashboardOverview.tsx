@@ -19,6 +19,7 @@ import type {
   ContractFinding,
   DesktopSettings,
   IngestPlan,
+  ReadingQualitySummary,
   TraceabilityWarning,
   VaultEntryNote,
   VaultStatus,
@@ -132,7 +133,16 @@ const dashboardCopy = {
     readingClear: "清晰",
     readingFindings: "发现项",
     readingQualityDetail: "检查重复、孤立概念和证据漂移",
-    readingQualityIssueDetail: "个阅读/可信风险需要核对",
+    readingQualityBreakdown: {
+      trust: "可信风险",
+      duplicates: "重复组",
+      orphanConcepts: "孤立概念",
+      staleEvidence: "过期证据",
+      brokenEvidence: "断裂证据",
+      sourceDrift: "source 漂移",
+      lowSynthesis: "低合成概念",
+      noCategory: "打开阅读质量报告查看具体条目",
+    },
     proposed: "待审核",
     total: "总数",
     writebackIssueDetail: "个被拒提案需要清理",
@@ -232,7 +242,16 @@ const dashboardCopy = {
     readingClear: "Clear",
     readingFindings: "findings",
     readingQualityDetail: "Checks duplicates, orphan concepts, and evidence drift",
-    readingQualityIssueDetail: "reading/trust risks need review",
+    readingQualityBreakdown: {
+      trust: "trust risks",
+      duplicates: "duplicate groups",
+      orphanConcepts: "orphan concepts",
+      staleEvidence: "stale evidence",
+      brokenEvidence: "broken evidence",
+      sourceDrift: "source drift",
+      lowSynthesis: "low-synthesis concepts",
+      noCategory: "Open the reading quality report for item details",
+    },
     proposed: "proposed",
     total: "total",
     writebackIssueDetail: "Rejected proposals need cleanup",
@@ -373,6 +392,25 @@ function topIngestPlanEntry(ingestPlan: IngestPlan | null) {
     .sort((a, b) => ingestPlanPriority(a) - ingestPlanPriority(b) || a.fileName.localeCompare(b.fileName))[0] ?? null;
 }
 
+function readingQualityDetail(
+  summary: ReadingQualitySummary | null | undefined,
+  text: typeof dashboardCopy.zh | typeof dashboardCopy.en,
+) {
+  if (!summary?.findings) return text.readingQualityDetail;
+  const items = [
+    [summary.trustIssues, text.readingQualityBreakdown.trust],
+    [summary.duplicateGroups, text.readingQualityBreakdown.duplicates],
+    [summary.orphanConcepts, text.readingQualityBreakdown.orphanConcepts],
+    [summary.staleEvidenceReferences, text.readingQualityBreakdown.staleEvidence],
+    [summary.brokenEvidenceReferences, text.readingQualityBreakdown.brokenEvidence],
+    [summary.sourceIdentityDrift, text.readingQualityBreakdown.sourceDrift],
+    [summary.lowSynthesisConcepts, text.readingQualityBreakdown.lowSynthesis],
+  ]
+    .filter(([count]) => Number(count) > 0)
+    .map(([count, label]) => `${count} ${label}`);
+  return items.slice(0, 4).join(" · ") || text.readingQualityBreakdown.noCategory;
+}
+
 export function DashboardOverview({
   className,
   language = "zh",
@@ -415,6 +453,7 @@ export function DashboardOverview({
   const reviewTotal = openReviewCount + (status?.counts.claimsNeedingReview ?? 0);
   const traceabilityTotal = traceabilityWarnings.length + brokenEvidence;
   const readingQualityIssues = status?.readingQuality?.findings ?? 0;
+  const readingQualityDetailText = readingQualityDetail(status?.readingQuality, text);
   const vaultErrors = status?.errors ?? [];
   const unsafePathParts = whitespacePathParts(vaultPath);
   const statusMessages: string[] = [];
@@ -510,11 +549,7 @@ export function DashboardOverview({
           icon={BookOpenCheck}
           label={text.readingQuality}
           value={readingQualityIssues ? `${readingQualityIssues} ${text.readingFindings}` : text.readingClear}
-          detail={
-            readingQualityIssues
-              ? `${status?.readingQuality?.trustIssues ?? 0} ${text.readingQualityIssueDetail}`
-              : text.readingQualityDetail
-          }
+          detail={readingQualityIssues ? readingQualityDetailText : text.readingQualityDetail}
           tone={readingQualityIssues ? "warn" : "ok"}
           action={text.open}
           onAction={onOpenObsidian}
