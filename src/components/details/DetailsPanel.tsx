@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { isValidElement, useEffect, useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
@@ -140,6 +140,11 @@ type ImagePreviewState =
   | { status: "idle" }
   | { status: "loading" }
   | { status: "ready"; url: string; path: string; sizeBytes: number }
+  | { status: "error"; error: string };
+
+type MermaidPreviewState =
+  | { status: "rendering" }
+  | { status: "ready"; svg: string }
   | { status: "error"; error: string };
 
 const WIKILINK_HREF_PREFIX = "#__llmwiki__=";
@@ -321,6 +326,69 @@ function DetailActions({
   );
 }
 
+function MermaidDiagram({ code }: { code: string }) {
+  const [state, setState] = useState<MermaidPreviewState>({ status: "rendering" });
+  const [diagramId] = useState(() => `details-mermaid-${Math.random().toString(36).slice(2, 10)}`);
+
+  useEffect(() => {
+    let cancelled = false;
+    setState({ status: "rendering" });
+    import("mermaid")
+      .then(async ({ default: mermaid }) => {
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: "strict",
+          theme: "base",
+          themeVariables: {
+            background: "#ffffff",
+            primaryColor: "#eef6f0",
+            primaryTextColor: "#17201d",
+            primaryBorderColor: "#9eb2a8",
+            lineColor: "#52625b",
+            secondaryColor: "#eef6ff",
+            tertiaryColor: "#f7f8f5",
+          },
+        });
+        return mermaid.render(diagramId, code);
+      })
+      .then(({ svg }) => {
+        if (!cancelled) setState({ status: "ready", svg });
+      })
+      .catch((err) => {
+        if (!cancelled) setState({ status: "error", error: String(err) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [code, diagramId]);
+
+  if (state.status === "ready") {
+    return <div className="details-mermaid-frame" dangerouslySetInnerHTML={{ __html: state.svg }} />;
+  }
+  if (state.status === "error") {
+    return (
+      <div className="details-mermaid-error">
+        <strong>Mermaid render failed</strong>
+        <code>{state.error}</code>
+      </div>
+    );
+  }
+  return <div className="details-mermaid-loading">Rendering diagram...</div>;
+}
+
+function unwrapMermaidPre(children: ReactNode) {
+  if (isValidElement(children) && children.type === MermaidDiagram) return children;
+  if (
+    Array.isArray(children) &&
+    children.length === 1 &&
+    isValidElement(children[0]) &&
+    children[0].type === MermaidDiagram
+  ) {
+    return children[0];
+  }
+  return null;
+}
+
 function MarkdownPreview({
   content,
   currentPath,
@@ -380,6 +448,21 @@ function MarkdownPreview({
             vaultPath={vaultPath}
           />
         ),
+        pre: ({ children, ...props }) => {
+          const mermaid = unwrapMermaidPre(children);
+          if (mermaid) return <>{mermaid}</>;
+          return <pre {...props}>{children}</pre>;
+        },
+        code: ({ className, children, ...props }) => {
+          const language = className?.replace("language-", "").trim().toLowerCase();
+          const codeText = String(children).replace(/\n$/, "");
+          if (language === "mermaid") return <MermaidDiagram code={codeText} />;
+          return (
+            <code className={className} {...props}>
+              {children}
+            </code>
+          );
+        },
       }}
     >
       {transformWikilinks(content)}

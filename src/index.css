@@ -2095,6 +2095,42 @@ textarea {
   white-space: pre;
 }
 
+.details-mermaid-frame,
+.details-mermaid-loading,
+.details-mermaid-error {
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid #d8ded9;
+  border-radius: 6px;
+  background: #fbfcfa;
+  padding: 8px;
+}
+
+.details-mermaid-frame svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.details-mermaid-loading {
+  color: #52625b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.details-mermaid-error {
+  display: grid;
+  gap: 6px;
+  color: #8a302d;
+  font-size: 11px;
+}
+
+.details-mermaid-error code {
+  color: #8a302d;
+  white-space: pre-wrap;
+}
+
 .details-markdown-preview table {
   width: 100%;
   border-collapse: collapse;
