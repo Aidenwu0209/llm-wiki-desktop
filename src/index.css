@@ -3127,6 +3127,25 @@ textarea {
   font-size: 11px;
 }
 
+.raw-source-plan-path-list {
+  display: grid;
+  gap: 5px;
+}
+
+.raw-source-plan-path-list button {
+  justify-content: start;
+  min-height: 28px;
+  padding: 0 7px;
+  overflow: hidden;
+  font-size: 11px;
+}
+
+.raw-source-plan-path-list button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .raw-source-actions {
   display: flex;
   flex-wrap: wrap;
