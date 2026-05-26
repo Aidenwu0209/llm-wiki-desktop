@@ -118,6 +118,7 @@ const rawCopy = {
     artifact: "解析产物",
     artifactHash: "产物哈希",
     planState: "规划状态",
+    planSummary: "导入规划",
     aliases: "ID alias / migration",
     matchReason: "匹配原因",
     signals: "证据",
@@ -151,6 +152,14 @@ const rawCopy = {
     notUpdated: "未更新",
     registryIssue: "登记表提示",
     recentImportResults: (count: number) => `上次导入后有 ${count} 条导入结果。`,
+    planCounts: {
+      total: "总数",
+      ready: "待解析",
+      stageable: "待发布",
+      blocked: "阻塞",
+      cached: "已有产物",
+      published: "已发布",
+    },
     actions: { open: "打开", reveal: "显示", copyPath: "复制路径", obsidian: "Obsidian" },
   },
   en: {
@@ -193,6 +202,7 @@ const rawCopy = {
     artifact: "Artifact",
     artifactHash: "Artifact hash",
     planState: "Plan state",
+    planSummary: "Ingest plan",
     aliases: "ID aliases / migrations",
     matchReason: "Match reason",
     signals: "Signals",
@@ -226,6 +236,14 @@ const rawCopy = {
     notUpdated: "not updated",
     registryIssue: "Registry issue",
     recentImportResults: (count: number) => `${count} recent import results are available after the last import.`,
+    planCounts: {
+      total: "total",
+      ready: "ready",
+      stageable: "stageable",
+      blocked: "blocked",
+      cached: "cached",
+      published: "published",
+    },
     actions: { open: "open", reveal: "reveal", copyPath: "copy path", obsidian: "Obsidian" },
   },
 } as const;
@@ -319,6 +337,10 @@ function sourceAliasMatchesRecord(record: RawSourceRecord, alias: IngestPlan["so
       samePath(path, alias.oldSourcePath, vaultPath) || samePath(path, alias.newSourcePath, vaultPath),
     )
   );
+}
+
+function findPlanEntryForRecord(record: RawSourceRecord, ingestPlan: IngestPlan | null, vaultPath?: string | null) {
+  return ingestPlan?.entries.find((entry) => planEntryMatchesRecord(record, entry, vaultPath)) ?? null;
 }
 
 function hydrateRecord(
@@ -541,7 +563,7 @@ export function RawSourcesWorkspace({
   const selected = filteredRecords.find((record) => record.id === selectedId) || filteredRecords[0] || null;
   const artifact = selected?.artifact;
   const selectedPlanEntry = useMemo(
-    () => (selected ? ingestPlan?.entries.find((entry) => planEntryMatchesRecord(selected, entry, vaultPath)) ?? null : null),
+    () => (selected ? findPlanEntryForRecord(selected, ingestPlan, vaultPath) : null),
     [ingestPlan?.entries, selected, vaultPath],
   );
   const selectedAliases = useMemo(
@@ -578,6 +600,20 @@ export function RawSourcesWorkspace({
         </div>
       </div>
 
+      {ingestPlan && (
+        <div>
+          <p className="workflow-hint">{text.planSummary}: {ingestPlan.generatedAt}</p>
+          <div className="workflow-metrics compact" aria-label={text.planSummary}>
+            <span><strong>{ingestPlan.summary.total}</strong>{text.planCounts.total}</span>
+            <span><strong>{ingestPlan.summary.ready}</strong>{text.planCounts.ready}</span>
+            <span><strong>{ingestPlan.summary.stageable}</strong>{text.planCounts.stageable}</span>
+            <span><strong>{ingestPlan.summary.blocked}</strong>{text.planCounts.blocked}</span>
+            <span><strong>{ingestPlan.summary.cached}</strong>{text.planCounts.cached}</span>
+            <span><strong>{ingestPlan.summary.published}</strong>{text.planCounts.published}</span>
+          </div>
+        </div>
+      )}
+
       <div className="raw-sources-layout">
         <aside className="raw-source-list panel">
           <div className="section-head">
@@ -590,19 +626,25 @@ export function RawSourcesWorkspace({
           </label>
           <div className="raw-source-list-body">
             {filteredRecords.length === 0 && <p className="empty">{text.noMatch}</p>}
-            {filteredRecords.map((record) => (
-              <button
-                key={record.id}
-                type="button"
-                className={classNames("raw-source-row", selected?.id === record.id && "selected")}
-                onClick={() => setSelectedId(record.id)}
-              >
-                <span className={classNames("status-chip inline", record.traceabilityStatus || record.status)}>{record.traceabilityStatus}</span>
-                <strong>{record.fileName}</strong>
-                <em>{record.type} · {record.status}</em>
-                <code>{record.sourceId || record.sourceUuid || text.noSourceId} · {record.updated || text.notUpdated}</code>
-              </button>
-            ))}
+            {filteredRecords.map((record) => {
+              const planEntry = findPlanEntryForRecord(record, ingestPlan, vaultPath);
+              return (
+                <button
+                  key={record.id}
+                  type="button"
+                  className={classNames("raw-source-row", selected?.id === record.id && "selected")}
+                  onClick={() => setSelectedId(record.id)}
+                >
+                  <span className={classNames("status-chip inline", record.traceabilityStatus || record.status)}>{record.traceabilityStatus}</span>
+                  <strong>{record.fileName}</strong>
+                  <em>{record.type} · {record.status}</em>
+                  <code>{record.sourceId || record.sourceUuid || text.noSourceId} · {record.updated || text.notUpdated}</code>
+                  {planEntry && (
+                    <code>{text.planState}: {planEntry.status} · {planEntry.nextActionLabel || planEntry.action}</code>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </aside>
 
