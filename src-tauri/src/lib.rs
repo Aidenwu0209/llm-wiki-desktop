@@ -7456,6 +7456,7 @@ fn save_desktop_settings(
     settings.layout_parsing_api_url =
         validate_layout_parsing_api_url(&settings.layout_parsing_api_url)?;
     settings.embedding_endpoint = validate_embedding_endpoint(&settings.embedding_endpoint)?;
+    settings.captioning_endpoint = validate_captioning_endpoint(&settings.captioning_endpoint)?;
     validate_desktop_settings(&settings)?;
     let rendered = serde_json::to_string_pretty(&settings)
         .map_err(|e| format!("failed to serialize desktop settings: {e}"))?;
@@ -7667,6 +7668,19 @@ fn validate_embedding_endpoint(value: &str) -> Result<String, String> {
         return Ok(endpoint);
     }
     Err("Embedding endpoint must use HTTPS unless it is localhost HTTP".to_string())
+}
+
+fn validate_captioning_endpoint(value: &str) -> Result<String, String> {
+    let endpoint = value.trim().to_string();
+    if endpoint.is_empty() {
+        return Ok(endpoint);
+    }
+    if endpoint.to_ascii_lowercase().starts_with("https://")
+        || is_exact_loopback_http_endpoint(&endpoint)
+    {
+        return Ok(endpoint);
+    }
+    Err("Captioning endpoint must use HTTPS unless it is localhost HTTP".to_string())
 }
 
 fn openai_chat_completions_url(base: &str) -> String {
@@ -10987,6 +11001,31 @@ mod tests {
     }
 
     #[test]
+    fn desktop_settings_reject_remote_plain_http_captioning_endpoint() {
+        for endpoint in [
+            "http://api.example.com/v1/chat/completions",
+            "http://localhost.evil.com/v1/chat/completions",
+            "http://localhost@api.example.com/v1/chat/completions",
+        ] {
+            let vault = test_vault("captioning-endpoint");
+            let mut settings = DesktopSettings::default();
+            settings.captioning_enabled = true;
+            settings.captioning_use_main_provider = false;
+            settings.captioning_provider = "openai-compatible".to_string();
+            settings.captioning_endpoint = endpoint.to_string();
+
+            let error = save_desktop_settings(to_display(&vault), settings)
+                .expect_err("unsafe captioning endpoint should be rejected");
+            assert!(
+                error.contains("Captioning endpoint must use HTTPS unless it is localhost HTTP")
+            );
+            assert!(!desktop_settings_path(&vault).is_file());
+
+            let _ = fs::remove_dir_all(vault);
+        }
+    }
+
+    #[test]
     fn desktop_settings_allow_https_and_loopback_layout_parser_endpoints() {
         for endpoint in [
             "https://api.example.com/layout",
@@ -11025,6 +11064,30 @@ mod tests {
             let saved = save_desktop_settings(to_display(&vault), settings)
                 .expect("save embedding endpoint");
             assert_eq!(saved.embedding_endpoint, endpoint);
+            assert!(desktop_settings_path(&vault).is_file());
+
+            let _ = fs::remove_dir_all(vault);
+        }
+    }
+
+    #[test]
+    fn desktop_settings_allow_https_and_loopback_captioning_endpoints() {
+        for endpoint in [
+            "https://api.example.com/v1/chat/completions",
+            "http://localhost:11434/v1/chat/completions",
+            "http://127.0.0.1:11434/v1/chat/completions",
+            "http://[::1]:11434/v1/chat/completions",
+        ] {
+            let vault = test_vault("captioning-endpoint-allowed");
+            let mut settings = DesktopSettings::default();
+            settings.captioning_enabled = true;
+            settings.captioning_use_main_provider = false;
+            settings.captioning_provider = "openai-compatible".to_string();
+            settings.captioning_endpoint = format!(" {endpoint} ");
+
+            let saved = save_desktop_settings(to_display(&vault), settings)
+                .expect("save captioning endpoint");
+            assert_eq!(saved.captioning_endpoint, endpoint);
             assert!(desktop_settings_path(&vault).is_file());
 
             let _ = fs::remove_dir_all(vault);
