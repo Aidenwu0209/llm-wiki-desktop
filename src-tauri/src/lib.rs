@@ -174,6 +174,7 @@ struct VaultFile {
     needs_review: usize,
     outbound_links: Vec<String>,
     inbound_links: Vec<String>,
+    source_refs: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -3765,16 +3766,30 @@ fn parse_frontmatter(path: &Path) -> HashMap<String, String> {
         return fields;
     };
     let mut closed = false;
+    let mut current_key: Option<String> = None;
     for line in lines {
-        if line.trim() == "---" {
+        let trimmed = line.trim();
+        if trimmed == "---" {
             closed = true;
             break;
         }
+        if let Some(item) = trimmed.strip_prefix("- ") {
+            if let Some(key) = &current_key {
+                let value = fields.entry(key.clone()).or_insert_with(String::new);
+                if !value.is_empty() {
+                    value.push('\n');
+                }
+                value.push_str(item.trim().trim_matches(['"', '\'']));
+            }
+            continue;
+        }
         if let Some((key, value)) = line.split_once(':') {
+            let key = key.trim().to_string();
             fields.insert(
-                key.trim().to_string(),
-                value.trim().trim_matches('"').to_string(),
+                key.clone(),
+                value.trim().trim_matches(['"', '\'']).to_string(),
             );
+            current_key = Some(key);
         }
     }
     if closed {
@@ -3782,6 +3797,50 @@ fn parse_frontmatter(path: &Path) -> HashMap<String, String> {
     } else {
         HashMap::new()
     }
+}
+
+fn frontmatter_list_values(value: &str) -> Vec<String> {
+    let trimmed = value.trim();
+    let unwrapped = trimmed
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(trimmed);
+    let segments = if unwrapped.contains('\n') {
+        unwrapped.lines().collect::<Vec<_>>()
+    } else {
+        unwrapped.split(',').collect::<Vec<_>>()
+    };
+    segments
+        .into_iter()
+        .map(str::trim)
+        .map(|value| value.trim_start_matches("- "))
+        .map(|value| value.trim_matches(['"', '\'']))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn page_source_refs(fields: &HashMap<String, String>) -> Vec<String> {
+    let mut refs = Vec::new();
+    let mut seen = HashSet::new();
+    for key in [
+        "sources",
+        "source",
+        "source_path",
+        "sourcePath",
+        "raw_path",
+        "rawPath",
+    ] {
+        if let Some(value) = fields.get(key) {
+            for source_ref in frontmatter_list_values(value) {
+                if seen.insert(source_ref.clone()) {
+                    refs.push(source_ref);
+                }
+            }
+        }
+    }
+    refs
 }
 
 fn page_title(path: &Path) -> Option<String> {
@@ -4001,6 +4060,7 @@ fn file_item(vault: &Path, path: &Path, kind: &str, links: &WikilinkContext) -> 
         needs_review: 0,
         outbound_links: links.outbound.get(&rel).cloned().unwrap_or_default(),
         inbound_links: links.inbound.get(&rel).cloned().unwrap_or_default(),
+        source_refs: page_source_refs(&fields),
     }
 }
 
@@ -4306,6 +4366,7 @@ fn inspect_vault(vault_path: String) -> Result<VaultStatus, String> {
             needs_review: 0,
             outbound_links: Vec::new(),
             inbound_links: Vec::new(),
+            source_refs: Vec::new(),
         });
     }
 
@@ -4522,6 +4583,7 @@ fn import_to_inbox(vault_path: String, paths: Vec<String>) -> Result<ImportResul
                 needs_review: 0,
                 outbound_links: Vec::new(),
                 inbound_links: Vec::new(),
+                source_refs: Vec::new(),
             })
         })
         .collect();
@@ -12543,6 +12605,64 @@ mod tests {
         assert_eq!(
             concept.outbound_links,
             vec!["sources/LLM-0001.md".to_string()]
+        );
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn inspect_vault_surfaces_frontmatter_source_refs_for_graph() {
+        let vault = test_vault("vault-source-overlap-refs");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        write_text(
+            &vault.join("sources").join("LLM-0001.md"),
+            "---\ntitle: DeepSeek Source\nsource_path: raw/deepseek_paper/deepseek.pdf\n---\n# DeepSeek Source\n",
+        )
+        .expect("write source page");
+        write_text(
+            &vault.join("concepts").join("research-strategy.md"),
+            "---\ntitle: Research Strategy\nsources:\n  - raw/deepseek_paper/deepseek.pdf\n  - raw/deepseek_paper/eval.pdf\n---\n# Research Strategy\n",
+        )
+        .expect("write concept page");
+        write_text(
+            &vault.join("concepts").join("decision-logic.md"),
+            "---\ntitle: Decision Logic\nsources: [raw/deepseek_paper/deepseek.pdf, raw/deepseek_paper/moe.pdf]\n---\n# Decision Logic\n",
+        )
+        .expect("write inline source refs concept page");
+
+        let status = inspect_vault(to_display(&vault)).expect("inspect vault source refs");
+        let source = status
+            .files
+            .iter()
+            .find(|file| file.path.ends_with("sources/LLM-0001.md"))
+            .expect("source file");
+        assert_eq!(
+            source.source_refs,
+            vec!["raw/deepseek_paper/deepseek.pdf".to_string()]
+        );
+        let strategy = status
+            .files
+            .iter()
+            .find(|file| file.path.ends_with("concepts/research-strategy.md"))
+            .expect("strategy concept");
+        assert_eq!(
+            strategy.source_refs,
+            vec![
+                "raw/deepseek_paper/deepseek.pdf".to_string(),
+                "raw/deepseek_paper/eval.pdf".to_string()
+            ]
+        );
+        let decision = status
+            .files
+            .iter()
+            .find(|file| file.path.ends_with("concepts/decision-logic.md"))
+            .expect("decision concept");
+        assert_eq!(
+            decision.source_refs,
+            vec![
+                "raw/deepseek_paper/deepseek.pdf".to_string(),
+                "raw/deepseek_paper/moe.pdf".to_string()
+            ]
         );
 
         let _ = fs::remove_dir_all(vault);

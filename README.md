@@ -125,7 +125,7 @@ log-archive/desktop/
 - 为每个 runtime command 保存可查看的任务日志到 `log-archive/desktop/`。
 - 显示 claims、science review queue、growth queue 等 review 状态。
 - 提供 Chat / Search 入口：搜索 sources、claims、concepts、reviews、traceability warnings 和 query writeback proposals，并把带 evidence map 的研究问题转成 proposal。
-- 提供基础 Graph 入口：展示 source -> claim -> concept / review / proposal / warning 的证据关系，并补充 Obsidian `[[wikilink]]` 页面关系，帮助定位 traceability break、阅读路径和 insight 写回位置。
+- 提供基础 Graph 入口：展示 source -> claim -> concept / review / proposal / warning 的证据关系，并补充 Obsidian `[[wikilink]]` 与 frontmatter `sources:` / `source_path:` 共享来源关系，帮助定位 traceability break、阅读路径和 insight 写回位置。
 
 ## 安全边界
 

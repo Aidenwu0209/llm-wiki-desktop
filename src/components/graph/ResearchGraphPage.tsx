@@ -18,6 +18,7 @@ type ResearchEdgeType =
   | "claim_concept"
   | "claim_review"
   | "wikilink"
+  | "source_overlap"
   | "proposal_target"
   | "warning_claim"
   | "warning_source";
@@ -62,6 +63,7 @@ type ResearchGraph = {
     traceabilityBreaks: number;
     writebackInsights: number;
     sourceBackedClaims: number;
+    sourceOverlapLinks: number;
     communities: ResearchGraphCommunity[];
     largestCommunity?: ResearchGraphCommunity;
     lowConnectionNodes: number;
@@ -106,6 +108,7 @@ const edgeTypes: Array<ResearchEdgeType | "all"> = [
   "claim_concept",
   "claim_review",
   "wikilink",
+  "source_overlap",
   "proposal_target",
   "warning_claim",
   "warning_source",
@@ -127,6 +130,7 @@ const graphCopy = {
       reviewNodes: "审核节点",
       traceabilityBreaks: "证据断点",
       writebackInsights: "写回提案",
+      sourceOverlap: "共享来源",
     },
     researchSummary: "证据图谱摘要",
     vaultSummary: "该证据图谱连接当前知识库中的资料、论断、概念、审核、可追踪性警告和写回提案。",
@@ -185,6 +189,7 @@ const graphCopy = {
     claimToReview: "论断 -> 审核：审核队列和待审核论断",
     proposalToTarget: "提案 -> 目标：问答写回目标页面",
     wikiLink: "Wiki 链接：Obsidian [[wikilink]] 页面关系",
+    sourceOverlap: "来源重叠：共享同一 raw source 的页面关系",
     warningToClaim: "警告 -> 论断/资料：可追踪性警告",
     nodes: "个节点",
     edges: "条边",
@@ -206,6 +211,7 @@ const graphCopy = {
       claim_concept: "论断 -> 概念",
       claim_review: "论断 -> 审核",
       wikilink: "Wiki 链接",
+      source_overlap: "共享来源",
       proposal_target: "提案 -> 目标",
       warning_claim: "警告 -> 论断",
       warning_source: "警告 -> 资料",
@@ -219,6 +225,7 @@ const graphCopy = {
       reviewNodes: "Review nodes",
       traceabilityBreaks: "Traceability breaks",
       writebackInsights: "Writeback proposals",
+      sourceOverlap: "Source overlap",
     },
     researchSummary: "Evidence Graph summary",
     vaultSummary: "This graph links generated sources, claims, concepts, reviews, traceability warnings, and writeback proposals from the selected vault.",
@@ -277,6 +284,7 @@ const graphCopy = {
     claimToReview: "claim -> review: review queue and needs-review claims",
     proposalToTarget: "proposal -> target: query writeback target page",
     wikiLink: "wiki link: Obsidian [[wikilink]] page relationships",
+    sourceOverlap: "source overlap: pages sharing the same raw source",
     warningToClaim: "warning -> claim/source: traceability warnings",
     nodes: "nodes",
     edges: "edges",
@@ -298,6 +306,7 @@ const graphCopy = {
       claim_concept: "Claim -> Concept",
       claim_review: "Claim -> Review",
       wikilink: "Wiki link",
+      source_overlap: "Source overlap",
       proposal_target: "Proposal -> Target",
       warning_claim: "Warning -> Claim",
       warning_source: "Warning -> Source",
@@ -392,6 +401,15 @@ function wikilinkTargetAliases(value?: string | null) {
   return [target, withConcept, withSource, labelFromPath(target)]
     .map(normalizedPageAlias)
     .filter((item): item is string => Boolean(item));
+}
+
+function normalizeSourceRef(value?: string | null) {
+  return (value || "")
+    .replace(/\\/g, "/")
+    .replace(/^\.?\//, "")
+    .replace(/\/+/g, "/")
+    .trim()
+    .toLowerCase();
 }
 
 function upsertNode(nodes: Map<string, ResearchGraphNode>, node: ResearchGraphNode) {
@@ -660,6 +678,38 @@ export function buildResearchGraph(input: {
     }
   }
 
+  const sourceRefOwners = new Map<string, Set<string>>();
+  for (const file of input.status?.files ?? []) {
+    if (!["source", "concept", "report"].includes(file.kind) || !file.sourceRefs?.length) continue;
+    const ownerId = fileNodeIds.get(file.path) || ensureFileNode(file);
+    for (const sourceRef of file.sourceRefs) {
+      const refKey = normalizeSourceRef(sourceRef);
+      if (!refKey) continue;
+      if (!sourceRefOwners.has(refKey)) sourceRefOwners.set(refKey, new Set());
+      sourceRefOwners.get(refKey)?.add(ownerId);
+    }
+  }
+  for (const [sourceRef, owners] of sourceRefOwners) {
+    const orderedOwners = Array.from(owners)
+      .filter((id) => nodes.has(id))
+      .sort((a, b) => (nodes.get(a)?.label || a).localeCompare(nodes.get(b)?.label || b))
+      .slice(0, 24);
+    for (let i = 0; i < orderedOwners.length; i += 1) {
+      for (let j = i + 1; j < orderedOwners.length; j += 1) {
+        const from = orderedOwners[i];
+        const to = orderedOwners[j];
+        addEdge(edges, {
+          id: `source-overlap:${key(sourceRef)}:${from}:${to}`,
+          from,
+          to,
+          type: "source_overlap",
+          label: `shared source: ${labelFromPath(sourceRef) || sourceRef}`,
+          status: "linked",
+        });
+      }
+    }
+  }
+
   for (const claim of input.claims) {
     const claimId = claimNodeId(claim.claimId);
     upsertNode(nodes, {
@@ -887,6 +937,7 @@ export function buildResearchGraph(input: {
       traceabilityBreaks: graphNodes.filter((node) => node.type === "warning").length,
       writebackInsights: graphNodes.filter((node) => node.type === "proposal").length,
       sourceBackedClaims: graphEdges.filter((edge) => edge.type === "source_claim").length,
+      sourceOverlapLinks: graphEdges.filter((edge) => edge.type === "source_overlap").length,
       communities,
       largestCommunity: communities[0],
       lowConnectionNodes: graphNodes.filter((node) => (degree.get(node.id) || 0) <= 1).length,
@@ -906,6 +957,7 @@ function edgeStatusClass(edge: ResearchGraphEdge) {
   if (edge.type.startsWith("warning_")) return "warning";
   if (edge.type === "wikilink" && edge.status === "unresolved") return "broken";
   if (edge.type === "wikilink") return "ok";
+  if (edge.type === "source_overlap") return "source_overlap";
   if (edge.status === "broken" || edge.status === "p0" || edge.status === "p1") return "broken";
   if (edge.status === "needs_review" || edge.type === "claim_review") return "review";
   if (edge.status === "approved" || edge.status === "applied" || edge.status === "supported") return "ok";
@@ -972,6 +1024,7 @@ function graphSummaryText(graph: ResearchGraph, language: UiLanguage) {
   if (language === "zh") {
     return [
       `${graph.summary.sourcesPapers} 个资料节点支撑 ${graph.summary.sourceBackedClaims} 条资料到论断证据链。`,
+      `${graph.summary.sourceOverlapLinks} 条共享来源边把来自同一 raw source 的页面连起来。`,
       `连接最多的概念：${concepts}。`,
       `${graph.summary.communities.length} 个知识簇；最大簇从 ${largestCluster} 开始，${graph.summary.lowConnectionNodes} 个节点仍然低连接。`,
       `${reviewPressure} 个审核或可追踪性节点需要处理后，才能把生成洞察视为稳定内容。`,
@@ -980,6 +1033,7 @@ function graphSummaryText(graph: ResearchGraph, language: UiLanguage) {
   }
   return [
     `${graph.summary.sourcesPapers} source nodes feed ${graph.summary.sourceBackedClaims} source-to-claim evidence links.`,
+    `${graph.summary.sourceOverlapLinks} source-overlap edges connect pages that share the same raw source.`,
     `Most connected concepts: ${concepts}.`,
     `${graph.summary.communities.length} knowledge clusters are connected; the largest starts with ${largestCluster}, and ${graph.summary.lowConnectionNodes} nodes remain low-link.`,
     `${reviewPressure} review or traceability nodes require attention before treating generated proposal content as stable.`,
@@ -1043,6 +1097,9 @@ export function ResearchGraphPage({
       "flags claim": "标记论断",
       "breaks source trace": "断开资料追踪",
     };
+    if (edge.label.startsWith("shared source:")) {
+      return edge.label.replace("shared source:", "共享来源:");
+    }
     return labels[edge.label] || edge.label;
   };
   const nodeById = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph.nodes]);
@@ -1133,6 +1190,10 @@ export function ResearchGraphPage({
         <div>
           <span>{text.summaryStats.sourceBackedClaims}</span>
           <strong>{graph.summary.sourceBackedClaims}</strong>
+        </div>
+        <div>
+          <span>{text.summaryStats.sourceOverlap}</span>
+          <strong>{graph.summary.sourceOverlapLinks}</strong>
         </div>
         <div>
           <span>{text.summaryStats.keyConcepts}</span>
@@ -1465,6 +1526,7 @@ export function ResearchGraphPage({
             <p>{text.claimToConcept}</p>
             <p>{text.claimToReview}</p>
             <p>{text.wikiLink}</p>
+            <p>{text.sourceOverlap}</p>
             <p>{text.proposalToTarget}</p>
             <p>{text.warningToClaim}</p>
           </div>

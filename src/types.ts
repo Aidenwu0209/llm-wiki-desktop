@@ -82,6 +82,7 @@ export type VaultFile = {
   needsReview?: number;
   outboundLinks?: string[];
   inboundLinks?: string[];
+  sourceRefs?: string[];
 };
 
 export type VaultTextFilePreview = {
