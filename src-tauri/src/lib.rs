@@ -1210,6 +1210,43 @@ fn default_scheduled_import_path() -> String {
     "raw/inbox".to_string()
 }
 
+fn normalize_scheduled_import_path(value: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(default_scheduled_import_path());
+    }
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        return Err("Scheduled import path must be a vault-relative path under raw/.".to_string());
+    }
+    let mut parts = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => {
+                let part = part.to_string_lossy();
+                if part.trim().is_empty() {
+                    return Err(
+                        "Scheduled import path must not contain empty path segments.".to_string(),
+                    );
+                }
+                parts.push(part.to_string());
+            }
+            Component::CurDir
+            | Component::ParentDir
+            | Component::RootDir
+            | Component::Prefix(_) => {
+                return Err(
+                    "Scheduled import path must be a vault-relative path under raw/.".to_string(),
+                );
+            }
+        }
+    }
+    if parts.first().map(String::as_str) != Some("raw") {
+        return Err("Scheduled import path must stay under raw/.".to_string());
+    }
+    Ok(parts.join("/"))
+}
+
 fn default_scheduled_import_interval_minutes() -> usize {
     60
 }
@@ -6928,6 +6965,8 @@ fn load_desktop_settings(vault_path: String) -> Result<DesktopSettings, String> 
         settings.layout_parsing_token_present = true;
     }
     settings.default_pdf_parser = selected_pdf_parser(&settings.default_pdf_parser)?;
+    settings.scheduled_import_path =
+        normalize_scheduled_import_path(&settings.scheduled_import_path)?;
     Ok(settings)
 }
 
@@ -6948,6 +6987,8 @@ fn save_desktop_settings(
             .filter(|value| !value.trim().is_empty())
             .is_some();
     settings.default_pdf_parser = selected_pdf_parser(&settings.default_pdf_parser)?;
+    settings.scheduled_import_path =
+        normalize_scheduled_import_path(&settings.scheduled_import_path)?;
     let rendered = serde_json::to_string_pretty(&settings)
         .map_err(|e| format!("failed to serialize desktop settings: {e}"))?;
     write_text(&desktop_settings_path(&vault), &(rendered + "\n"))?;
@@ -11348,6 +11389,39 @@ mod tests {
         assert!(error.contains("significant whitespace"));
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn desktop_settings_reject_outside_scheduled_import_paths() {
+        for (index, path) in ["../outside", "/tmp/outside", "raw/../outside", "sources"]
+            .iter()
+            .enumerate()
+        {
+            let vault = test_vault(&format!("scheduled-import-outside-{index}"));
+            let mut settings = DesktopSettings::default();
+            settings.scheduled_import_path = path.to_string();
+
+            let error = save_desktop_settings(to_display(&vault), settings)
+                .expect_err("unsafe scheduled import path should be rejected");
+            assert!(error.contains("Scheduled import path"));
+            assert!(!desktop_settings_path(&vault).is_file());
+
+            let _ = fs::remove_dir_all(vault);
+        }
+    }
+
+    #[test]
+    fn desktop_settings_normalize_safe_scheduled_import_path() {
+        let vault = test_vault("scheduled-import-safe");
+        let mut settings = DesktopSettings::default();
+        settings.scheduled_import_path = " raw/deepseek_paper ".to_string();
+
+        let saved =
+            save_desktop_settings(to_display(&vault), settings).expect("save safe settings path");
+        assert_eq!(saved.scheduled_import_path, "raw/deepseek_paper");
+        assert!(read_text(&desktop_settings_path(&vault)).contains("\"raw/deepseek_paper\""));
+
+        let _ = fs::remove_dir_all(vault);
     }
 
     fn registry_entry(status: &str, source_page: Option<String>) -> DesktopRegistryEntry {
