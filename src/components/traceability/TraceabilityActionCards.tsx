@@ -15,6 +15,10 @@ function classNames(...items: Array<string | false | null | undefined>) {
   return items.filter(Boolean).join(" ");
 }
 
+function missingLabel(isZh: boolean) {
+  return isZh ? "缺失" : "missing";
+}
+
 export function TraceabilityActionCards({
   warnings,
   language,
@@ -24,6 +28,7 @@ export function TraceabilityActionCards({
   onSelectWarning,
 }: TraceabilityActionCardsProps) {
   const isZh = language === "zh";
+  const missing = missingLabel(isZh);
   if (warnings.length === 0) {
     return <p className="empty">{isZh ? "暂无证据锚点警告。" : "No evidence-anchor warnings."}</p>;
   }
@@ -38,6 +43,15 @@ export function TraceabilityActionCards({
             {isZh ? "论断" : "claim"} {warning.claimId} · {warning.sourceId || (isZh ? "资料 ID 待定" : "source id pending")} ·{" "}
             {warning.sourcePath || (isZh ? "资料路径未知" : "source path unknown")}
           </em>
+          <code>
+            {isZh ? "警告" : "warning"}: {warning.warningId}
+            {warning.findingId ? ` · ${isZh ? "发现" : "finding"} ${warning.findingId}` : ""}
+          </code>
+          <code>
+            {isZh ? "证据链" : "evidence chain"}: {warning.claimPath || missing} {" -> "}
+            {warning.sourcePath || missing} {" -> "}
+            {warning.artifactPath || missing}
+          </code>
           <code>{isZh ? "缺失锚点" : "missing anchor"}: {runtimeText(warning.missingAnchor || warning.missingHeading, language)}</code>
           <p className="note">{runtimeText(warning.nextAction || warning.suggestedAction, language)}</p>
           <div className="inline-actions">
