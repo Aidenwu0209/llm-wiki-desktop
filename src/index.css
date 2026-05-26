@@ -754,6 +754,7 @@ textarea {
 
 .claims-workspace-grid,
 .reviews-workspace-grid,
+.concept-workspace-grid,
 .traceability-workspace-grid {
   align-items: start;
 }
@@ -764,6 +765,10 @@ textarea {
 
 .reviews-workspace-grid {
   grid-template-columns: minmax(520px, 1.35fr) minmax(320px, 0.85fr);
+}
+
+.concept-workspace-grid {
+  grid-template-columns: minmax(520px, 1.32fr) minmax(360px, 0.88fr);
 }
 
 .traceability-workspace-grid {
@@ -828,6 +833,11 @@ textarea {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
+}
+
+.browser.concept-browser {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 12px;
 }
 
 .file-column {
@@ -1026,6 +1036,7 @@ textarea {
   font-size: 12px;
 }
 
+.concept-list,
 .ingest-list,
 .action-list,
 .queue-list,
@@ -1042,6 +1053,7 @@ textarea {
 .claim-ledger-primary .claim-list,
 .review-queue-primary .action-list,
 .traceability-primary .impact-list,
+.concept-library-panel .concept-list,
 .evidence-path-panel .impact-list {
   max-height: 430px;
 }
@@ -1050,6 +1062,7 @@ textarea {
   max-height: 210px;
 }
 
+.concept-list button,
 .ingest-list button,
 .contract-list button,
 .impact-list button,
@@ -1066,6 +1079,9 @@ textarea {
   background: #fbfcfa;
 }
 
+.concept-list strong,
+.concept-list em,
+.concept-list code,
 .ingest-list strong,
 .ingest-list em,
 .ingest-list code,
@@ -1084,6 +1100,7 @@ textarea {
   display: block;
 }
 
+.concept-list strong,
 .ingest-list strong,
 .contract-list strong,
 .impact-list strong,
@@ -1093,6 +1110,7 @@ textarea {
   font-size: 13px;
 }
 
+.concept-list em,
 .ingest-list em,
 .contract-list em,
 .impact-list em,
@@ -1104,6 +1122,7 @@ textarea {
   font-style: normal;
 }
 
+.concept-list code,
 .ingest-list code,
 .contract-list code,
 .impact-list code,
@@ -3828,6 +3847,7 @@ textarea {
   .workflow-guide,
   .claims-workspace-grid,
   .reviews-workspace-grid,
+  .concept-workspace-grid,
   .traceability-workspace-grid {
     grid-template-columns: 1fr;
   }
@@ -4756,6 +4776,11 @@ textarea {
   .workflow-steps,
   .workflow-metrics,
   .workflow-metrics.compact {
+    grid-template-columns: 1fr;
+  }
+
+  .browser,
+  .browser.concept-browser {
     grid-template-columns: 1fr;
   }
 }
