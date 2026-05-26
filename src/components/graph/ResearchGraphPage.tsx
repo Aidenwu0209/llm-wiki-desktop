@@ -1396,6 +1396,7 @@ export function ResearchGraphPage({
   const [edgeFilter, setEdgeFilter] = useState<ResearchEdgeType | "all">("all");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const graph = useMemo(
     () => buildResearchGraph({ status, registry, claims, evidencePaths, reviewItems, writebacks, traceabilityWarnings }),
@@ -1479,6 +1480,20 @@ export function ResearchGraphPage({
   const selected = (selectedId ? filteredNodes.find((node) => node.id === selectedId) : null) || filteredNodes[0] || null;
   const relatedEdges = selected ? visibleEdges.filter((edge) => edge.from === selected.id || edge.to === selected.id) : [];
   const indirectRecommendations = selected ? sharedNeighborRecommendations(selected.id, filteredNodes, visibleEdges) : [];
+  const focusedGraphNodeId = hoveredId || selected?.id || null;
+  const focusedNeighborhood = useMemo(() => {
+    const nodeIds = new Set<string>();
+    const edgeIds = new Set<string>();
+    if (!focusedGraphNodeId) return { nodeIds, edgeIds };
+    nodeIds.add(focusedGraphNodeId);
+    for (const edge of visualEdges) {
+      if (edge.from !== focusedGraphNodeId && edge.to !== focusedGraphNodeId) continue;
+      nodeIds.add(edge.from);
+      nodeIds.add(edge.to);
+      edgeIds.add(edge.id);
+    }
+    return { nodeIds, edgeIds };
+  }, [focusedGraphNodeId, visualEdges]);
   const summary = graphSummaryText(graph, language);
   const hasGraphData = graph.nodes.length > 0;
   const graphFilterActive = Boolean(normalizedQuery) || typeFilter !== "all" || edgeFilter !== "all";
@@ -1780,7 +1795,7 @@ export function ResearchGraphPage({
                   const from = positions.get(edge.from);
                   const to = positions.get(edge.to);
                   if (!from || !to) return null;
-                  const active = selected && (edge.from === selected.id || edge.to === selected.id);
+                  const active = focusedNeighborhood.edgeIds.has(edge.id);
                   return (
                     <line
                       key={edge.id}
@@ -1789,7 +1804,7 @@ export function ResearchGraphPage({
                       x2={to.x}
                       y2={to.y}
                       markerEnd="url(#graph-arrow)"
-                      className={classNames(edgeStatusClass(edge), active && "active")}
+                      className={classNames(edgeStatusClass(edge), active && "active", focusedGraphNodeId && !active && "dimmed")}
                     />
                   );
                 })}
@@ -1797,12 +1812,33 @@ export function ResearchGraphPage({
                   const position = positions.get(node.id);
                   if (!position) return null;
                   const active = selected?.id === node.id;
+                  const hovered = hoveredId === node.id;
+                  const related = focusedNeighborhood.nodeIds.has(node.id);
                   return (
                     <g
                       key={node.id}
-                      className={classNames(node.type, active && "active")}
+                      className={classNames(
+                        node.type,
+                        active && "active",
+                        hovered && "hovered",
+                        focusedGraphNodeId && related && "neighbor",
+                        focusedGraphNodeId && !related && "dimmed",
+                      )}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`${text.nodeTypes[node.type]}: ${node.label}`}
                       onClick={() => setSelectedId(node.id)}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" && event.key !== " ") return;
+                        event.preventDefault();
+                        setSelectedId(node.id);
+                      }}
+                      onFocus={() => setHoveredId(node.id)}
+                      onBlur={() => setHoveredId((current) => current === node.id ? null : current)}
+                      onMouseEnter={() => setHoveredId(node.id)}
+                      onMouseLeave={() => setHoveredId((current) => current === node.id ? null : current)}
                     >
+                      <title>{node.label}</title>
                       <circle cx={position.x} cy={position.y} r={active ? 13 : 10} fill={typeColors[node.type]} />
                       <text x={position.x + 15} y={position.y + 4}>{node.label.slice(0, 32)}</text>
                     </g>
