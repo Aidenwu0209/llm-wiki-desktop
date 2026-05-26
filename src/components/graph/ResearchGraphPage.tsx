@@ -53,6 +53,12 @@ type ResearchGraphCommunity = {
   labels: string[];
 };
 
+type ResearchGraphRecommendation = {
+  nodeId: string;
+  score: number;
+  sharedNeighbors: string[];
+};
+
 type ResearchGraph = {
   nodes: ResearchGraphNode[];
   edges: ResearchGraphEdge[];
@@ -172,6 +178,10 @@ const graphCopy = {
     copy: "复制",
     relatedEdges: "关联边",
     noRelatedEdges: "该节点暂无关联边。",
+    indirectRelated: "间接相关",
+    noIndirectRelated: "暂无共享邻居推荐。",
+    sharedNeighbors: "共享邻居",
+    relevanceScore: (score: number) => `相关度 ${score.toFixed(2)}`,
     nodeList: "节点列表",
     edgeList: "边列表",
     noNodesMatch: "没有节点匹配当前筛选。",
@@ -190,6 +200,7 @@ const graphCopy = {
     proposalToTarget: "提案 -> 目标：问答写回目标页面",
     wikiLink: "Wiki 链接：Obsidian [[wikilink]] 页面关系",
     sourceOverlap: "来源重叠：共享同一 raw source 的页面关系",
+    indirectRelatedContract: "间接推荐：共享邻居按 Adamic-Adar 式权重排序，帮助选择下一篇要读的页面",
     warningToClaim: "警告 -> 论断/资料：可追踪性警告",
     nodes: "个节点",
     edges: "条边",
@@ -267,6 +278,10 @@ const graphCopy = {
     copy: "copy",
     relatedEdges: "Related edges",
     noRelatedEdges: "No edges connected to this node.",
+    indirectRelated: "Indirectly related",
+    noIndirectRelated: "No shared-neighbor suggestions yet.",
+    sharedNeighbors: "Shared neighbors",
+    relevanceScore: (score: number) => `score ${score.toFixed(2)}`,
     nodeList: "Node list",
     edgeList: "Edge list",
     noNodesMatch: "No nodes match this filter.",
@@ -285,6 +300,7 @@ const graphCopy = {
     proposalToTarget: "proposal -> target: query writeback target page",
     wikiLink: "wiki link: Obsidian [[wikilink]] page relationships",
     sourceOverlap: "source overlap: pages sharing the same raw source",
+    indirectRelatedContract: "indirect suggestions: shared neighbors ranked with an Adamic-Adar-style weight for next-page reading",
     warningToClaim: "warning -> claim/source: traceability warnings",
     nodes: "nodes",
     edges: "edges",
@@ -512,6 +528,57 @@ function graphCommunities(nodes: ResearchGraphNode[], edges: ResearchGraphEdge[]
   return components
     .sort((a, b) => b.size - a.size || b.edgeCount - a.edgeCount || a.labels.join(" ").localeCompare(b.labels.join(" ")))
     .map((component, index) => ({ ...component, id: `cluster-${index + 1}` }));
+}
+
+function sharedNeighborRecommendations(
+  selectedId: string,
+  nodes: ResearchGraphNode[],
+  edges: ResearchGraphEdge[],
+): ResearchGraphRecommendation[] {
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  if (!nodeById.has(selectedId)) return [];
+
+  const adjacency = new Map(nodes.map((node) => [node.id, new Set<string>()]));
+  for (const edge of edges) {
+    if (!nodeById.has(edge.from) || !nodeById.has(edge.to)) continue;
+    adjacency.get(edge.from)?.add(edge.to);
+    adjacency.get(edge.to)?.add(edge.from);
+  }
+
+  const directNeighbors = adjacency.get(selectedId) || new Set<string>();
+  const excluded = new Set([selectedId, ...directNeighbors]);
+  const recommendations = new Map<string, { score: number; sharedNeighbors: Set<string> }>();
+
+  for (const sharedNeighbor of directNeighbors) {
+    const neighborEdges = adjacency.get(sharedNeighbor) || new Set<string>();
+    const degree = neighborEdges.size;
+    if (degree <= 1) continue;
+    const weight = 1 / Math.log(degree + 1);
+
+    for (const candidate of neighborEdges) {
+      const candidateNode = nodeById.get(candidate);
+      if (!candidateNode || candidateNode.type === "warning" || excluded.has(candidate)) continue;
+      const current = recommendations.get(candidate) || { score: 0, sharedNeighbors: new Set<string>() };
+      current.score += weight;
+      current.sharedNeighbors.add(sharedNeighbor);
+      recommendations.set(candidate, current);
+    }
+  }
+
+  return Array.from(recommendations.entries())
+    .map(([nodeId, recommendation]) => ({
+      nodeId,
+      score: recommendation.score,
+      sharedNeighbors: Array.from(recommendation.sharedNeighbors).sort((a, b) =>
+        (nodeById.get(a)?.label || a).localeCompare(nodeById.get(b)?.label || b),
+      ),
+    }))
+    .sort((a, b) => (
+      b.score - a.score
+      || b.sharedNeighbors.length - a.sharedNeighbors.length
+      || (nodeById.get(a.nodeId)?.label || a.nodeId).localeCompare(nodeById.get(b.nodeId)?.label || b.nodeId)
+    ))
+    .slice(0, 5);
 }
 
 function claimNodeId(claimId: string) {
@@ -1141,6 +1208,7 @@ export function ResearchGraphPage({
   const positions = graphPositions(visualNodes);
   const selected = (selectedId ? filteredNodes.find((node) => node.id === selectedId) : null) || filteredNodes[0] || null;
   const relatedEdges = selected ? visibleEdges.filter((edge) => edge.from === selected.id || edge.to === selected.id) : [];
+  const indirectRecommendations = selected ? sharedNeighborRecommendations(selected.id, filteredNodes, visibleEdges) : [];
   const summary = graphSummaryText(graph, language);
   const hasGraphData = graph.nodes.length > 0;
   const graphFilterActive = Boolean(normalizedQuery) || typeFilter !== "all" || edgeFilter !== "all";
@@ -1418,6 +1486,22 @@ export function ResearchGraphPage({
                   </button>
                 ))}
               </div>
+              <div className="graph-related">
+                <strong>{text.indirectRelated}</strong>
+                {indirectRecommendations.length === 0 && <p className="empty">{text.noIndirectRelated}</p>}
+                {indirectRecommendations.map((recommendation) => {
+                  const target = nodeById.get(recommendation.nodeId);
+                  if (!target) return null;
+                  return (
+                    <button key={recommendation.nodeId} onClick={() => setSelectedId(recommendation.nodeId)}>
+                      <span>{target.label} · {text.relevanceScore(recommendation.score)}</span>
+                      <em>
+                        {text.sharedNeighbors}: {recommendation.sharedNeighbors.map(endpointLabel).join(", ")}
+                      </em>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           ) : (
             <p className="empty">{text.noGraphNodes}</p>
@@ -1527,6 +1611,7 @@ export function ResearchGraphPage({
             <p>{text.claimToReview}</p>
             <p>{text.wikiLink}</p>
             <p>{text.sourceOverlap}</p>
+            <p>{text.indirectRelatedContract}</p>
             <p>{text.proposalToTarget}</p>
             <p>{text.warningToClaim}</p>
           </div>
