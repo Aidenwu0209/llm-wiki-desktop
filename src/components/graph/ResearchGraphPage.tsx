@@ -57,6 +57,7 @@ type ResearchGraphRecommendation = {
   nodeId: string;
   score: number;
   sharedNeighbors: string[];
+  typeAffinity: boolean;
 };
 
 type ResearchGraph = {
@@ -181,6 +182,7 @@ const graphCopy = {
     indirectRelated: "间接相关",
     noIndirectRelated: "暂无共享邻居推荐。",
     sharedNeighbors: "共享邻居",
+    typeAffinity: "同类页面加权",
     relevanceScore: (score: number) => `相关度 ${score.toFixed(2)}`,
     nodeList: "节点列表",
     edgeList: "边列表",
@@ -200,7 +202,7 @@ const graphCopy = {
     proposalToTarget: "提案 -> 目标：问答写回目标页面",
     wikiLink: "Wiki 链接：Obsidian [[wikilink]] 页面关系",
     sourceOverlap: "来源重叠：共享同一 raw source 的页面关系",
-    indirectRelatedContract: "间接推荐：共享邻居按 Adamic-Adar 式权重排序，帮助选择下一篇要读的页面",
+    indirectRelatedContract: "间接推荐：共享邻居按 Adamic-Adar 式权重排序，并给同类页面 type affinity 加权，帮助选择下一篇要读的页面",
     warningToClaim: "警告 -> 论断/资料：可追踪性警告",
     nodes: "个节点",
     edges: "条边",
@@ -281,6 +283,7 @@ const graphCopy = {
     indirectRelated: "Indirectly related",
     noIndirectRelated: "No shared-neighbor suggestions yet.",
     sharedNeighbors: "Shared neighbors",
+    typeAffinity: "type affinity",
     relevanceScore: (score: number) => `score ${score.toFixed(2)}`,
     nodeList: "Node list",
     edgeList: "Edge list",
@@ -300,7 +303,7 @@ const graphCopy = {
     proposalToTarget: "proposal -> target: query writeback target page",
     wikiLink: "wiki link: Obsidian [[wikilink]] page relationships",
     sourceOverlap: "source overlap: pages sharing the same raw source",
-    indirectRelatedContract: "indirect suggestions: shared neighbors ranked with an Adamic-Adar-style weight for next-page reading",
+    indirectRelatedContract: "indirect suggestions: shared neighbors ranked with an Adamic-Adar-style weight plus type affinity for next-page reading",
     warningToClaim: "warning -> claim/source: traceability warnings",
     nodes: "nodes",
     edges: "edges",
@@ -536,7 +539,8 @@ function sharedNeighborRecommendations(
   edges: ResearchGraphEdge[],
 ): ResearchGraphRecommendation[] {
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
-  if (!nodeById.has(selectedId)) return [];
+  const selectedNode = nodeById.get(selectedId);
+  if (!selectedNode) return [];
 
   const adjacency = new Map(nodes.map((node) => [node.id, new Set<string>()]));
   for (const edge of edges) {
@@ -566,13 +570,18 @@ function sharedNeighborRecommendations(
   }
 
   return Array.from(recommendations.entries())
-    .map(([nodeId, recommendation]) => ({
-      nodeId,
-      score: recommendation.score,
-      sharedNeighbors: Array.from(recommendation.sharedNeighbors).sort((a, b) =>
-        (nodeById.get(a)?.label || a).localeCompare(nodeById.get(b)?.label || b),
-      ),
-    }))
+    .map(([nodeId, recommendation]) => {
+      const candidate = nodeById.get(nodeId);
+      const typeAffinity = candidate?.type === selectedNode.type;
+      return {
+        nodeId,
+        score: recommendation.score + (typeAffinity ? 1 : 0),
+        sharedNeighbors: Array.from(recommendation.sharedNeighbors).sort((a, b) =>
+          (nodeById.get(a)?.label || a).localeCompare(nodeById.get(b)?.label || b),
+        ),
+        typeAffinity,
+      };
+    })
     .sort((a, b) => (
       b.score - a.score
       || b.sharedNeighbors.length - a.sharedNeighbors.length
@@ -1497,6 +1506,7 @@ export function ResearchGraphPage({
                       <span>{target.label} · {text.relevanceScore(recommendation.score)}</span>
                       <em>
                         {text.sharedNeighbors}: {recommendation.sharedNeighbors.map(endpointLabel).join(", ")}
+                        {recommendation.typeAffinity ? ` · ${text.typeAffinity}` : ""}
                       </em>
                     </button>
                   );
