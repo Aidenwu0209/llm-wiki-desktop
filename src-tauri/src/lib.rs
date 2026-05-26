@@ -150,6 +150,7 @@ struct VaultFile {
     kind: String,
     source_id: Option<String>,
     title: Option<String>,
+    excerpt: Option<String>,
     status: Option<String>,
     updated: Option<String>,
     qa_verdict: Option<String>,
@@ -3367,6 +3368,65 @@ fn page_title(path: &Path) -> Option<String> {
     })
 }
 
+fn strip_frontmatter(text: &str) -> &str {
+    if !text.starts_with("---\n") {
+        return text;
+    }
+    text.strip_prefix("---\n")
+        .and_then(|rest| rest.split_once("---\n").map(|(_, body)| body))
+        .unwrap_or(text)
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    let take = max_chars.saturating_sub(3);
+    format!("{}...", value.chars().take(take).collect::<String>())
+}
+
+fn markdown_excerpt(path: &Path) -> Option<String> {
+    let text = read_text(path);
+    let body = strip_frontmatter(&text);
+    let mut lines = Vec::new();
+    let mut in_code_block = false;
+    for raw_line in body.lines() {
+        let mut line = raw_line.trim();
+        if line.starts_with("```") || line.starts_with("~~~") {
+            in_code_block = !in_code_block;
+            continue;
+        }
+        if in_code_block
+            || line.is_empty()
+            || line.starts_with('#')
+            || line.starts_with('|')
+            || line.starts_with("![")
+        {
+            continue;
+        }
+        line = line
+            .trim_start_matches(|ch| matches!(ch, '-' | '*' | '+'))
+            .trim_start();
+        line = line.trim_start_matches('>').trim_start();
+        if !line.is_empty() {
+            lines.push(line);
+        }
+        if lines.join(" ").chars().count() >= 320 {
+            break;
+        }
+    }
+    let normalized = lines
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(truncate_chars(&normalized, 320))
+    }
+}
+
 fn qa_verdict(path: &Path) -> Option<String> {
     let text = read_text(path);
     if text.contains("verdict: PASS") {
@@ -3507,6 +3567,7 @@ fn file_item(vault: &Path, path: &Path, kind: &str, links: &WikilinkContext) -> 
         kind: kind.to_string(),
         source_id: source_id_from_page_path(path),
         title: page_title(path),
+        excerpt: markdown_excerpt(path),
         status: fields.get("status").cloned(),
         updated: fields.get("updated").cloned(),
         qa_verdict: source_qa(vault, path),
@@ -3813,6 +3874,7 @@ fn inspect_vault(vault_path: String) -> Result<VaultStatus, String> {
             kind: "inbox".to_string(),
             source_id: None,
             title: None,
+            excerpt: None,
             status: None,
             updated: None,
             qa_verdict: None,
@@ -4028,6 +4090,7 @@ fn import_to_inbox(vault_path: String, paths: Vec<String>) -> Result<ImportResul
                 kind: "inbox".to_string(),
                 source_id: None,
                 title: item.title_hint.clone(),
+                excerpt: None,
                 status: Some(item.status.clone()),
                 updated: None,
                 qa_verdict: None,
@@ -12338,6 +12401,30 @@ mod tests {
             .iter()
             .any(|file| file.kind == "report"
                 && file.path.ends_with("qa-reports/batch-1/LLM-0001.md")));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn inspect_vault_exposes_markdown_excerpt_for_search() {
+        let vault = test_vault("markdown-excerpt-search");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        write_text(
+            &vault.join("sources").join("LLM-0001.md"),
+            "---\ntitle: DeepSeek Router\nstatus: published\n---\n# DeepSeek Router\n\nMulti-token sentinel evidence connects MoE routing to cost control.\n\nA second paragraph should not hide the first useful reading sentence.\n",
+        )
+        .expect("write source page");
+
+        let status = inspect_vault(to_display(&vault)).expect("inspect vault");
+        let file = status
+            .files
+            .iter()
+            .find(|item| item.name == "LLM-0001.md")
+            .expect("source file is listed");
+        let excerpt = file.excerpt.as_deref().expect("excerpt");
+        assert_eq!(file.title.as_deref(), Some("DeepSeek Router"));
+        assert!(excerpt.contains("Multi-token sentinel evidence"));
+        assert!(!excerpt.contains("title:"));
 
         let _ = fs::remove_dir_all(vault);
     }

@@ -669,6 +669,7 @@ function buildSearchIndex({
   for (const file of files) {
     const title = file.title || file.name || file.path;
     const status = file.status || file.qaVerdict || (file.needsReview ? "needs_review" : null);
+    const excerpt = compactText(file.excerpt, 280);
     const relations = unique([
       relation(labels, "kind", file.kind),
       relation(labels, "status", file.status),
@@ -676,7 +677,7 @@ function buildSearchIndex({
       relation(labels, "needsReview", file.needsReview ? file.needsReview : null),
       relation(labels, "updated", file.updated),
     ]);
-    const snippet = compactText([status, file.updated, file.path].filter(Boolean).join(" · "));
+    const snippet = excerpt || compactText([status, file.updated, file.path].filter(Boolean).join(" · "));
     results.push({
       id: `file:${file.path}`,
       type: file.kind,
@@ -684,9 +685,9 @@ function buildSearchIndex({
       path: file.path,
       snippet: snippet || file.path,
       status,
-      evidence: file.qaVerdict,
+      evidence: file.qaVerdict || excerpt,
       relations,
-      searchText: [title, file.name, file.path, file.kind, file.status, file.qaVerdict, file.updated].join(" "),
+      searchText: [title, file.name, file.path, file.kind, file.status, file.qaVerdict, file.updated, file.excerpt].join(" "),
       priority: file.kind === "concept" ? 6 : file.kind === "source" ? 5 : 3,
     });
   }
