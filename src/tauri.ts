@@ -22,6 +22,7 @@ import type {
   TraceabilityWarning,
   VaultEntryNote,
   VaultRestoreResult,
+  VaultTextFilePreview,
   VaultSuggestion,
   VaultStatus,
   WritebackApplyResult,
@@ -310,6 +311,10 @@ export function revealPath(path: string): Promise<void> {
 
 export function openVaultPath(vaultPath: string, path: string): Promise<void> {
   return invoke("open_vault_path", { vaultPath, path });
+}
+
+export function readVaultTextFile(vaultPath: string, path: string): Promise<VaultTextFilePreview> {
+  return invoke("read_vault_text_file", { vaultPath, path });
 }
 
 export function resolveVaultEntryNote(vaultPath: string): Promise<VaultEntryNote> {

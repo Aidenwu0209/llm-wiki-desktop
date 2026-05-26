@@ -72,6 +72,13 @@ export type VaultFile = {
   inboundLinks?: string[];
 };
 
+export type VaultTextFilePreview = {
+  path: string;
+  sizeBytes: number;
+  content: string;
+  truncated: boolean;
+};
+
 export type VaultStatus = {
   path: string;
   schemaValid: boolean;

@@ -1983,6 +1983,119 @@ textarea {
   white-space: nowrap;
 }
 
+.details-preview {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid #d8ded9;
+  border-radius: 6px;
+  background: #fbfcfa;
+  padding: 9px;
+}
+
+.details-preview p {
+  margin: 0;
+  color: #64706a;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.details-markdown-preview {
+  max-height: 320px;
+  overflow: auto;
+  min-width: 0;
+  border: 1px solid #e1e6e2;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 10px;
+  color: #17201d;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.details-markdown-preview > *:first-child {
+  margin-top: 0;
+}
+
+.details-markdown-preview > *:last-child {
+  margin-bottom: 0;
+}
+
+.details-markdown-preview h1,
+.details-markdown-preview h2,
+.details-markdown-preview h3 {
+  margin: 12px 0 6px;
+  color: #17201d;
+  font-size: 14px;
+  line-height: 1.3;
+}
+
+.details-markdown-preview h4,
+.details-markdown-preview h5,
+.details-markdown-preview h6 {
+  margin: 10px 0 5px;
+  color: #26312d;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.details-markdown-preview p,
+.details-markdown-preview ul,
+.details-markdown-preview ol {
+  margin: 7px 0;
+}
+
+.details-markdown-preview ul,
+.details-markdown-preview ol {
+  padding-left: 18px;
+}
+
+.details-markdown-preview code {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.details-markdown-preview pre {
+  overflow: auto;
+  border-radius: 6px;
+  background: #17201d;
+  color: #eaf1ec;
+  padding: 8px;
+  font-size: 11px;
+  white-space: pre;
+}
+
+.details-markdown-preview table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.details-markdown-preview th,
+.details-markdown-preview td {
+  border: 1px solid #d8ded9;
+  padding: 5px 6px;
+  text-align: left;
+}
+
+.details-markdown-preview blockquote {
+  margin: 8px 0;
+  border-left: 3px solid #c8d5ce;
+  padding-left: 8px;
+  color: #40514a;
+}
+
+.details-markdown-image-placeholder {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  border: 1px solid #d8ded9;
+  border-radius: 6px;
+  background: #f5f8f5;
+  padding: 4px 6px;
+  color: #52625b;
+  font-size: 11px;
+}
+
 .details-diff {
   max-height: 190px;
   overflow: auto;
