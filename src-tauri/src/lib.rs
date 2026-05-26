@@ -11377,6 +11377,47 @@ mod tests {
     }
 
     #[test]
+    fn inspect_vault_surfaces_page_wikilinks_for_graph() {
+        let vault = test_vault("vault-wikilinks");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        write_text(
+            &vault.join("sources").join("LLM-0001.md"),
+            "# DeepSeek Source\n\nLinks to [[concepts/research-strategy|research strategy]], [[LLM-0002#Evidence]], and [[concepts/research-strategy]].\n",
+        )
+        .expect("write source page");
+        write_text(
+            &vault.join("concepts").join("research-strategy.md"),
+            "# Research Strategy\n\nBack to [[sources/LLM-0001]].\n",
+        )
+        .expect("write concept page");
+
+        let status = inspect_vault(to_display(&vault)).expect("inspect vault");
+        let source = status
+            .files
+            .iter()
+            .find(|file| file.path.ends_with("sources/LLM-0001.md"))
+            .expect("source file");
+        assert_eq!(
+            source.outbound_links,
+            vec![
+                "concepts/research-strategy.md".to_string(),
+                "llm-0002".to_string()
+            ]
+        );
+        let concept = status
+            .files
+            .iter()
+            .find(|file| file.path.ends_with("concepts/research-strategy.md"))
+            .expect("concept file");
+        assert_eq!(
+            concept.outbound_links,
+            vec!["sources/LLM-0001.md".to_string()]
+        );
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
     fn evidence_paths_surface_missing_qa_and_review_state() {
         let vault = test_vault("evidence-paths");
         create_minimal_vault(&vault).expect("create minimal vault");

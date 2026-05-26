@@ -7,6 +7,7 @@ import type {
   EvidencePathItem,
   ReviewQueueItem,
   TraceabilityWarning,
+  VaultFile,
   VaultStatus,
   WritebackProposal,
 } from "../../types";
@@ -16,6 +17,7 @@ type ResearchEdgeType =
   | "source_claim"
   | "claim_concept"
   | "claim_review"
+  | "wikilink"
   | "proposal_target"
   | "warning_claim"
   | "warning_source";
@@ -103,6 +105,7 @@ const edgeTypes: Array<ResearchEdgeType | "all"> = [
   "source_claim",
   "claim_concept",
   "claim_review",
+  "wikilink",
   "proposal_target",
   "warning_claim",
   "warning_source",
@@ -168,6 +171,7 @@ const graphCopy = {
     claimToConcept: "论断 -> 概念：论断概念标签和证据概念",
     claimToReview: "论断 -> 审核：审核队列和待审核论断",
     proposalToTarget: "提案 -> 目标：问答写回目标页面",
+    wikiLink: "Wiki 链接：Obsidian [[wikilink]] 页面关系",
     warningToClaim: "警告 -> 论断/资料：可追踪性警告",
     nodes: "个节点",
     edges: "条边",
@@ -188,6 +192,7 @@ const graphCopy = {
       source_claim: "资料 -> 论断",
       claim_concept: "论断 -> 概念",
       claim_review: "论断 -> 审核",
+      wikilink: "Wiki 链接",
       proposal_target: "提案 -> 目标",
       warning_claim: "警告 -> 论断",
       warning_source: "警告 -> 资料",
@@ -249,6 +254,7 @@ const graphCopy = {
     claimToConcept: "claim -> concept: claim concept tags and evidence concepts",
     claimToReview: "claim -> review: review queue and needs-review claims",
     proposalToTarget: "proposal -> target: query writeback target page",
+    wikiLink: "wiki link: Obsidian [[wikilink]] page relationships",
     warningToClaim: "warning -> claim/source: traceability warnings",
     nodes: "nodes",
     edges: "edges",
@@ -269,6 +275,7 @@ const graphCopy = {
       source_claim: "Source -> Claim",
       claim_concept: "Claim -> Concept",
       claim_review: "Claim -> Review",
+      wikilink: "Wiki link",
       proposal_target: "Proposal -> Target",
       warning_claim: "Warning -> Claim",
       warning_source: "Warning -> Source",
@@ -337,6 +344,34 @@ function sourceNodeLabel(existing: string | undefined, next: string) {
   return existing;
 }
 
+function stripMarkdownExtension(value?: string | null) {
+  return (value || "").replace(/\\/g, "/").replace(/\.(md|markdown)$/i, "");
+}
+
+function normalizedPageAlias(value?: string | null) {
+  return stripMarkdownExtension(value)
+    .replace(/^\.?\//, "")
+    .trim()
+    .toLowerCase();
+}
+
+function pageAliasValues(path?: string | null, title?: string | null, name?: string | null) {
+  const cleanedPath = stripMarkdownExtension(path);
+  const base = labelFromPath(path);
+  return [path, cleanedPath, base, title, name]
+    .map(normalizedPageAlias)
+    .filter((item): item is string => Boolean(item));
+}
+
+function wikilinkTargetAliases(value?: string | null) {
+  const target = stripMarkdownExtension((value || "").split("|")[0]?.split("#")[0]);
+  const withConcept = target && !target.includes("/") ? `concepts/${target}` : target;
+  const withSource = target && !target.includes("/") ? `sources/${target}` : target;
+  return [target, withConcept, withSource, labelFromPath(target)]
+    .map(normalizedPageAlias)
+    .filter((item): item is string => Boolean(item));
+}
+
 function upsertNode(nodes: Map<string, ResearchGraphNode>, node: ResearchGraphNode) {
   const existing = nodes.get(node.id);
   if (!existing) {
@@ -362,6 +397,14 @@ function upsertNode(nodes: Map<string, ResearchGraphNode>, node: ResearchGraphNo
 function addAlias(aliases: Map<string, string>, nodeId: string, ...values: Array<string | null | undefined>) {
   for (const value of values) {
     if (value) aliases.set(value, nodeId);
+  }
+}
+
+function addPageAliases(aliases: Map<string, string>, nodeId: string, ...values: Array<string | null | undefined>) {
+  for (const value of values) {
+    for (const alias of pageAliasValues(value)) {
+      aliases.set(alias, nodeId);
+    }
   }
 }
 
@@ -468,6 +511,49 @@ export function buildResearchGraph(input: {
   const edges = new Map<string, ResearchGraphEdge>();
   const sourceAliases = new Map<string, string>();
   const conceptAliases = new Map<string, string>();
+  const pageAliases = new Map<string, string>();
+  const fileNodeIds = new Map<string, string>();
+
+  const ensureFileNode = (file: VaultFile) => {
+    if (file.kind === "source") {
+      const fileSourceId = file.sourceId || sourceIdFromPath(file.name) || sourceIdFromPath(file.path);
+      const fileRelPath = relativeVaultPath(input.status?.path, file.path);
+      const alias = [fileSourceId, fileRelPath, file.path, file.title, file.name].find((item) => item && sourceAliases.has(item));
+      const id = alias ? sourceAliases.get(alias!)! : sourceNodeId(fileSourceId || fileRelPath || file.path);
+      upsertNode(nodes, {
+        id,
+        type: "source",
+        label: file.title || fileSourceId || file.name || labelFromPath(file.path),
+        subtitle: file.path,
+        path: file.path,
+        status: file.status,
+      });
+      fileNodeIds.set(file.path, id);
+      addAlias(sourceAliases, id, fileSourceId, fileRelPath, file.path, file.title, file.name, labelFromPath(file.path));
+      addPageAliases(pageAliases, id, file.path, file.title, file.name, labelFromPath(file.path));
+      return id;
+    }
+
+    const isConcept = file.kind === "concept";
+    const isReport = file.kind === "report";
+    const id = isConcept ? conceptNodeId(file.path) : isReport ? reviewNodeId(file.path) : sourceNodeId(file.path);
+    upsertNode(nodes, {
+      id,
+      type: isConcept ? "concept" : isReport ? "review" : "source",
+      label: file.title || file.name || labelFromPath(file.path),
+      subtitle: file.path,
+      path: file.path,
+      status: file.status,
+    });
+    fileNodeIds.set(file.path, id);
+    addPageAliases(pageAliases, id, file.path, file.title, file.name, labelFromPath(file.path));
+    if (isConcept) {
+      addAlias(conceptAliases, id, file.path, file.title, file.name, labelFromPath(file.path));
+    } else if (!isReport) {
+      addAlias(sourceAliases, id, file.path, file.title, file.name);
+    }
+    return id;
+  };
 
   for (const entry of input.registry) {
     const stableKey = entry.sourceId || entry.sourceUuid || entry.sourcePage || entry.sourcePath || entry.rawPath;
@@ -482,35 +568,12 @@ export function buildResearchGraph(input: {
       metrics: { parser: entry.parser || "unknown" },
     });
     addAlias(sourceAliases, id, entry.sourceId, entry.sourceUuid, entry.sourcePage, entry.sourcePath, entry.rawPath, entry.canonicalPath);
+    addPageAliases(pageAliases, id, entry.sourcePage, entry.sourceId, entry.sourcePath, entry.rawPath);
   }
 
   for (const file of input.status?.files ?? []) {
-    if (file.kind === "source") {
-      const fileSourceId = file.sourceId || sourceIdFromPath(file.name) || sourceIdFromPath(file.path);
-      const fileRelPath = relativeVaultPath(input.status?.path, file.path);
-      const alias = [fileSourceId, fileRelPath, file.path, file.title, file.name].find((item) => item && sourceAliases.has(item));
-      const id = alias ? sourceAliases.get(alias!)! : sourceNodeId(fileSourceId || fileRelPath || file.path);
-      upsertNode(nodes, {
-        id,
-        type: "source",
-        label: file.title || fileSourceId || file.name || labelFromPath(file.path),
-        subtitle: file.path,
-        path: file.path,
-        status: file.status,
-      });
-      addAlias(sourceAliases, id, fileSourceId, fileRelPath, file.path, file.title, file.name, labelFromPath(file.path));
-    }
-    if (file.kind === "concept") {
-      const id = conceptNodeId(file.path);
-      upsertNode(nodes, {
-        id,
-        type: "concept",
-        label: file.title || file.name || labelFromPath(file.path),
-        subtitle: file.path,
-        path: file.path,
-        status: file.status,
-      });
-      addAlias(conceptAliases, id, file.path, file.title, file.name, labelFromPath(file.path));
+    if (file.kind === "source" || file.kind === "concept" || file.kind === "report") {
+      ensureFileNode(file);
     }
   }
 
@@ -545,8 +608,35 @@ export function buildResearchGraph(input: {
       status: "referenced",
     });
     addAlias(conceptAliases, id, value, labelFromPath(value));
+    addPageAliases(pageAliases, id, value, labelFromPath(value));
     return id;
   };
+
+  const resolveWikilinkTarget = (value: string) => {
+    for (const alias of wikilinkTargetAliases(value)) {
+      const nodeId = pageAliases.get(alias);
+      if (nodeId) return { nodeId, resolved: true };
+    }
+    const conceptId = ensureConcept(value);
+    return conceptId ? { nodeId: conceptId, resolved: false } : null;
+  };
+
+  for (const file of input.status?.files ?? []) {
+    if (file.kind === "inbox" || !file.outboundLinks?.length) continue;
+    const fromId = fileNodeIds.get(file.path) || ensureFileNode(file);
+    for (const link of file.outboundLinks) {
+      const target = resolveWikilinkTarget(link);
+      if (!target) continue;
+      addEdge(edges, {
+        id: `wikilink:${fromId}:${target.nodeId}:${key(link)}`,
+        from: fromId,
+        to: target.nodeId,
+        type: "wikilink",
+        label: "wikilink",
+        status: target.resolved ? "linked" : "unresolved",
+      });
+    }
+  }
 
   for (const claim of input.claims) {
     const claimId = claimNodeId(claim.claimId);
@@ -792,6 +882,8 @@ function nodeStatusClass(node: ResearchGraphNode) {
 
 function edgeStatusClass(edge: ResearchGraphEdge) {
   if (edge.type.startsWith("warning_")) return "warning";
+  if (edge.type === "wikilink" && edge.status === "unresolved") return "broken";
+  if (edge.type === "wikilink") return "ok";
   if (edge.status === "broken" || edge.status === "p0" || edge.status === "p1") return "broken";
   if (edge.status === "needs_review" || edge.type === "claim_review") return "review";
   if (edge.status === "approved" || edge.status === "applied" || edge.status === "supported") return "ok";
@@ -919,6 +1011,7 @@ export function ResearchGraphPage({
       "supports claim": "支撑论断",
       "feeds concept": "沉淀概念",
       "requires review": "需要审核",
+      "wikilink": "Wiki 链接",
       "evidence path": "证据路径",
       "evidence concept": "证据概念",
       "review item": "审核项",
@@ -1309,6 +1402,7 @@ export function ResearchGraphPage({
             <p>{text.sourceToClaim}</p>
             <p>{text.claimToConcept}</p>
             <p>{text.claimToReview}</p>
+            <p>{text.wikiLink}</p>
             <p>{text.proposalToTarget}</p>
             <p>{text.warningToClaim}</p>
           </div>
