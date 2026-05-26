@@ -71,7 +71,7 @@ Required Windows behaviors:
 
 1. Open file/folder uses Explorer.
 2. Reveal file uses `explorer /select,<path>` so the selected artifact is visible instead of only opening the parent folder.
-3. Obsidian entry-note launch uses the registered `obsidian://` protocol handler, then falls back to Open folder / Copy URI / Copy path if Obsidian is missing.
+3. Obsidian entry-note launch uses a path-based `obsidian://open?path=...` URI, then falls back to Open folder / Copy URI / Copy path if Obsidian is missing.
 4. Local Codex / Claude CLI checks use `where` instead of `/bin/sh`.
 5. Generated vault, workspace root, and raw PDF folder warnings match the macOS clean-profile smoke.
 

@@ -11461,7 +11461,7 @@ mod tests {
         assert!(entry
             .obsidian_uri
             .as_deref()
-            .is_some_and(|uri| uri.contains("file=LLM%20Wiki%20Home.md")));
+            .is_some_and(|uri| uri.contains("path=") && uri.contains("LLM%20Wiki%20Home.md")));
         assert_eq!(
             entry.fallback_path,
             to_display(&vault.join("LLM Wiki Home.md"))
@@ -11524,7 +11524,7 @@ mod tests {
     #[test]
     fn desktop_command_specs_cover_windows_open_reveal_obsidian_and_cli_lookup() {
         let target = PathBuf::from(r"C:\Users\Ada\llm-wiki\LLM Wiki Home.md");
-        let uri = "obsidian://open?vault=dfc-vault&file=LLM%20Wiki%20Home.md";
+        let uri = "obsidian://open?path=C%3A%5CUsers%5CAda%5Cllm-wiki%5CLLM%20Wiki%20Home.md";
 
         let open = open_path_command(DesktopPlatform::Windows, &target);
         assert_eq!(open.program, "explorer");
@@ -11561,7 +11561,7 @@ mod tests {
     #[test]
     fn desktop_command_specs_keep_macos_and_linux_launch_contracts() {
         let target = PathBuf::from("/Users/ada/llm-wiki/LLM Wiki Home.md");
-        let uri = "obsidian://open?vault=dfc-vault&file=LLM%20Wiki%20Home.md";
+        let uri = "obsidian://open?path=%2FUsers%2Fada%2Fllm-wiki%2FLLM%20Wiki%20Home.md";
 
         let mac_open = open_path_command(DesktopPlatform::Macos, &target);
         assert_eq!(mac_open.program, "open");
@@ -12029,7 +12029,7 @@ mod tests {
     }
 
     #[test]
-    fn obsidian_uri_targets_vault_file_not_parent_workspace_path() {
+    fn obsidian_uri_uses_absolute_file_path_without_vault_registry() {
         let workspace = test_vault("workspace-uri");
         let vault = workspace.join("vaults").join("deepseek-vault");
         fs::create_dir_all(vault.join("reviews").join("query-writeback")).expect("vault dirs");
@@ -12039,49 +12039,11 @@ mod tests {
             .join("deepseek research.md");
         write_text(&entry, "# Insight\n").expect("entry");
         let uri = obsidian_file_uri(&vault, &entry);
-        assert!(uri.contains("vault=deepseek-vault"));
-        assert!(uri.contains("file=reviews%2Fquery-writeback%2Fdeepseek%20research.md"));
-        assert!(!uri.contains(&percent_encode_query_value(&to_display(&workspace))));
-
-        let _ = fs::remove_dir_all(workspace);
-    }
-
-    #[test]
-    fn obsidian_registration_prefers_nested_generated_vault() {
-        let workspace = test_vault("obsidian-config");
-        let vault = workspace.join("vaults").join("deepseek-vault");
-        fs::create_dir_all(&vault).expect("vault dir");
-        let mut config = serde_json::json!({
-            "vaults": {
-                "parent": {
-                    "path": to_display(&workspace),
-                    "open": true,
-                    "ts": 1
-                }
-            }
-        });
-        let vault_id = upsert_obsidian_vault_config(&mut config, &vault, 2);
-        let vaults = config
-            .get("vaults")
-            .and_then(serde_json::Value::as_object)
-            .expect("vaults object");
-        assert_eq!(
-            vaults
-                .get("parent")
-                .and_then(|value| value.get("open"))
-                .and_then(serde_json::Value::as_bool),
-            Some(false)
-        );
-        let registered = vaults.get(&vault_id).expect("registered vault");
-        let vault_path = to_display(&vault.canonicalize().expect("canonical vault"));
-        assert_eq!(
-            json_string(registered, "path").as_deref(),
-            Some(vault_path.as_str())
-        );
-        assert_eq!(
-            registered.get("open").and_then(serde_json::Value::as_bool),
-            Some(true)
-        );
+        let entry_path = entry.canonicalize().expect("canonical entry");
+        assert!(uri.starts_with("obsidian://open?path="));
+        assert!(uri.contains(&percent_encode_query_value(&to_display(&entry_path))));
+        assert!(!uri.contains("vault="));
+        assert!(!uri.contains("file="));
 
         let _ = fs::remove_dir_all(workspace);
     }
@@ -12920,135 +12882,16 @@ fn percent_encode_query_value(value: &str) -> String {
     out
 }
 
-fn obsidian_file_uri(vault: &Path, file: &Path) -> String {
-    let vault_name = vault
-        .file_name()
-        .and_then(OsStr::to_str)
-        .unwrap_or_default();
-    let file_rel = rel_path(vault, file);
+fn obsidian_file_uri(_vault: &Path, file: &Path) -> String {
+    let resolved = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
     format!(
-        "obsidian://open?vault={}&file={}",
-        percent_encode_query_value(vault_name),
-        percent_encode_query_value(&file_rel)
+        "obsidian://open?path={}",
+        percent_encode_query_value(&to_display(&resolved))
     )
-}
-
-fn obsidian_config_path() -> Option<PathBuf> {
-    if !cfg!(target_os = "macos") {
-        return None;
-    }
-    env::var_os("HOME").map(|home| {
-        PathBuf::from(home)
-            .join("Library")
-            .join("Application Support")
-            .join("obsidian")
-            .join("obsidian.json")
-    })
-}
-
-fn obsidian_vault_id(vault: &Path) -> String {
-    let resolved = vault.canonicalize().unwrap_or_else(|_| vault.to_path_buf());
-    let mut hasher = Sha256::new();
-    hasher.update(resolved.to_string_lossy().as_bytes());
-    format!("{:x}", hasher.finalize())[..16].to_string()
-}
-
-fn paths_conflict_for_obsidian(existing: &Path, selected: &Path) -> bool {
-    let existing_resolved = existing
-        .canonicalize()
-        .unwrap_or_else(|_| existing.to_path_buf());
-    let selected_resolved = selected
-        .canonicalize()
-        .unwrap_or_else(|_| selected.to_path_buf());
-    existing_resolved != selected_resolved
-        && (selected_resolved.starts_with(&existing_resolved)
-            || existing_resolved.starts_with(&selected_resolved))
-}
-
-fn upsert_obsidian_vault_config(
-    config: &mut serde_json::Value,
-    vault: &Path,
-    timestamp_ms: i64,
-) -> String {
-    if !config.is_object() {
-        *config = serde_json::json!({});
-    }
-    let resolved = vault.canonicalize().unwrap_or_else(|_| vault.to_path_buf());
-    let selected_path = to_display(&resolved);
-    let root = config.as_object_mut().expect("object after reset");
-    let vaults = root
-        .entry("vaults".to_string())
-        .or_insert_with(|| serde_json::json!({}));
-    if !vaults.is_object() {
-        *vaults = serde_json::json!({});
-    }
-    let vaults_map = vaults.as_object_mut().expect("object after reset");
-    let mut existing_id = None;
-    for (id, value) in vaults_map.iter_mut() {
-        let existing_path = json_string(value, "path").unwrap_or_default();
-        if existing_path == selected_path {
-            existing_id = Some(id.clone());
-        } else if !existing_path.is_empty()
-            && paths_conflict_for_obsidian(Path::new(&existing_path), &resolved)
-        {
-            set_json_bool(value, "open", false);
-        }
-    }
-
-    let mut vault_id = existing_id.unwrap_or_else(|| obsidian_vault_id(&resolved));
-    let mut suffix = 1usize;
-    while vaults_map
-        .get(&vault_id)
-        .and_then(|value| json_string(value, "path"))
-        .is_some_and(|path| path != selected_path)
-    {
-        vault_id = format!("{}{:x}", obsidian_vault_id(&resolved), suffix);
-        suffix += 1;
-    }
-
-    let entry = vaults_map
-        .entry(vault_id.clone())
-        .or_insert_with(|| serde_json::json!({}));
-    if !entry.is_object() {
-        *entry = serde_json::json!({});
-    }
-    if let Some(map) = entry.as_object_mut() {
-        map.insert("path".to_string(), serde_json::Value::String(selected_path));
-        map.insert("open".to_string(), serde_json::Value::Bool(true));
-        map.insert(
-            "ts".to_string(),
-            serde_json::Value::Number(serde_json::Number::from(timestamp_ms)),
-        );
-    }
-    vault_id
-}
-
-fn register_obsidian_vault(vault: &Path) -> Result<(), String> {
-    let Some(path) = obsidian_config_path() else {
-        return Ok(());
-    };
-    let mut config = if path.is_file() {
-        serde_json::from_str::<serde_json::Value>(&read_text(&path))
-            .unwrap_or_else(|_| serde_json::json!({}))
-    } else {
-        serde_json::json!({})
-    };
-    upsert_obsidian_vault_config(&mut config, vault, Local::now().timestamp_millis());
-    let rendered = serde_json::to_string_pretty(&config)
-        .map_err(|e| format!("failed to render Obsidian vault registry: {e}"))?;
-    write_text(&path, &(rendered + "\n"))
 }
 
 fn try_open_obsidian_file(vault: &Path, file: &Path) -> Result<(), String> {
     let platform = current_desktop_platform();
-    if platform == DesktopPlatform::Macos {
-        register_obsidian_vault(vault)?;
-        let _ = Command::new("open")
-            .arg("-a")
-            .arg("Obsidian")
-            .arg(vault)
-            .status();
-    }
     let uri = obsidian_file_uri(vault, file);
     let spec = obsidian_uri_command(platform, &uri);
     let status = spec
