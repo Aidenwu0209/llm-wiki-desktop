@@ -68,7 +68,10 @@ const detailsCopy = {
     notUpdated: "未更新",
     outboundLinks: "出站链接",
     inboundLinks: "反向链接",
+    sourceRefs: "资料引用",
     noLinks: "没有页面级 wikilink。",
+    noSourceRefs: "没有 frontmatter 资料引用。",
+    moreLinks: (count: number) => `还有 ${count} 条未显示`,
     preview: "只读预览",
     outline: "页面大纲",
     reader: "阅读",
@@ -103,7 +106,10 @@ const detailsCopy = {
     notUpdated: "not updated",
     outboundLinks: "Outbound links",
     inboundLinks: "Backlinks",
+    sourceRefs: "Source refs",
     noLinks: "No page-level wikilinks.",
+    noSourceRefs: "No frontmatter source references.",
+    moreLinks: (count: number) => `${count} more not shown`,
     preview: "Read-only preview",
     outline: "Outline",
     reader: "Reader",
@@ -767,22 +773,27 @@ function LinkList({
   title,
   links,
   empty,
+  moreLabel,
   onOpenVaultPath,
 }: {
   title: string;
   links?: string[];
   empty: string;
+  moreLabel: (count: number) => string;
   onOpenVaultPath: (path?: string | null) => void;
 }) {
+  const visibleLinks = links?.slice(0, 8) ?? [];
+  const hiddenCount = Math.max((links?.length ?? 0) - visibleLinks.length, 0);
   return (
     <div className="details-link-section">
       <strong>{title}</strong>
       {(!links || links.length === 0) && <p>{empty}</p>}
-      {links?.slice(0, 8).map((link) => (
+      {visibleLinks.map((link) => (
         <button key={link} type="button" onClick={() => onOpenVaultPath(link)}>
           <span>{link}</span>
         </button>
       ))}
+      {hiddenCount > 0 && <p>{moreLabel(hiddenCount)}</p>}
     </div>
   );
 }
@@ -881,12 +892,21 @@ export function DetailsPanel({
               title={text.outboundLinks}
               links={selection.file.outboundLinks}
               empty={text.noLinks}
+              moreLabel={text.moreLinks}
               onOpenVaultPath={onOpenVaultPath}
             />
             <LinkList
               title={text.inboundLinks}
               links={selection.file.inboundLinks}
               empty={text.noLinks}
+              moreLabel={text.moreLinks}
+              onOpenVaultPath={onOpenVaultPath}
+            />
+            <LinkList
+              title={text.sourceRefs}
+              links={selection.file.sourceRefs}
+              empty={text.noSourceRefs}
+              moreLabel={text.moreLinks}
               onOpenVaultPath={onOpenVaultPath}
             />
           </div>
