@@ -51,6 +51,13 @@ type RawSourceRecord = {
   traceabilityStatus: string;
 };
 
+type RawSourcePlanFilter = "all" | "needs_action" | "ready" | "stageable" | "blocked" | "cached" | "published" | "missing_artifact";
+
+type RawSourceRecordWithPlan = {
+  record: RawSourceRecord;
+  planEntry: IngestPlanEntry | null;
+};
+
 type RawSourcesWorkspaceProps = {
   className?: string;
   language?: UiLanguage;
@@ -118,6 +125,17 @@ const rawCopy = {
     artifact: "解析产物",
     artifactHash: "产物哈希",
     planState: "规划状态",
+    planFilters: "规划过滤",
+    planFilterLabels: {
+      all: "全部",
+      needs_action: "需处理",
+      ready: "待解析",
+      stageable: "待发布",
+      blocked: "阻塞",
+      cached: "已有产物",
+      published: "已发布",
+      missing_artifact: "缺少产物",
+    },
     planSummary: "导入规划",
     aliases: "ID alias / migration",
     matchReason: "匹配原因",
@@ -202,6 +220,17 @@ const rawCopy = {
     artifact: "Artifact",
     artifactHash: "Artifact hash",
     planState: "Plan state",
+    planFilters: "Plan filters",
+    planFilterLabels: {
+      all: "All",
+      needs_action: "Needs action",
+      ready: "Ready",
+      stageable: "Stageable",
+      blocked: "Blocked",
+      cached: "Cached",
+      published: "Published",
+      missing_artifact: "No artifact",
+    },
     planSummary: "Ingest plan",
     aliases: "ID aliases / migrations",
     matchReason: "Match reason",
@@ -341,6 +370,18 @@ function sourceAliasMatchesRecord(record: RawSourceRecord, alias: IngestPlan["so
 
 function findPlanEntryForRecord(record: RawSourceRecord, ingestPlan: IngestPlan | null, vaultPath?: string | null) {
   return ingestPlan?.entries.find((entry) => planEntryMatchesRecord(record, entry, vaultPath)) ?? null;
+}
+
+function recordNeedsAction(record: RawSourceRecord, planEntry: IngestPlanEntry | null) {
+  if (planEntry && planEntry.status !== "published") return true;
+  return record.traceabilityStatus !== "ok" || !record.artifact;
+}
+
+function planFilterMatchesRecord(record: RawSourceRecord, planEntry: IngestPlanEntry | null, filter: RawSourcePlanFilter) {
+  if (filter === "all") return true;
+  if (filter === "needs_action") return recordNeedsAction(record, planEntry);
+  if (filter === "missing_artifact") return !record.artifact;
+  return planEntry?.status === filter || record.status === filter;
 }
 
 function hydrateRecord(
@@ -537,29 +578,59 @@ export function RawSourcesWorkspace({
   const text = rawCopy[language];
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  const [planFilter, setPlanFilter] = useState<RawSourcePlanFilter>("needs_action");
   const records = useMemo(
     () => buildRawSourceRecords({ vaultPath, status, registry, artifacts, claims, evidencePaths, traceabilityWarnings }),
     [artifacts, claims, evidencePaths, registry, status, traceabilityWarnings, vaultPath],
   );
+  const recordsWithPlan = useMemo<RawSourceRecordWithPlan[]>(
+    () => records.map((record) => ({ record, planEntry: findPlanEntryForRecord(record, ingestPlan, vaultPath) })),
+    [ingestPlan, records, vaultPath],
+  );
+  const planFilterOptions = useMemo(
+    () =>
+      ([
+        "all",
+        "needs_action",
+        "ready",
+        "stageable",
+        "blocked",
+        "cached",
+        "published",
+        "missing_artifact",
+      ] as RawSourcePlanFilter[]).map((id) => ({
+        id,
+        label: text.planFilterLabels[id],
+        count: recordsWithPlan.filter(({ record, planEntry }) => planFilterMatchesRecord(record, planEntry, id)).length,
+      })),
+    [recordsWithPlan, text.planFilterLabels],
+  );
   const filteredRecords = useMemo(() => {
     const query = filter.trim().toLowerCase();
-    if (!query) return records;
-    return records.filter((record) =>
-      [
-        record.fileName,
-        record.type,
-        record.status,
-        record.sourceId,
-        record.sourceUuid,
-        record.path,
-        record.rawPath,
-        record.sourcePage,
-        record.artifactPath,
-        record.parser,
-        record.traceabilityStatus,
-      ].join(" ").toLowerCase().includes(query),
-    );
-  }, [filter, records]);
+    return recordsWithPlan
+      .filter(({ record, planEntry }) => planFilterMatchesRecord(record, planEntry, planFilter))
+      .filter(({ record, planEntry }) => {
+        if (!query) return true;
+        return [
+          record.fileName,
+          record.type,
+          record.status,
+          record.sourceId,
+          record.sourceUuid,
+          record.path,
+          record.rawPath,
+          record.sourcePage,
+          record.artifactPath,
+          record.parser,
+          record.traceabilityStatus,
+          planEntry?.status,
+          planEntry?.currentState,
+          planEntry?.nextActionLabel,
+          planEntry?.reason,
+        ].join(" ").toLowerCase().includes(query);
+      })
+      .map(({ record }) => record);
+  }, [filter, planFilter, recordsWithPlan]);
   const selected = filteredRecords.find((record) => record.id === selectedId) || filteredRecords[0] || null;
   const artifact = selected?.artifact;
   const selectedPlanEntry = useMemo(
@@ -624,6 +695,19 @@ export function RawSourcesWorkspace({
             <Search size={14} />
             <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={text.filter} />
           </label>
+          <div className="raw-source-plan-filters" aria-label={text.planFilters}>
+            {planFilterOptions.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                className={classNames(planFilter === option.id && "selected")}
+                onClick={() => setPlanFilter(option.id)}
+              >
+                <span>{option.label}</span>
+                <strong>{option.count}</strong>
+              </button>
+            ))}
+          </div>
           <div className="raw-source-list-body">
             {filteredRecords.length === 0 && <p className="empty">{text.noMatch}</p>}
             {filteredRecords.map((record) => {

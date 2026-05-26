@@ -2796,6 +2796,42 @@ textarea {
   padding-left: 32px;
 }
 
+.raw-source-plan-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.raw-source-plan-filters button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  border-color: #d8ded9;
+  background: #ffffff;
+  padding: 0 8px;
+  color: #40514a;
+  font-size: 11px;
+}
+
+.raw-source-plan-filters button.selected {
+  border-color: #245b93;
+  background: #eef5fb;
+  color: #163f67;
+}
+
+.raw-source-plan-filters span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.raw-source-plan-filters strong {
+  color: inherit;
+  font-size: 12px;
+}
+
 .raw-source-list-body {
   display: grid;
   gap: 8px;
