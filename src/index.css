@@ -2185,6 +2185,12 @@ textarea {
   overflow: auto;
 }
 
+.details-reader-links {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
 .details-reader-outline .details-preview-outline {
   position: sticky;
   top: 0;

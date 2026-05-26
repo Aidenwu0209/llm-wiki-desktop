@@ -642,27 +642,62 @@ function PreviewOutline({
   );
 }
 
+function LinkList({
+  title,
+  links,
+  empty,
+  moreLabel,
+  onOpenVaultPath,
+}: {
+  title: string;
+  links?: string[];
+  empty: string;
+  moreLabel: (count: number) => string;
+  onOpenVaultPath: (path?: string | null) => void;
+}) {
+  const visibleLinks = links?.slice(0, 8) ?? [];
+  const hiddenCount = Math.max((links?.length ?? 0) - visibleLinks.length, 0);
+  return (
+    <div className="details-link-section">
+      <strong>{title}</strong>
+      {(!links || links.length === 0) && <p>{empty}</p>}
+      {visibleLinks.map((link) => (
+        <button key={link} type="button" onClick={() => onOpenVaultPath(link)}>
+          <span>{link}</span>
+        </button>
+      ))}
+      {hiddenCount > 0 && <p>{moreLabel(hiddenCount)}</p>}
+    </div>
+  );
+}
+
 function FocusedPreviewReader({
   title,
   path,
+  text,
   closeLabel,
   outlineTitle,
   content,
   currentPath,
   vaultPath,
   outboundLinks,
+  inboundLinks,
+  sourceRefs,
   headings,
   onClose,
   onOpenVaultPath,
 }: {
   title: string;
   path: string;
+  text: DetailsText;
   closeLabel: string;
   outlineTitle: string;
   content: string;
   currentPath?: string | null;
   vaultPath: string;
   outboundLinks?: string[];
+  inboundLinks?: string[];
+  sourceRefs?: string[];
   headings: PreviewHeading[];
   onClose: () => void;
   onOpenVaultPath: (path?: string | null) => void;
@@ -687,6 +722,29 @@ function FocusedPreviewReader({
         <div className="details-reader-body">
           <aside className="details-reader-outline">
             <PreviewOutline headings={headings} title={outlineTitle} />
+            <div className="details-reader-links">
+              <LinkList
+                title={text.outboundLinks}
+                links={outboundLinks}
+                empty={text.noLinks}
+                moreLabel={text.moreLinks}
+                onOpenVaultPath={onOpenVaultPath}
+              />
+              <LinkList
+                title={text.inboundLinks}
+                links={inboundLinks}
+                empty={text.noLinks}
+                moreLabel={text.moreLinks}
+                onOpenVaultPath={onOpenVaultPath}
+              />
+              <LinkList
+                title={text.sourceRefs}
+                links={sourceRefs}
+                empty={text.noSourceRefs}
+                moreLabel={text.moreLinks}
+                onOpenVaultPath={onOpenVaultPath}
+              />
+            </div>
           </aside>
           <article className="details-markdown-preview details-reader-markdown">
             <MarkdownPreview
@@ -767,35 +825,6 @@ function MarkdownImage({
     );
   }
   return <span className="details-markdown-image-placeholder">{imagePlaceholderText(alt, src)} loading...</span>;
-}
-
-function LinkList({
-  title,
-  links,
-  empty,
-  moreLabel,
-  onOpenVaultPath,
-}: {
-  title: string;
-  links?: string[];
-  empty: string;
-  moreLabel: (count: number) => string;
-  onOpenVaultPath: (path?: string | null) => void;
-}) {
-  const visibleLinks = links?.slice(0, 8) ?? [];
-  const hiddenCount = Math.max((links?.length ?? 0) - visibleLinks.length, 0);
-  return (
-    <div className="details-link-section">
-      <strong>{title}</strong>
-      {(!links || links.length === 0) && <p>{empty}</p>}
-      {visibleLinks.map((link) => (
-        <button key={link} type="button" onClick={() => onOpenVaultPath(link)}>
-          <span>{link}</span>
-        </button>
-      ))}
-      {hiddenCount > 0 && <p>{moreLabel(hiddenCount)}</p>}
-    </div>
-  );
 }
 
 export function DetailsPanel({
@@ -953,8 +982,11 @@ export function DetailsPanel({
               content={previewState.preview.content}
               currentPath={previewState.preview.path || selection.file.path}
               headings={readerHeadings}
+              inboundLinks={selection.file.inboundLinks}
               outlineTitle={text.outline}
               path={selection.file.path}
+              sourceRefs={selection.file.sourceRefs}
+              text={text}
               title={selection.file.title || selection.file.name}
               vaultPath={vaultPath}
               outboundLinks={selection.file.outboundLinks}
