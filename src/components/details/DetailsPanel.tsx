@@ -5,6 +5,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
 import {
+  BookOpen,
   ClipboardList,
   Copy,
   FileInput,
@@ -14,6 +15,7 @@ import {
   Search,
   ShieldCheck,
   SquareStack,
+  X,
 } from "lucide-react";
 import type { UiLanguage } from "../../i18n";
 import { readVaultImageFile, readVaultTextFile } from "../../tauri";
@@ -69,6 +71,8 @@ const detailsCopy = {
     noLinks: "没有页面级 wikilink。",
     preview: "只读预览",
     outline: "页面大纲",
+    reader: "阅读",
+    closeReader: "关闭阅读",
     loadingPreview: "正在读取预览...",
     previewUnavailable: "无法读取预览",
     truncatedPreview: "内容较长，当前只显示前 64 KB。",
@@ -102,6 +106,8 @@ const detailsCopy = {
     noLinks: "No page-level wikilinks.",
     preview: "Read-only preview",
     outline: "Outline",
+    reader: "Reader",
+    closeReader: "Close reader",
     loadingPreview: "Loading preview...",
     previewUnavailable: "Preview unavailable",
     truncatedPreview: "Long file: showing the first 64 KB only.",
@@ -338,7 +344,7 @@ function textFromReactNode(node: ReactNode): string {
   return "";
 }
 
-function extractPreviewHeadings(markdown: string) {
+function extractPreviewHeadings(markdown: string, headingIdPrefix = "") {
   const counts = new Map<string, number>();
   const headings: PreviewHeading[] = [];
   let fenced = false;
@@ -353,13 +359,33 @@ function extractPreviewHeadings(markdown: string) {
     if (!match) continue;
     const text = stripInlineMarkdown(match[2]);
     if (!text) continue;
-    headings.push({ id: uniqueHeadingId(text, counts), level: match[1].length, text });
+    headings.push({ id: `${headingIdPrefix}${uniqueHeadingId(text, counts)}`, level: match[1].length, text });
   }
   return headings;
 }
 
 function scrollToPreviewHeading(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function decodeFragment(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function resolvePreviewHeadingId(rawFragment: string, headingIdPrefix = "") {
+  const decoded = decodeFragment(rawFragment);
+  const slug = headingBaseId(decoded);
+  const candidates = [
+    decoded,
+    slug,
+    headingIdPrefix ? `${headingIdPrefix}${decoded}` : "",
+    headingIdPrefix ? `${headingIdPrefix}${slug}` : "",
+  ].filter(Boolean);
+  return candidates.find((candidate) => document.getElementById(candidate)) || candidates[candidates.length - 1] || decoded;
 }
 
 function DetailActions({
@@ -471,18 +497,20 @@ function MarkdownPreview({
   vaultPath,
   outboundLinks,
   onOpenVaultPath,
+  headingIdPrefix = "",
 }: {
   content: string;
   currentPath?: string | null;
   vaultPath: string;
   outboundLinks?: string[];
   onOpenVaultPath: (path?: string | null) => void;
+  headingIdPrefix?: string;
 }) {
   const headingCounts = new Map<string, number>();
 
   function renderHeading(level: 1 | 2 | 3 | 4 | 5 | 6, children: ReactNode) {
     const text = textFromReactNode(children);
-    const id = uniqueHeadingId(text || `heading ${level}`, headingCounts);
+    const id = `${headingIdPrefix}${uniqueHeadingId(text || `heading ${level}`, headingCounts)}`;
     const Tag = `h${level}` as keyof JSX.IntrinsicElements;
     return (
       <Tag id={id} className="details-markdown-heading">
@@ -523,12 +551,7 @@ function MarkdownPreview({
                 if (!isWikilink && !isVaultLink && !isHeadingAnchor) return;
                 event.preventDefault();
                 if (isHeadingAnchor) {
-                  const raw = target.slice(1);
-                  try {
-                    scrollToPreviewHeading(decodeURIComponent(raw));
-                  } catch {
-                    scrollToPreviewHeading(raw);
-                  }
+                  scrollToPreviewHeading(resolvePreviewHeadingId(target.slice(1), headingIdPrefix));
                   return;
                 }
                 if (isVaultLink) {
@@ -610,6 +633,68 @@ function PreviewOutline({
         ))}
       </div>
     </nav>
+  );
+}
+
+function FocusedPreviewReader({
+  title,
+  path,
+  closeLabel,
+  outlineTitle,
+  content,
+  currentPath,
+  vaultPath,
+  outboundLinks,
+  headings,
+  onClose,
+  onOpenVaultPath,
+}: {
+  title: string;
+  path: string;
+  closeLabel: string;
+  outlineTitle: string;
+  content: string;
+  currentPath?: string | null;
+  vaultPath: string;
+  outboundLinks?: string[];
+  headings: PreviewHeading[];
+  onClose: () => void;
+  onOpenVaultPath: (path?: string | null) => void;
+}) {
+  return (
+    <div
+      className="details-reader-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section aria-modal="true" className="details-reader-dialog" role="dialog">
+        <header className="details-reader-header">
+          <div>
+            <strong>{title}</strong>
+            <code>{path}</code>
+          </div>
+          <button aria-label={closeLabel} onClick={onClose} title={closeLabel} type="button">
+            <X size={16} />
+          </button>
+        </header>
+        <div className="details-reader-body">
+          <aside className="details-reader-outline">
+            <PreviewOutline headings={headings} title={outlineTitle} />
+          </aside>
+          <article className="details-markdown-preview details-reader-markdown">
+            <MarkdownPreview
+              content={content}
+              currentPath={currentPath}
+              headingIdPrefix="details-reader-"
+              outboundLinks={outboundLinks}
+              vaultPath={vaultPath}
+              onOpenVaultPath={onOpenVaultPath}
+            />
+          </article>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -717,10 +802,28 @@ export function DetailsPanel({
   const text = detailsCopy[language];
   const sourcePreviewPath = selection.kind === "source" ? selection.file.path : null;
   const [previewState, setPreviewState] = useState<PreviewState>({ status: "idle" });
+  const [readerOpen, setReaderOpen] = useState(false);
   const previewHeadings = useMemo(
-    () => (previewState.status === "ready" ? extractPreviewHeadings(previewState.preview.content) : []),
+    () => (previewState.status === "ready" ? extractPreviewHeadings(previewState.preview.content, "details-preview-") : []),
     [previewState],
   );
+  const readerHeadings = useMemo(
+    () => (previewState.status === "ready" ? extractPreviewHeadings(previewState.preview.content, "details-reader-") : []),
+    [previewState],
+  );
+
+  useEffect(() => {
+    setReaderOpen(false);
+  }, [sourcePreviewPath]);
+
+  useEffect(() => {
+    if (!readerOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setReaderOpen(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [readerOpen]);
 
   useEffect(() => {
     if (!vaultPath || !canPreviewVaultText(sourcePreviewPath)) {
@@ -791,7 +894,16 @@ export function DetailsPanel({
             <div className="details-preview">
               <div className="section-head compact">
                 <h3>{text.preview}</h3>
-                {previewState.status === "ready" && <span>{previewState.preview.sizeBytes} bytes</span>}
+                <div className="details-preview-toolbar">
+                  {previewState.status === "ready" && (
+                    <>
+                      <button onClick={() => setReaderOpen(true)} type="button">
+                        <BookOpen size={13} />{text.reader}
+                      </button>
+                      <span>{previewState.preview.sizeBytes} bytes</span>
+                    </>
+                  )}
+                </div>
               </div>
               {previewState.status === "loading" && <p>{text.loadingPreview}</p>}
               {previewState.status === "error" && (
@@ -804,6 +916,7 @@ export function DetailsPanel({
                     <MarkdownPreview
                       content={previewState.preview.content}
                       currentPath={previewState.preview.path || selection.file.path}
+                      headingIdPrefix="details-preview-"
                       vaultPath={vaultPath}
                       outboundLinks={selection.file.outboundLinks}
                       onOpenVaultPath={onOpenVaultPath}
@@ -813,6 +926,21 @@ export function DetailsPanel({
                 </>
               )}
             </div>
+          )}
+          {readerOpen && previewState.status === "ready" && (
+            <FocusedPreviewReader
+              closeLabel={text.closeReader}
+              content={previewState.preview.content}
+              currentPath={previewState.preview.path || selection.file.path}
+              headings={readerHeadings}
+              outlineTitle={text.outline}
+              path={selection.file.path}
+              title={selection.file.title || selection.file.name}
+              vaultPath={vaultPath}
+              outboundLinks={selection.file.outboundLinks}
+              onClose={() => setReaderOpen(false)}
+              onOpenVaultPath={onOpenVaultPath}
+            />
           )}
         </div>
       )}
