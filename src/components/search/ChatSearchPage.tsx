@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   ClipboardCopy,
   FileSearch,
@@ -1017,6 +1019,17 @@ function buildLlmAnswerRequest(
   };
 }
 
+function AnswerMarkdown({ content, placeholder }: { content: string; placeholder: string }) {
+  if (!content.trim()) {
+    return <p className="chat-answer-placeholder">{placeholder}</p>;
+  }
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+      {content}
+    </ReactMarkdown>
+  );
+}
+
 export function ChatSearchPage({
   className,
   language = "zh",
@@ -1409,9 +1422,9 @@ export function ChatSearchPage({
           </div>
         )}
 
-        <pre className="chat-answer-draft">
-          {answerDraft || text.draftPlaceholder}
-        </pre>
+        <div className="chat-answer-draft">
+          <AnswerMarkdown content={answerDraft} placeholder={text.draftPlaceholder} />
+        </div>
       </section>
 
       <section className="panel large evidence-reference-panel">
