@@ -22,10 +22,10 @@ import {
   Sparkles,
   TerminalSquare,
 } from "lucide-react";
-import type { DesktopSettings, LlmApiKeyCheckResult, LlmCliCheckResult, LlmProviderConfig } from "../../types";
+import type { AgentReadApiServerInfo, DesktopSettings, LlmApiKeyCheckResult, LlmCliCheckResult, LlmProviderConfig } from "../../types";
 import { languageName, type UiLanguage } from "../../i18n";
 import { isLoopbackHttpEndpoint } from "../../lib/local-endpoints";
-import { checkLlmApiKey, checkLocalLlmCli } from "../../tauri";
+import { checkLlmApiKey, checkLocalLlmCli, startAgentReadApi, stopAgentReadApi } from "../../tauri";
 import { BrandMark } from "../brand/BrandMark";
 
 type RuntimeSettingsPanelProps = {
@@ -46,6 +46,7 @@ type SettingsSection =
   | "captioning"
   | "web-search"
   | "network"
+  | "agent-api"
   | "source-watch"
   | "scheduled-import"
   | "output"
@@ -60,6 +61,7 @@ const settingsNav: Array<{ id: SettingsSection; label: string; icon: typeof Sett
   { id: "captioning", label: "Image Captioning", icon: Image },
   { id: "web-search", label: "Web Search", icon: Search },
   { id: "network", label: "Network", icon: Network },
+  { id: "agent-api", label: "Agent API", icon: TerminalSquare },
   { id: "source-watch", label: "Source Watch", icon: ShieldCheck },
   { id: "scheduled-import", label: "Scheduled Import", icon: History },
   { id: "output", label: "Output", icon: FileText },
@@ -78,6 +80,7 @@ const settingsCopy = {
       captioning: "图像描述",
       "web-search": "网页搜索",
       network: "网络",
+      "agent-api": "Agent API",
       "source-watch": "资料监控",
       "scheduled-import": "定时导入",
       output: "输出",
@@ -324,6 +327,9 @@ export function RuntimeSettingsPanel({
   const [apiChecks, setApiChecks] = useState<Record<string, LlmApiKeyCheckResult | null>>({});
   const [checkingCli, setCheckingCli] = useState<string | null>(null);
   const [checkingApi, setCheckingApi] = useState<string | null>(null);
+  const [agentApiInfo, setAgentApiInfo] = useState<AgentReadApiServerInfo | null>(null);
+  const [agentApiError, setAgentApiError] = useState<string | null>(null);
+  const [agentApiBusy, setAgentApiBusy] = useState<"start" | "stop" | null>(null);
   const center = useMemo(() => normalizeProviderSettings(settings), [settings]);
 
   const updateCenter = (nextCenter: typeof center) => {
@@ -362,6 +368,40 @@ export function RuntimeSettingsPanel({
         ]),
       ),
     });
+  };
+
+  const handleStartAgentApi = async () => {
+    if (!vaultPath) return;
+    setAgentApiBusy("start");
+    setAgentApiError(null);
+    try {
+      setAgentApiInfo(await startAgentReadApi(vaultPath));
+    } catch (err) {
+      setAgentApiError(String(err));
+    } finally {
+      setAgentApiBusy(null);
+    }
+  };
+
+  const handleStopAgentApi = async () => {
+    setAgentApiBusy("stop");
+    setAgentApiError(null);
+    try {
+      setAgentApiInfo(await stopAgentReadApi());
+    } catch (err) {
+      setAgentApiError(String(err));
+    } finally {
+      setAgentApiBusy(null);
+    }
+  };
+
+  const copyAgentApiValue = async (value?: string | null) => {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch {
+      setAgentApiError(value);
+    }
   };
 
   const runCliCheck = async (providerId: "codex-cli" | "claude-code", command: "codex" | "claude") => {
@@ -705,6 +745,57 @@ export function RuntimeSettingsPanel({
               </label>
             </div>
             {renderParserBlock()}
+          </div>
+        );
+      case "agent-api":
+        return (
+          <div className="settings-section-page">
+            {renderSectionHead(
+              text.nav["agent-api"],
+              isZh ? "给 Codex / Claude Code 暴露只读、本地、带 token 的 vault 查询接口。" : "Expose a read-only, local, token-protected vault API for Codex / Claude Code.",
+              sectionStatus(agentApiInfo?.enabled ? (isZh ? "运行中" : "Running") : (isZh ? "关闭" : "Off"), agentApiInfo?.enabled ? "available" : "disabled"),
+            )}
+            <div className="settings-block">
+              <div className="settings-block-title"><TerminalSquare size={15} /><span>{isZh ? "本地只读 API" : "Local read API"}</span></div>
+              <div className="inline-actions">
+                <button type="button" onClick={handleStartAgentApi} disabled={!vaultPath || agentApiBusy === "start" || agentApiInfo?.enabled}>
+                  <Network size={14} />
+                  {agentApiBusy === "start" ? (isZh ? "启动中" : "Starting") : (isZh ? "启动 API" : "Start API")}
+                </button>
+                <button type="button" onClick={handleStopAgentApi} disabled={agentApiBusy === "stop" || !agentApiInfo?.enabled}>
+                  <ShieldCheck size={14} />
+                  {agentApiBusy === "stop" ? (isZh ? "停止中" : "Stopping") : (isZh ? "停止 API" : "Stop API")}
+                </button>
+              </div>
+              <p className="settings-block-copy">
+                {isZh
+                  ? "启动前会检查 product scorecard；未通过 ingest plan、registry、traceability、evidence search 或 query writeback gate 时不会开放端口。"
+                  : "Before opening a port, the app checks the product scorecard. It refuses to start until ingest plan, registry, traceability, evidence search, and query writeback gates pass."}
+              </p>
+              {agentApiInfo && (
+                <div className="settings-grid">
+                  <label>{isZh ? "Base URL" : "Base URL"}<input value={agentApiInfo.baseUrl} readOnly /></label>
+                  <label>{isZh ? "Bearer token" : "Bearer token"}<input value={agentApiInfo.token ?? ""} readOnly /></label>
+                  <button type="button" onClick={() => copyAgentApiValue(agentApiInfo.baseUrl)}>{isZh ? "复制 URL" : "Copy URL"}</button>
+                  <button type="button" onClick={() => copyAgentApiValue(agentApiInfo.token)}>{isZh ? "复制 token" : "Copy token"}</button>
+                </div>
+              )}
+              {agentApiError && <div className="settings-notice">{agentApiError}</div>}
+            </div>
+            <div className="settings-block">
+              <div className="settings-block-title"><KeyRound size={15} /><span>{isZh ? "开放范围" : "Exposed scope"}</span></div>
+              <div className="settings-list">
+                {(agentApiInfo?.endpoints ?? []).map((endpoint) => (
+                  <code key={`${endpoint.method}-${endpoint.path}`}>{endpoint.method} {endpoint.path} - {endpoint.capability}</code>
+                ))}
+                {!agentApiInfo?.endpoints?.length && <code>{isZh ? "启动后显示只读 endpoint。" : "Start the API to show read-only endpoints."}</code>}
+              </div>
+              <div className="settings-notice">
+                {isZh
+                  ? "不会暴露 apply、delete、set-status、parser、ingest、cloud OCR、外部搜索或写回应用 endpoint。"
+                  : "No apply, delete, set-status, parser, ingest, cloud OCR, external search, or writeback-apply endpoint is exposed."}
+              </div>
+            </div>
           </div>
         );
       case "source-watch":

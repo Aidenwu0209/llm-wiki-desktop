@@ -57,6 +57,18 @@ export type AgentReadApiReadiness = {
   blockedOperations: string[];
 };
 
+export type AgentReadApiServerInfo = {
+  enabled: boolean;
+  reason: string;
+  bindHost: string;
+  port: number;
+  baseUrl: string;
+  token?: string | null;
+  vaultPath: string;
+  endpoints: AgentReadApiEndpoint[];
+  blockedOperations: string[];
+};
+
 export type VaultFile = {
   name: string;
   path: string;
