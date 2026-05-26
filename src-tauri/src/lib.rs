@@ -7453,6 +7453,8 @@ fn save_desktop_settings(
             .filter(|value| !value.trim().is_empty())
             .is_some();
     settings = normalize_desktop_settings(settings)?;
+    settings.layout_parsing_api_url =
+        validate_layout_parsing_api_url(&settings.layout_parsing_api_url)?;
     validate_desktop_settings(&settings)?;
     let rendered = serde_json::to_string_pretty(&settings)
         .map_err(|e| format!("failed to serialize desktop settings: {e}"))?;
@@ -7599,6 +7601,58 @@ fn validate_llm_base_url(value: &str) -> Result<String, String> {
         return Ok(base);
     }
     Err("Only HTTPS endpoints or localhost HTTP endpoints are allowed for model calls".to_string())
+}
+
+fn is_exact_loopback_http_endpoint(value: &str) -> bool {
+    let trimmed = value.trim();
+    if !trimmed.to_ascii_lowercase().starts_with("http://") {
+        return false;
+    }
+    let rest = &trimmed["http://".len()..];
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.is_empty() || authority.contains('@') {
+        return false;
+    }
+    if let Some(after_open) = authority.strip_prefix('[') {
+        let Some(close_index) = after_open.find(']') else {
+            return false;
+        };
+        let host = &after_open[..close_index];
+        let suffix = &after_open[close_index + 1..];
+        if !suffix.is_empty() {
+            let Some(port) = suffix.strip_prefix(':') else {
+                return false;
+            };
+            if port.is_empty() || !port.chars().all(|ch| ch.is_ascii_digit()) {
+                return false;
+            }
+        }
+        return host.eq_ignore_ascii_case("::1");
+    }
+    let mut pieces = authority.splitn(2, ':');
+    let host = pieces.next().unwrap_or("").to_ascii_lowercase();
+    if host.is_empty() {
+        return false;
+    }
+    if let Some(port) = pieces.next() {
+        if port.is_empty() || !port.chars().all(|ch| ch.is_ascii_digit()) {
+            return false;
+        }
+    }
+    matches!(host.as_str(), "localhost" | "127.0.0.1")
+}
+
+fn validate_layout_parsing_api_url(value: &str) -> Result<String, String> {
+    let api_url = value.trim().to_string();
+    if api_url.is_empty() {
+        return Ok(api_url);
+    }
+    if api_url.to_ascii_lowercase().starts_with("https://")
+        || is_exact_loopback_http_endpoint(&api_url)
+    {
+        return Ok(api_url);
+    }
+    Err("Layout parsing API URL must use HTTPS unless it is localhost HTTP".to_string())
 }
 
 fn openai_chat_completions_url(base: &str) -> String {
@@ -10871,6 +10925,53 @@ mod tests {
         assert!(validate_llm_base_url("http://127.0.0.1.evil.com/v1").is_err());
         assert!(validate_llm_base_url("http://[::1].evil.com/v1").is_err());
         assert!(validate_llm_base_url("http://localhost@api.example.com/v1").is_err());
+    }
+
+    #[test]
+    fn desktop_settings_reject_remote_plain_http_layout_parser_endpoint() {
+        for endpoint in [
+            "http://api.example.com/layout",
+            "http://localhost.evil.com/layout",
+            "http://localhost@api.example.com/layout",
+        ] {
+            let vault = test_vault("layout-parser-endpoint");
+            let mut settings = DesktopSettings::default();
+            settings.default_pdf_parser = "layout-api".to_string();
+            settings.cloud_parsing_allowed = true;
+            settings.layout_parsing_api_url = endpoint.to_string();
+
+            let error = save_desktop_settings(to_display(&vault), settings)
+                .expect_err("unsafe layout parser endpoint should be rejected");
+            assert!(
+                error.contains("Layout parsing API URL must use HTTPS unless it is localhost HTTP")
+            );
+            assert!(!desktop_settings_path(&vault).is_file());
+
+            let _ = fs::remove_dir_all(vault);
+        }
+    }
+
+    #[test]
+    fn desktop_settings_allow_https_and_loopback_layout_parser_endpoints() {
+        for endpoint in [
+            "https://api.example.com/layout",
+            "http://localhost:8000/layout",
+            "http://127.0.0.1:8000/layout",
+            "http://[::1]:8000/layout",
+        ] {
+            let vault = test_vault("layout-parser-endpoint-allowed");
+            let mut settings = DesktopSettings::default();
+            settings.default_pdf_parser = "layout-api".to_string();
+            settings.cloud_parsing_allowed = true;
+            settings.layout_parsing_api_url = format!(" {endpoint} ");
+
+            let saved =
+                save_desktop_settings(to_display(&vault), settings).expect("save parser endpoint");
+            assert_eq!(saved.layout_parsing_api_url, endpoint);
+            assert!(desktop_settings_path(&vault).is_file());
+
+            let _ = fs::remove_dir_all(vault);
+        }
     }
 
     #[test]
