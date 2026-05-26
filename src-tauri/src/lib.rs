@@ -1710,13 +1710,24 @@ fn detect_mime(path: &Path) -> String {
     .to_string()
 }
 
+fn is_markdown_path(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(OsStr::to_str)
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "md" | "markdown"
+    )
+}
+
 fn collect_markdown_recursive(dir: &Path, files: &mut Vec<PathBuf>) {
     if let Ok(read_dir) = fs::read_dir(dir) {
         for entry in read_dir.flatten() {
             let path = entry.path();
             if path.is_dir() {
                 collect_markdown_recursive(&path, files);
-            } else if path.extension().and_then(OsStr::to_str) == Some("md") {
+            } else if is_markdown_path(&path) {
                 files.push(path);
             }
         }
@@ -3514,7 +3525,9 @@ fn source_qa(vault: &Path, source_path: &Path) -> Option<String> {
         return None;
     }
     let stem = source_path.file_stem()?.to_string_lossy();
-    qa_verdict(&vault.join("qa-reports").join(format!("{stem}.md")))
+    ["md", "markdown"]
+        .into_iter()
+        .find_map(|ext| qa_verdict(&vault.join("qa-reports").join(format!("{stem}.{ext}"))))
 }
 
 fn runtime_scripts_path(vault: &Path) -> Option<PathBuf> {
@@ -11629,6 +11642,57 @@ mod tests {
             decision.inbound_links,
             vec!["sources/LLM-0001.md".to_string()]
         );
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn vault_status_discovers_markdown_extension_pages() {
+        let vault = test_vault("markdown-extension-pages");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        let baseline = inspect_vault(to_display(&vault)).expect("inspect baseline vault");
+        write_text(
+            &vault.join("sources").join("LLM-9001.markdown"),
+            "# Markdown Extension Source\n\nEvidence.\n",
+        )
+        .expect("source page");
+        write_text(
+            &vault.join("concepts").join("markdown-extension.markdown"),
+            "# Markdown Extension Concept\n\nSynthesis.\n",
+        )
+        .expect("concept page");
+        write_text(
+            &vault.join("qa-reports").join("LLM-9001.markdown"),
+            "# Markdown Extension QA\n\nverdict: PASS\n",
+        )
+        .expect("qa report");
+
+        let source_pages = list_markdown(&vault.join("sources"));
+        assert!(source_pages
+            .iter()
+            .any(|path| path.file_name() == Some(OsStr::new("LLM-9001.markdown"))));
+        let recursive_sources = list_markdown_recursive(&vault.join("sources"));
+        assert!(recursive_sources
+            .iter()
+            .any(|path| path.file_name() == Some(OsStr::new("LLM-9001.markdown"))));
+
+        let status = inspect_vault(to_display(&vault)).expect("inspect vault");
+        assert_eq!(status.counts.sources, baseline.counts.sources + 1);
+        assert_eq!(status.counts.concepts, baseline.counts.concepts + 1);
+        assert_eq!(status.counts.reports, baseline.counts.reports + 1);
+        assert!(status
+            .files
+            .iter()
+            .any(|file| file.kind == "source" && file.name == "LLM-9001.markdown"));
+        assert!(status
+            .files
+            .iter()
+            .any(|file| file.kind == "concept" && file.name == "markdown-extension.markdown"));
+        assert!(status.files.iter().any(|file| {
+            file.kind == "report"
+                && file.name == "LLM-9001.markdown"
+                && file.qa_verdict.as_deref() == Some("PASS")
+        }));
 
         let _ = fs::remove_dir_all(vault);
     }
