@@ -4577,6 +4577,13 @@ fn is_symlink_path(path: &Path) -> bool {
 }
 
 fn auxiliary_raw_support_file(path: &Path) -> bool {
+    if path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .is_some_and(|name| name == "_translation_cache.json")
+    {
+        return true;
+    }
     let extension = path
         .extension()
         .and_then(OsStr::to_str)
@@ -5112,49 +5119,75 @@ fn is_archive_package(path: &Path) -> bool {
     )
 }
 
-fn collect_inbox_files(dir: &Path, out: &mut Vec<PathBuf>) {
+fn collect_raw_ingest_files(dir: &Path, out: &mut Vec<PathBuf>) {
     if let Ok(read_dir) = fs::read_dir(dir) {
-        for entry in read_dir.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                if path
-                    .file_name()
-                    .and_then(OsStr::to_str)
-                    .is_some_and(|name| name.starts_with('.'))
-                {
-                    continue;
-                }
-                collect_inbox_files(&path, out);
-            } else if path.is_file() {
-                out.push(path);
-            }
-        }
-    }
-}
-
-fn collect_ingest_inputs(vault: &Path) -> Vec<PathBuf> {
-    let raw = vault.join("raw");
-    let mut files = Vec::new();
-    if let Ok(read_dir) = fs::read_dir(&raw) {
         for entry in read_dir.flatten() {
             let path = entry.path();
             let name = path.file_name().and_then(OsStr::to_str).unwrap_or_default();
             if name.starts_with('.') || name.ends_with("_markdown") {
                 continue;
             }
-            if path.is_file() {
-                files.push(path);
-            } else if name == "inbox" && path.is_dir() {
-                collect_inbox_files(&path, &mut files);
+            if is_symlink_path(&path) {
+                continue;
+            }
+            if path.is_dir() {
+                collect_raw_ingest_files(&path, out);
+            } else if path.is_file() && !auxiliary_raw_support_file(&path) {
+                out.push(path);
             }
         }
     }
+}
+
+fn collect_inbox_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    collect_raw_ingest_files(dir, out);
+}
+
+fn collect_ingest_inputs(vault: &Path) -> Vec<PathBuf> {
+    let raw = vault.join("raw");
+    let mut files = Vec::new();
+    collect_raw_ingest_files(&raw, &mut files);
     files.sort();
     files
 }
 
+fn collect_parsed_artifact_dirs(dir: &Path, out: &mut Vec<PathBuf>) {
+    if let Ok(read_dir) = fs::read_dir(dir) {
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            let name = path.file_name().and_then(OsStr::to_str).unwrap_or_default();
+            if name.starts_with('.') {
+                continue;
+            }
+            if is_symlink_path(&path) {
+                continue;
+            }
+            if !path.is_dir() {
+                continue;
+            }
+            if name.ends_with("_markdown") {
+                if path.join("combined.md").is_file() {
+                    out.push(path);
+                }
+                continue;
+            }
+            collect_parsed_artifact_dirs(&path, out);
+        }
+    }
+}
+
 fn artifact_for_source(vault: &Path, source: &Path, hash: &str) -> PathBuf {
     let raw = vault.join("raw");
+    if source.parent() != Some(raw.as_path()) {
+        if let Some(parent) = source.parent() {
+            if let Some(stem) = source.file_stem().and_then(OsStr::to_str) {
+                let sibling = parent.join(format!("{stem}_markdown")).join("combined.md");
+                if sibling.is_file() {
+                    return sibling;
+                }
+            }
+        }
+    }
     let mut stem = safe_stem(source);
     if source.parent() != Some(raw.as_path()) {
         let short = hash.get(..8).unwrap_or(hash);
@@ -7599,63 +7632,55 @@ fn plan_ingest(vault_path: String) -> Result<IngestPlan, String> {
     }
 
     let raw = vault.join("raw");
-    if let Ok(read_dir) = fs::read_dir(&raw) {
-        for entry in read_dir.flatten() {
-            let path = entry.path();
-            if !path.is_dir()
-                || !path
+    let mut parsed_artifact_dirs = Vec::new();
+    collect_parsed_artifact_dirs(&raw, &mut parsed_artifact_dirs);
+    parsed_artifact_dirs.sort();
+    for path in parsed_artifact_dirs {
+        let combined = path.join("combined.md");
+        if combined.is_file() && !artifact_paths.contains(&combined) {
+            let hash = sha256_file(&combined)?;
+            let published = published_keys.contains(&(hash.clone(), hash.clone()));
+            let status = if published { "published" } else { "ready" }.to_string();
+            let action = if published {
+                "skip_runtime"
+            } else {
+                "run_ingest_corpus"
+            }
+            .to_string();
+            let reason = if published {
+                "standalone parsed artifact already completed a desktop ingest pipeline"
+            } else {
+                "parsed artifact exists without a matching raw source in the desktop scan"
+            }
+            .to_string();
+            let current_state = plan_current_state(&status, &action);
+            let next_action_label = plan_next_action_label(&status, &action);
+            let command = plan_command_for_action(&action, None);
+            let inputs = vec![rel_path(&vault, &combined)];
+            let outputs = plan_outputs_for_action(&vault, &combined, &action);
+            entries.push(IngestPlanEntry {
+                source_path: to_display(&combined),
+                file_name: path
                     .file_name()
-                    .and_then(OsStr::to_str)
-                    .is_some_and(|name| name.ends_with("_markdown"))
-            {
-                continue;
-            }
-            let combined = path.join("combined.md");
-            if combined.is_file() && !artifact_paths.contains(&combined) {
-                let hash = sha256_file(&combined)?;
-                let published = published_keys.contains(&(hash.clone(), hash.clone()));
-                let status = if published { "published" } else { "ready" }.to_string();
-                let action = if published {
-                    "skip_runtime"
-                } else {
-                    "run_ingest_corpus"
-                }
-                .to_string();
-                let reason = if published {
-                    "standalone parsed artifact already completed a desktop ingest pipeline"
-                } else {
-                    "parsed artifact exists without a matching raw source in the desktop scan"
-                }
-                .to_string();
-                let current_state = plan_current_state(&status, &action);
-                let next_action_label = plan_next_action_label(&status, &action);
-                let command = plan_command_for_action(&action, None);
-                let inputs = vec![rel_path(&vault, &combined)];
-                let outputs = plan_outputs_for_action(&vault, &combined, &action);
-                entries.push(IngestPlanEntry {
-                    source_path: to_display(&combined),
-                    file_name: path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string(),
-                    sha256: hash,
-                    artifact_sha256: sha256_file(&combined).ok(),
-                    artifact_path: Some(to_display(&combined)),
-                    status,
-                    action,
-                    reason,
-                    parser_hint: None,
-                    current_state,
-                    next_action_label,
-                    command,
-                    inputs,
-                    outputs,
-                    last_log_path: None,
-                    requires_human_approval: false,
-                    uses_network: false,
-                });
-            }
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string(),
+                sha256: hash,
+                artifact_sha256: sha256_file(&combined).ok(),
+                artifact_path: Some(to_display(&combined)),
+                status,
+                action,
+                reason,
+                parser_hint: None,
+                current_state,
+                next_action_label,
+                command,
+                inputs,
+                outputs,
+                last_log_path: None,
+                requires_human_approval: false,
+                uses_network: false,
+            });
         }
     }
 
@@ -11894,6 +11919,83 @@ mod tests {
         assert!(!entry.uses_network);
 
         let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn ingest_plan_discovers_nested_raw_corpus_artifacts() {
+        let vault = test_vault("nested-raw-corpus-plan");
+        let corpus = vault.join("raw").join("deepseek_paper");
+        fs::create_dir_all(&corpus).expect("create corpus dir");
+        let source = corpus.join("DeepSeek_Test_2401.00001.pdf");
+        fs::write(&source, b"pdf bytes").expect("write nested pdf");
+        let source_hash = sha256_file(&source).expect("source hash");
+        let artifact_dir = corpus.join("DeepSeek_Test_2401.00001_markdown");
+        fs::create_dir_all(&artifact_dir).expect("create artifact dir");
+        write_text(
+            &artifact_dir.join("combined.md"),
+            "# DeepSeek Test\n\nParsed evidence.\n",
+        )
+        .expect("write combined artifact");
+        write_text(
+            &artifact_dir.join("manifest.json"),
+            &format!(
+                "{{\"source_path\":\"raw/deepseek_paper/DeepSeek_Test_2401.00001.pdf\",\"source_sha256\":\"{}\"}}\n",
+                source_hash
+            ),
+        )
+        .expect("write manifest");
+        write_text(
+            &corpus.join("索引.md"),
+            "# deepseek_paper 中文转换索引\n\n- helper note, not evidence\n",
+        )
+        .expect("write support index");
+        #[cfg(unix)]
+        let external_raw = {
+            let external = test_vault("nested-raw-corpus-external-raw");
+            fs::write(external.join("outside.pdf"), b"outside pdf").expect("write external raw");
+            std::os::unix::fs::symlink(&external, corpus.join("linked-external"))
+                .expect("create raw symlink");
+            external
+        };
+        #[cfg(unix)]
+        let external_artifact = {
+            let external = test_vault("nested-raw-corpus-external-artifact");
+            write_text(&external.join("combined.md"), "# external artifact\n")
+                .expect("write external artifact");
+            std::os::unix::fs::symlink(&external, corpus.join("external_markdown"))
+                .expect("create artifact symlink");
+            external
+        };
+
+        let plan = plan_ingest(to_display(&vault)).expect("plan nested corpus");
+
+        assert_eq!(plan.summary.total, 1);
+        assert_eq!(plan.summary.ready, 1);
+        let entry = plan
+            .entries
+            .iter()
+            .find(|entry| entry.file_name == "DeepSeek_Test_2401.00001.pdf")
+            .expect("nested pdf entry");
+        assert_eq!(entry.status, "ready");
+        assert_eq!(entry.action, "run_ingest_corpus");
+        assert_eq!(entry.current_state, "ingest_ready");
+        assert_eq!(
+            entry.inputs,
+            vec!["raw/deepseek_paper/DeepSeek_Test_2401.00001.pdf".to_string()]
+        );
+        assert!(entry.artifact_path.as_deref().is_some_and(|path| path
+            .ends_with("raw/deepseek_paper/DeepSeek_Test_2401.00001_markdown/combined.md")));
+        assert!(plan
+            .entries
+            .iter()
+            .all(|entry| entry.file_name != "索引.md"));
+
+        let _ = fs::remove_dir_all(vault);
+        #[cfg(unix)]
+        {
+            let _ = fs::remove_dir_all(external_raw);
+            let _ = fs::remove_dir_all(external_artifact);
+        }
     }
 
     #[test]
