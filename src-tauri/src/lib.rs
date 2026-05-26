@@ -1790,6 +1790,13 @@ fn root_wiki_notes(vault: &Path) -> Vec<PathBuf> {
     notes
 }
 
+fn graph_report_notes(vault: &Path) -> Vec<PathBuf> {
+    let mut reports = list_markdown(&vault.join(".graph"));
+    reports.sort();
+    reports.dedup();
+    reports
+}
+
 fn count_jsonl(path: &Path) -> usize {
     read_text(path)
         .lines()
@@ -3272,6 +3279,7 @@ fn agent_search_vault(
         "concepts",
         "drafts",
         "qa-reports",
+        ".graph",
         "reviews/query-writeback",
     ] {
         candidates.extend(list_markdown(&vault.join(dir)));
@@ -4348,7 +4356,10 @@ fn inspect_vault(vault_path: String) -> Result<VaultStatus, String> {
     let sources = list_markdown(&vault.join("sources"));
     let drafts = list_markdown(&vault.join("drafts"));
     let concepts = list_markdown(&vault.join("concepts"));
-    let reports = list_markdown(&vault.join("qa-reports"));
+    let mut reports = list_markdown(&vault.join("qa-reports"));
+    reports.extend(graph_report_notes(&vault));
+    reports.sort();
+    reports.dedup();
     let notes = root_wiki_notes(&vault);
     let markdown_files = sources
         .iter()
@@ -11600,6 +11611,12 @@ mod tests {
     fn inspect_vault_and_agent_search_surface_root_wiki_notes() {
         let vault = test_vault("root-wiki-notes");
         create_minimal_vault(&vault).expect("create minimal vault");
+        fs::create_dir_all(vault.join(".graph")).expect("create graph dir");
+        write_text(
+            &vault.join(".graph").join("graph-report.md"),
+            "# Wiki Graph Report\n\nDeepSeek evidence anchor warning for graph QA.\n",
+        )
+        .expect("write graph report");
         let mut settings = DesktopSettings::default();
         settings.project_name = "DeepSeek Research Wiki".to_string();
         settings.project_purpose =
@@ -11627,9 +11644,19 @@ mod tests {
                     .as_deref()
                     .is_some_and(|excerpt| excerpt.contains("research direction"))
         }));
+        assert!(status.files.iter().any(|file| {
+            file.kind == "report"
+                && file.path.ends_with(".graph/graph-report.md")
+                && file.title.as_deref() == Some("Wiki Graph Report")
+        }));
 
         let search = agent_search_vault(&vault, "research direction", 10).expect("search notes");
         assert!(search.iter().any(|item| item.path == "purpose.md"));
+        let graph_search =
+            agent_search_vault(&vault, "evidence anchor warning", 10).expect("search graph report");
+        assert!(graph_search
+            .iter()
+            .any(|item| item.path == ".graph/graph-report.md"));
 
         let _ = fs::remove_dir_all(vault);
     }
