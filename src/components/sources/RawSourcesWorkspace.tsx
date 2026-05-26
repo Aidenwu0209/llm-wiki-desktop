@@ -125,6 +125,9 @@ const rawCopy = {
     artifact: "解析产物",
     artifactHash: "产物哈希",
     planState: "规划状态",
+    noPlanState: "未匹配到规划状态",
+    noPlanStateBody: "当前资料没有匹配的 ingest plan entry。运行规划后才能确认它是待解析、待发布、已有产物、已发布还是阻塞。",
+    runPlan: "运行规划",
     planFilters: "规划过滤",
     planFilterLabels: {
       all: "全部",
@@ -220,6 +223,9 @@ const rawCopy = {
     artifact: "Artifact",
     artifactHash: "Artifact hash",
     planState: "Plan state",
+    noPlanState: "No matching plan state",
+    noPlanStateBody: "This source does not have a matching ingest plan entry yet. Run planning before treating it as ready, staged, cached, published, or blocked.",
+    runPlan: "Run plan",
     planFilters: "Plan filters",
     planFilterLabels: {
       all: "All",
@@ -933,6 +939,21 @@ export function RawSourcesWorkspace({
                     </button>
                     <button type="button" onClick={() => onCopyText("ingest command", selectedPlanEntry.command.join(" "))}>
                       <ClipboardCopy size={14} />{text.command}
+                    </button>
+                  </div>
+                </details>
+              )}
+
+              {!selectedPlanEntry && (
+                <details className="raw-source-detail-section" open>
+                  <summary>
+                    <strong>{text.planState}</strong>
+                    <span>{text.noPlanState}</span>
+                  </summary>
+                  <p className="raw-source-plan-missing">{text.noPlanStateBody}</p>
+                  <div className="raw-source-actions">
+                    <button type="button" onClick={onPlanIngest} disabled={!vaultPath || busy === "plan_ingest"}>
+                      <ListChecks size={14} />{text.runPlan}
                     </button>
                   </div>
                 </details>
