@@ -1681,6 +1681,10 @@ fn detect_mime(path: &Path) -> String {
         "md" | "markdown" => "text/markdown",
         "txt" => "text/plain",
         "pdf" => "application/pdf",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "csv" => "text/csv",
         _ => "application/octet-stream",
     }
     .to_string()
@@ -4035,7 +4039,7 @@ fn supported_import_file(path: &Path) -> bool {
             .unwrap_or_default()
             .to_ascii_lowercase()
             .as_str(),
-        "pdf" | "md" | "markdown" | "txt"
+        "pdf" | "md" | "markdown" | "txt" | "docx" | "pptx" | "xlsx" | "csv"
     )
 }
 
@@ -11102,6 +11106,40 @@ mod tests {
             .any(|edge| edge.from_type == "source" && edge.to_type == "claim"));
 
         let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn import_accepts_default_source_watch_document_types() {
+        let vault = test_vault("import-default-doc-types");
+        let incoming = test_vault("external-default-doc-types");
+        let docx = incoming.join("deepseek-roadmap.docx");
+        let csv = incoming.join("deepseek-eval.csv");
+        fs::write(&docx, b"fake docx payload").expect("write docx");
+        fs::write(&csv, b"model,score\nDeepSeek,1.0\n").expect("write csv");
+
+        let batch = import_sources_impl(
+            &vault,
+            vec![to_display(&docx), to_display(&csv)],
+            false,
+            false,
+        )
+        .expect("import default document types");
+
+        assert_eq!(batch.imported.len(), 2);
+        assert!(batch.errors.is_empty(), "{:?}", batch.errors);
+        assert!(batch
+            .imported
+            .iter()
+            .any(|item| item.file_name == "deepseek-roadmap.docx"
+                && item.mime
+                    == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"));
+        assert!(batch
+            .imported
+            .iter()
+            .any(|item| item.file_name == "deepseek-eval.csv" && item.mime == "text/csv"));
+
+        let _ = fs::remove_dir_all(vault);
+        let _ = fs::remove_dir_all(incoming);
     }
 
     #[test]
