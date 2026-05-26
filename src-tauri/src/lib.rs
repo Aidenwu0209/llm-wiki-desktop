@@ -2748,12 +2748,21 @@ fn build_product_scorecard_report(vault: &Path) -> ProductScorecardReport {
         )
     });
 
-    let writebacks = list_writeback_proposals(to_display(vault)).unwrap_or_default();
+    let writeback_state = read_writeback_proposal_state(vault);
+    let writebacks = writeback_state.proposals;
     let proposed_writebacks = writebacks
         .iter()
         .filter(|proposal| proposal.status == "proposed")
         .count();
-    metrics.push(if writebacks.is_empty() {
+    let unsafe_proposed_writebacks = writebacks
+        .iter()
+        .filter(|proposal| proposal.status == "proposed")
+        .filter_map(|proposal| {
+            let issues = writeback_proposal_contract_issues(vault, proposal);
+            (!issues.is_empty()).then(|| format!("{}: {}", proposal.proposal_id, issues.join("; ")))
+        })
+        .collect::<Vec<_>>();
+    metrics.push(if writebacks.is_empty() && writeback_state.invalid_paths.is_empty() {
         scorecard_metric(
             "query_writeback",
             "Query writeback proposal boundary",
@@ -2761,6 +2770,46 @@ fn build_product_scorecard_report(vault: &Path) -> ProductScorecardReport {
             vec!["_state/writeback-proposals/".to_string()],
             vec!["proposals: 0".to_string()],
             "Create a query writeback proposal without applying it.",
+        )
+    } else if !writeback_state.invalid_paths.is_empty() || !unsafe_proposed_writebacks.is_empty() {
+        let mut evidence = vec!["_state/writeback-proposals/".to_string()];
+        evidence.extend(writeback_state.invalid_paths.iter().take(3).cloned());
+        let mut details = vec![
+            format!("proposals: {}", writebacks.len()),
+            format!("proposed: {proposed_writebacks}"),
+        ];
+        if !writeback_state.invalid_paths.is_empty() {
+            details.push(format!(
+                "invalid_files: {}",
+                writeback_state.invalid_paths.len()
+            ));
+            details.extend(
+                writeback_state
+                    .invalid_paths
+                    .iter()
+                    .take(3)
+                    .map(|path| format!("invalid: {path}")),
+            );
+        }
+        if !unsafe_proposed_writebacks.is_empty() {
+            details.push(format!(
+                "unsafe_proposed: {}",
+                unsafe_proposed_writebacks.len()
+            ));
+            details.extend(
+                unsafe_proposed_writebacks
+                    .iter()
+                    .take(3)
+                    .map(|issue| format!("unsafe: {issue}")),
+            );
+        }
+        scorecard_metric(
+            "query_writeback",
+            "Query writeback proposal boundary",
+            "fail",
+            evidence,
+            details,
+            "Repair or regenerate writeback proposal artifacts before trusting query writeback readiness.",
         )
     } else if proposed_writebacks == 0 {
         scorecard_metric(
@@ -8137,6 +8186,76 @@ fn writeback_proposal_path(vault: &Path, proposal_id: &str) -> PathBuf {
     writeback_proposals_dir(vault).join(format!("{proposal_id}.json"))
 }
 
+#[derive(Default)]
+struct WritebackProposalState {
+    proposals: Vec<WritebackProposal>,
+    invalid_paths: Vec<String>,
+}
+
+fn read_writeback_proposal_state(vault: &Path) -> WritebackProposalState {
+    let mut state = WritebackProposalState::default();
+    if let Ok(read_dir) = fs::read_dir(writeback_proposals_dir(vault)) {
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(OsStr::to_str) != Some("json") {
+                continue;
+            }
+            match serde_json::from_str::<WritebackProposal>(&read_text(&path)) {
+                Ok(proposal) => state.proposals.push(proposal),
+                Err(_) => state.invalid_paths.push(rel_path(vault, &path)),
+            }
+        }
+    }
+    state
+        .proposals
+        .sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    state.invalid_paths.sort();
+    state
+}
+
+fn writeback_proposal_contract_issues(vault: &Path, proposal: &WritebackProposal) -> Vec<String> {
+    let mut issues = Vec::new();
+    if proposal.diff.trim().is_empty() {
+        issues.push("missing diff preview".to_string());
+    }
+    if proposal.applied_at.is_some() {
+        issues.push("proposed proposal has applied_at set".to_string());
+    }
+    let target = match resolve_vault_target(vault, &proposal.target_path) {
+        Ok(target) => target,
+        Err(error) => {
+            issues.push(error);
+            return issues;
+        }
+    };
+    let extension = target
+        .extension()
+        .and_then(OsStr::to_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if !matches!(extension.as_str(), "md" | "markdown" | "txt") {
+        issues.push("target is not Markdown or text".to_string());
+    }
+    match writeback_target_kind(vault, &target) {
+        Ok(WritebackTargetKind::ReviewProposal) => {
+            let content = proposal.content.to_ascii_lowercase();
+            if !content.contains("writeback_applied: false") {
+                issues.push("missing writeback_applied: false marker".to_string());
+            }
+            if !content.contains("approval gate") || !content.contains("human") {
+                issues.push("missing human approval gate".to_string());
+            }
+        }
+        Ok(WritebackTargetKind::Concept) => {
+            if !target.is_file() {
+                issues.push("concept target is missing".to_string());
+            }
+        }
+        Err(error) => issues.push(error),
+    }
+    issues
+}
+
 fn save_writeback_proposal(vault: &Path, proposal: &WritebackProposal) -> Result<(), String> {
     let rendered = serde_json::to_string_pretty(proposal)
         .map_err(|e| format!("failed to serialize writeback proposal: {e}"))?;
@@ -8773,19 +8892,7 @@ fn create_writeback_proposal(
 fn list_writeback_proposals(vault_path: String) -> Result<Vec<WritebackProposal>, String> {
     let vault = PathBuf::from(vault_path);
     require_existing_dir(&vault, "vault")?;
-    let mut proposals = Vec::new();
-    if let Ok(read_dir) = fs::read_dir(writeback_proposals_dir(&vault)) {
-        for entry in read_dir.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(OsStr::to_str) == Some("json") {
-                if let Ok(proposal) = serde_json::from_str::<WritebackProposal>(&read_text(&path)) {
-                    proposals.push(proposal);
-                }
-            }
-        }
-    }
-    proposals.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-    Ok(proposals)
+    Ok(read_writeback_proposal_state(&vault).proposals)
 }
 
 #[tauri::command]
@@ -11490,6 +11597,79 @@ mod tests {
         let rendered = read_text(&product_scorecard_report_path(&vault));
         assert!(rendered.contains("DFC is used here as an evaluation corpus / benchmark"));
         assert!(rendered.contains("| Query writeback proposal boundary | `pass` |"));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn product_scorecard_fails_unreadable_query_writeback_state() {
+        let vault = test_vault("product-scorecard-unreadable-writeback");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        write_text(
+            &writeback_proposal_path(&vault, "wb-broken"),
+            "{not valid json\n",
+        )
+        .expect("write broken proposal state");
+
+        let report = build_product_scorecard_report(&vault);
+        let metric = report
+            .metrics
+            .iter()
+            .find(|metric| metric.metric_id == "query_writeback")
+            .expect("query writeback metric");
+        assert_eq!(metric.status, "fail");
+        assert!(metric
+            .counts
+            .iter()
+            .any(|detail| detail.contains("invalid_files: 1")));
+        assert!(metric
+            .next_action
+            .contains("Repair or regenerate writeback proposal artifacts"));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn product_scorecard_fails_unsafe_query_writeback_proposal_contract() {
+        let vault = test_vault("product-scorecard-unsafe-writeback");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        let unsafe_proposal = serde_json::json!({
+            "proposalId": "wb-unsafe",
+            "targetPath": "reviews/query-writeback/unsafe.md",
+            "title": "Unsafe proposal",
+            "status": "proposed",
+            "diff": "+ unchecked draft\n",
+            "content": "# Draft\n\nUnchecked proposal body.\n",
+            "createdAt": "2026-05-26T00:00:00+08:00",
+            "updatedAt": "2026-05-26T00:00:00+08:00",
+            "appliedAt": null,
+            "logPath": null
+        });
+        write_text(
+            &writeback_proposal_path(&vault, "wb-unsafe"),
+            &(serde_json::to_string_pretty(&unsafe_proposal).expect("proposal json") + "\n"),
+        )
+        .expect("write unsafe proposal state");
+
+        let report = build_product_scorecard_report(&vault);
+        let metric = report
+            .metrics
+            .iter()
+            .find(|metric| metric.metric_id == "query_writeback")
+            .expect("query writeback metric");
+        assert_eq!(metric.status, "fail");
+        assert!(metric
+            .counts
+            .iter()
+            .any(|detail| detail.contains("unsafe_proposed: 1")));
+        assert!(metric
+            .counts
+            .iter()
+            .any(|detail| detail.contains("missing writeback_applied: false marker")));
+        assert!(metric
+            .counts
+            .iter()
+            .any(|detail| detail.contains("missing human approval gate")));
 
         let _ = fs::remove_dir_all(vault);
     }
