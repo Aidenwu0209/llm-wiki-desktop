@@ -2122,6 +2122,11 @@ textarea {
   padding: 0 3px;
 }
 
+.details-markdown-preview .details-vault-link {
+  color: #376552;
+  text-decoration-color: rgba(55, 101, 82, 0.35);
+}
+
 .details-markdown-image-placeholder {
   display: inline-block;
   max-width: 100%;
