@@ -7455,6 +7455,7 @@ fn save_desktop_settings(
     settings = normalize_desktop_settings(settings)?;
     settings.layout_parsing_api_url =
         validate_layout_parsing_api_url(&settings.layout_parsing_api_url)?;
+    settings.embedding_endpoint = validate_embedding_endpoint(&settings.embedding_endpoint)?;
     validate_desktop_settings(&settings)?;
     let rendered = serde_json::to_string_pretty(&settings)
         .map_err(|e| format!("failed to serialize desktop settings: {e}"))?;
@@ -7653,6 +7654,19 @@ fn validate_layout_parsing_api_url(value: &str) -> Result<String, String> {
         return Ok(api_url);
     }
     Err("Layout parsing API URL must use HTTPS unless it is localhost HTTP".to_string())
+}
+
+fn validate_embedding_endpoint(value: &str) -> Result<String, String> {
+    let endpoint = value.trim().to_string();
+    if endpoint.is_empty() {
+        return Ok(endpoint);
+    }
+    if endpoint.to_ascii_lowercase().starts_with("https://")
+        || is_exact_loopback_http_endpoint(&endpoint)
+    {
+        return Ok(endpoint);
+    }
+    Err("Embedding endpoint must use HTTPS unless it is localhost HTTP".to_string())
 }
 
 fn openai_chat_completions_url(base: &str) -> String {
@@ -10952,6 +10966,27 @@ mod tests {
     }
 
     #[test]
+    fn desktop_settings_reject_remote_plain_http_embedding_endpoint() {
+        for endpoint in [
+            "http://api.example.com/v1/embeddings",
+            "http://localhost.evil.com/v1/embeddings",
+            "http://localhost@api.example.com/v1/embeddings",
+        ] {
+            let vault = test_vault("embedding-endpoint");
+            let mut settings = DesktopSettings::default();
+            settings.embedding_enabled = true;
+            settings.embedding_endpoint = endpoint.to_string();
+
+            let error = save_desktop_settings(to_display(&vault), settings)
+                .expect_err("unsafe embedding endpoint should be rejected");
+            assert!(error.contains("Embedding endpoint must use HTTPS unless it is localhost HTTP"));
+            assert!(!desktop_settings_path(&vault).is_file());
+
+            let _ = fs::remove_dir_all(vault);
+        }
+    }
+
+    #[test]
     fn desktop_settings_allow_https_and_loopback_layout_parser_endpoints() {
         for endpoint in [
             "https://api.example.com/layout",
@@ -10968,6 +11003,28 @@ mod tests {
             let saved =
                 save_desktop_settings(to_display(&vault), settings).expect("save parser endpoint");
             assert_eq!(saved.layout_parsing_api_url, endpoint);
+            assert!(desktop_settings_path(&vault).is_file());
+
+            let _ = fs::remove_dir_all(vault);
+        }
+    }
+
+    #[test]
+    fn desktop_settings_allow_https_and_loopback_embedding_endpoints() {
+        for endpoint in [
+            "https://api.example.com/v1/embeddings",
+            "http://localhost:1234/v1/embeddings",
+            "http://127.0.0.1:1234/v1/embeddings",
+            "http://[::1]:1234/v1/embeddings",
+        ] {
+            let vault = test_vault("embedding-endpoint-allowed");
+            let mut settings = DesktopSettings::default();
+            settings.embedding_enabled = true;
+            settings.embedding_endpoint = format!(" {endpoint} ");
+
+            let saved = save_desktop_settings(to_display(&vault), settings)
+                .expect("save embedding endpoint");
+            assert_eq!(saved.embedding_endpoint, endpoint);
             assert!(desktop_settings_path(&vault).is_file());
 
             let _ = fs::remove_dir_all(vault);
