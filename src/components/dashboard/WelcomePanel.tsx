@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { BookOpen, BriefcaseBusiness, CheckCircle2, FolderOpen, GraduationCap, History, Library, Plus, Sprout } from "lucide-react";
+import { AlertTriangle, BookOpen, BriefcaseBusiness, CheckCircle2, FolderOpen, GraduationCap, History, Library, Plus, Sprout } from "lucide-react";
 import type { DesktopAppState, VaultSuggestion } from "../../types";
 import { LogoMark } from "../brand/LogoMark";
 import { languageName, type UiLanguage } from "../../i18n";
@@ -62,6 +62,7 @@ const welcomeCopy = {
     aiOutputLanguage: "AI 输出语言",
     parentDirectory: "父目录",
     parentPathWhitespaceWarning: (parts: string[]) => `父目录包含前导/尾随空格路径段：${parts.join(" / ")}。这类路径在同步、脚本、Obsidian URI 或其他设备上容易被误读；建议先选择没有这些空格的父目录。`,
+    projectPathWhitespaceWarning: (parts: string[]) => `路径段含前导/尾随空格：${parts.join(" / ")}。迁移或同步前建议重命名。`,
     browse: "浏览",
     templatePurpose: "模板用途",
     cancel: "取消",
@@ -91,6 +92,7 @@ const welcomeCopy = {
     aiOutputLanguage: "AI Output Language",
     parentDirectory: "Parent Directory",
     parentPathWhitespaceWarning: (parts: string[]) => `Parent directory contains leading/trailing-space path segment(s): ${parts.join(" / ")}. These paths are easy to misread in sync tools, scripts, Obsidian URIs, or on another device; choose a parent directory without those spaces first.`,
+    projectPathWhitespaceWarning: (parts: string[]) => `Path segment has leading/trailing spaces: ${parts.join(" / ")}. Rename before migration or sync.`,
     browse: "Browse",
     templatePurpose: "Template purpose",
     cancel: "Cancel",
@@ -126,6 +128,16 @@ function lastPathSegment(path: string) {
   return visiblePath(path).split("/").filter(Boolean).pop() || visiblePath(path);
 }
 
+function PathRiskNotice({ message, parts }: { message: (parts: string[]) => string; parts: string[] }) {
+  if (parts.length === 0) return null;
+  return (
+    <span className="welcome-path-risk">
+      <AlertTriangle size={13} />
+      {message(parts)}
+    </span>
+  );
+}
+
 export function WelcomePanel({
   language,
   appState,
@@ -154,12 +166,15 @@ export function WelcomePanel({
   const recentVaults = Array.from(new Set(appState?.recentVaults ?? []));
   const suggestionByPath = new Map(suggestions.map((item) => [item.path, item]));
   const deepseekVaults = suggestions.filter((item) => item.kind === "deepseek");
+  const demoVault = deepseekVaults[0];
   const lastVault = appState?.lastSelectedVault || recentVaults[0] || "";
   const visibleRecent = recentVaults.slice(0, 5);
   const detectedProjects = useMemo(() => suggestions.filter((item) => item.exists).slice(0, 4), [suggestions]);
   const selectedTemplate = templates.find((item) => item.id === template) ?? templates[0];
   const selectedTemplateText = text.templates[selectedTemplate.id];
   const parentWhitespaceComponents = useMemo(() => pathWhitespaceComponents(parentDirectory), [parentDirectory]);
+  const lastVaultRiskParts = useMemo(() => pathWhitespaceComponents(lastVault), [lastVault]);
+  const demoVaultRiskParts = useMemo(() => pathWhitespaceComponents(demoVault?.path ?? ""), [demoVault?.path]);
 
   const resetCreateState = () => {
     setProjectName("");
@@ -227,8 +242,11 @@ export function WelcomePanel({
         </div>
         {lastVault && (
           <button className="continue-project" onClick={() => onSelectVault(lastVault)}>
-            <History size={15} />
-            {text.continue} {lastPathSegment(lastVault)}
+            <span className="continue-project-label">
+              <History size={15} />
+              {text.continue} {lastPathSegment(lastVault)}
+            </span>
+            <PathRiskNotice message={text.projectPathWhitespaceWarning} parts={lastVaultRiskParts} />
           </button>
         )}
       </div>
@@ -243,11 +261,13 @@ export function WelcomePanel({
           {visibleRecent.map((path) => {
             const suggestion = suggestionByPath.get(path);
             const exists = suggestion?.exists ?? true;
+            const pathRiskParts = pathWhitespaceComponents(path);
             return (
               <button key={path} onClick={() => onSelectVault(path)} disabled={!exists}>
                 <strong>{lastPathSegment(path)}</strong>
                 <span className={classNames("inline-state", exists ? "ok" : "danger")}>{exists ? "ready" : "missing"}</span>
                 <code>{visiblePath(path)}</code>
+                <PathRiskNotice message={text.projectPathWhitespaceWarning} parts={pathRiskParts} />
               </button>
             );
           })}
@@ -259,20 +279,25 @@ export function WelcomePanel({
             <span>{detectedProjects.length}</span>
           </div>
           {detectedProjects.length === 0 && <p className="empty">{text.noSuggestions}</p>}
-          {deepseekVaults[0]?.exists && (
-            <button onClick={() => onSelectVault(deepseekVaults[0].path)}>
+          {demoVault?.exists && (
+            <button onClick={() => onSelectVault(demoVault.path)}>
               <strong>{text.openDemo}</strong>
               <span className="inline-state ok">demo</span>
-              <code>{visiblePath(deepseekVaults[0].path)}</code>
+              <code>{visiblePath(demoVault.path)}</code>
+              <PathRiskNotice message={text.projectPathWhitespaceWarning} parts={demoVaultRiskParts} />
             </button>
           )}
-          {detectedProjects.map((item) => (
-            <button key={`${item.kind}-${item.path}`} onClick={() => onSelectVault(item.path)}>
-              <strong>{item.label}</strong>
-              <span className="inline-state ok">{item.kind}</span>
-              <code>{visiblePath(item.path)}</code>
-            </button>
-          ))}
+          {detectedProjects.map((item) => {
+            const pathRiskParts = pathWhitespaceComponents(item.path);
+            return (
+              <button key={`${item.kind}-${item.path}`} onClick={() => onSelectVault(item.path)}>
+                <strong>{item.label}</strong>
+                <span className="inline-state ok">{item.kind}</span>
+                <code>{visiblePath(item.path)}</code>
+                <PathRiskNotice message={text.projectPathWhitespaceWarning} parts={pathRiskParts} />
+              </button>
+            );
+          })}
         </section>
       </div>
 
@@ -333,7 +358,8 @@ export function WelcomePanel({
                 </div>
                 {parentWhitespaceComponents.length > 0 && (
                   <div className="project-path-warning" role="alert">
-                    {text.parentPathWhitespaceWarning(parentWhitespaceComponents)}
+                    <AlertTriangle size={14} />
+                    <span>{text.parentPathWhitespaceWarning(parentWhitespaceComponents)}</span>
                   </div>
                 )}
               </label>
