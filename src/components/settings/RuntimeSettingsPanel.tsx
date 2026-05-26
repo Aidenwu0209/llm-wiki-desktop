@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import type { DesktopSettings, LlmApiKeyCheckResult, LlmCliCheckResult, LlmProviderConfig } from "../../types";
 import { languageName, type UiLanguage } from "../../i18n";
+import { isLoopbackHttpEndpoint } from "../../lib/local-endpoints";
 import { checkLlmApiKey, checkLocalLlmCli } from "../../tauri";
 import { BrandMark } from "../brand/BrandMark";
 
@@ -248,15 +249,8 @@ function classNames(...items: Array<string | false | null | undefined>) {
   return items.filter(Boolean).join(" ");
 }
 
-function isLocalApiEndpoint(value?: string | null) {
-  const url = (value || "").trim().toLowerCase();
-  return url.startsWith("http://localhost")
-    || url.startsWith("http://127.0.0.1")
-    || url.startsWith("http://[::1]");
-}
-
 function apiProviderReady(config: LlmProviderConfig) {
-  return Boolean(config.apiKeyConfigured || isLocalApiEndpoint(config.apiBaseUrl));
+  return Boolean(config.apiKeyConfigured || isLoopbackHttpEndpoint(config.apiBaseUrl));
 }
 
 function defaultProviderConfig(providerId: string): LlmProviderConfig {
@@ -424,7 +418,7 @@ export function RuntimeSettingsPanel({
 
   const runApiKeyCheck = async (providerId: string) => {
     const config = center.providers[providerId] ?? defaultProviderConfig(providerId);
-    if (isLocalApiEndpoint(config.apiBaseUrl)) {
+    if (isLoopbackHttpEndpoint(config.apiBaseUrl)) {
       const result: LlmApiKeyCheckResult = {
         providerId,
         envVar: config.apiKeyEnvVar || "",
@@ -947,7 +941,7 @@ export function RuntimeSettingsPanel({
                 const apiCheck = apiChecks[provider.id];
                 const isLocal = provider.kind === "local";
                 const persistedCliAvailable = Boolean(config.cliAvailable);
-                const localApiReady = isLocalApiEndpoint(config.apiBaseUrl);
+                const localApiReady = isLoopbackHttpEndpoint(config.apiBaseUrl);
                 const canEnable = isLocal ? Boolean(cliCheck?.available || persistedCliAvailable) : Boolean(apiCheck?.available || apiProviderReady(config));
                 const status = isLocal
                   ? checkingCli === provider.id

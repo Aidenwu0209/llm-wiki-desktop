@@ -24,6 +24,7 @@ import type {
   WritebackProposal,
 } from "../../types";
 import type { UiLanguage } from "../../i18n";
+import { isLoopbackHttpEndpoint } from "../../lib/local-endpoints";
 import { generateLlmAnswer } from "../../tauri";
 
 const DEFAULT_DEEPSEEK_QUESTIONS = [
@@ -432,18 +433,11 @@ type ActiveProviderSummary = {
   config: LlmProviderConfig | null;
 };
 
-function isLocalApiUrl(value?: string | null) {
-  const url = (value || "").trim().toLowerCase();
-  return url.startsWith("http://localhost")
-    || url.startsWith("http://127.0.0.1")
-    || url.startsWith("http://[::1]");
-}
-
 function providerSummary(center?: LlmProviderCenterSettings | null, language: UiLanguage = "en"): ActiveProviderSummary {
   const activeProviderId = center?.activeProviderId || "";
   const activeConfig = activeProviderId ? center?.providers?.[activeProviderId] : null;
   const isLocalCli = localProviderIds.has(activeProviderId);
-  const isLocalApi = isLocalApiUrl(activeConfig?.apiBaseUrl);
+  const isLocalApi = isLoopbackHttpEndpoint(activeConfig?.apiBaseUrl);
   const hasApiEndpoint = Boolean(activeConfig?.apiBaseUrl?.trim());
   const hasApiCredential = Boolean(activeConfig?.apiKeyConfigured || isLocalApi);
   const enabled = Boolean(activeConfig?.enabled);
