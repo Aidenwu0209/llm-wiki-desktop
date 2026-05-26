@@ -115,6 +115,7 @@ type ResearchGraphPageProps = {
   writebacks: WritebackProposal[];
   traceabilityWarnings: TraceabilityWarning[];
   onOpenPath: (path: string) => void;
+  onOpenVaultItem: (path: string) => void;
   onRevealPath: (path: string) => void;
   onCopyText: (label: string, text?: string | null) => void;
   onOpenObsidian: () => void;
@@ -169,6 +170,9 @@ const graphCopy = {
     researchSummary: "证据图谱摘要",
     vaultSummary: "该证据图谱连接当前知识库中的资料、论断、概念、审核、可追踪性警告和写回提案。",
     noVaultSummary: "打开已生成的知识库后即可构建证据图谱。",
+    graphArtifacts: "图谱产物",
+    noGraphArtifacts: "暂无 graph report 或 canvas",
+    revealArtifact: "显示位置",
     keyConcepts: "关键概念",
     knowledgeClusters: "知识簇",
     largestCluster: "最大簇",
@@ -287,6 +291,9 @@ const graphCopy = {
     researchSummary: "Evidence Graph summary",
     vaultSummary: "This graph links generated sources, claims, concepts, reviews, traceability warnings, and writeback proposals from the selected vault.",
     noVaultSummary: "Open a generated vault to build the Evidence Graph.",
+    graphArtifacts: "Graph artifacts",
+    noGraphArtifacts: "No graph report or canvas yet",
+    revealArtifact: "Reveal",
     keyConcepts: "Key concepts",
     knowledgeClusters: "Knowledge clusters",
     largestCluster: "Largest cluster",
@@ -450,7 +457,7 @@ function basename(path?: string | null) {
 }
 
 function labelFromPath(path?: string | null) {
-  return basename(path).replace(/\.(md|markdown|txt|pdf|jsonl)$/i, "") || "untitled";
+  return basename(path).replace(/\.(md|markdown|canvas|txt|pdf|jsonl)$/i, "") || "untitled";
 }
 
 function sourceIdFromPath(path?: string | null) {
@@ -465,6 +472,17 @@ function relativeVaultPath(vaultPath?: string | null, path?: string | null) {
   if (normalizedPath === normalizedVault) return "";
   const prefix = `${normalizedVault}/`;
   return normalizedPath.startsWith(prefix) ? normalizedPath.slice(prefix.length) : null;
+}
+
+function graphArtifactPath(vaultPath?: string | null, file?: VaultFile | null) {
+  if (!file) return "";
+  return relativeVaultPath(vaultPath, file.path) || file.path.replace(/\\/g, "/");
+}
+
+function isGraphArtifact(vaultPath?: string | null, file?: VaultFile | null) {
+  if (!file || file.kind !== "report") return false;
+  const path = graphArtifactPath(vaultPath, file);
+  return path.startsWith(".graph/") || path.startsWith("canvas/") || path.endsWith(".canvas");
 }
 
 function sourceNodeLabel(existing: string | undefined, next: string) {
@@ -1363,6 +1381,7 @@ export function ResearchGraphPage({
   writebacks,
   traceabilityWarnings,
   onOpenPath,
+  onOpenVaultItem,
   onRevealPath,
   onCopyText,
   onOpenObsidian,
@@ -1381,6 +1400,13 @@ export function ResearchGraphPage({
   const graph = useMemo(
     () => buildResearchGraph({ status, registry, claims, evidencePaths, reviewItems, writebacks, traceabilityWarnings }),
     [claims, evidencePaths, registry, reviewItems, status, traceabilityWarnings, writebacks],
+  );
+  const graphArtifacts = useMemo(
+    () =>
+      (status?.files ?? [])
+        .filter((file) => isGraphArtifact(vaultPath, file))
+        .sort((a, b) => graphArtifactPath(vaultPath, a).localeCompare(graphArtifactPath(vaultPath, b))),
+    [status, vaultPath],
   );
   const nodeSubtitle = (value?: string | null) => {
     if (!value || language !== "zh") return value;
@@ -1561,6 +1587,26 @@ export function ResearchGraphPage({
           <ul>
             {summary.map((item) => <li key={item}>{item}</li>)}
           </ul>
+        </div>
+        <div>
+          <span>{text.graphArtifacts}</span>
+          <strong>{graphArtifacts.length}</strong>
+          <em>{graphArtifacts.slice(0, 3).map((file) => graphArtifactPath(vaultPath, file)).join(", ") || text.noGraphArtifacts}</em>
+          {graphArtifacts.slice(0, 3).map((file) => {
+            const path = graphArtifactPath(vaultPath, file);
+            return (
+              <button key={file.path} className="graph-insight-link" onClick={() => onOpenVaultItem(path)}>
+                <SquareStack size={14} />
+                {file.title || labelFromPath(path)}
+              </button>
+            );
+          })}
+          {graphArtifacts[0] && (
+            <button className="graph-insight-link" onClick={() => onRevealPath(resolveVaultPath(graphArtifactPath(vaultPath, graphArtifacts[0])))}>
+              <FolderOpen size={14} />
+              {text.revealArtifact}
+            </button>
+          )}
         </div>
         <div>
           <span>{text.keyConcepts}</span>
