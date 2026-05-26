@@ -1566,6 +1566,20 @@ function App() {
     }
   }
 
+  async function handleOpenReadingQualityReport() {
+    const reportPath = status?.readingQuality?.reportPath;
+    if (!reportPath) {
+      await handleOpenObsidian();
+      return;
+    }
+    setError(null);
+    try {
+      await openPath(vaultFilePath(reportPath));
+    } catch (err) {
+      setError(String(err));
+    }
+  }
+
   async function handleDiagnostic() {
     if (!vaultPath) return;
     setBusy("diagnostic");
@@ -2249,6 +2263,7 @@ function App() {
           onRunLint={handleIngestLint}
           onRunPipeline={handleIngestPipeline}
           onOpenObsidian={handleOpenObsidian}
+          onOpenReadingQualityReport={handleOpenReadingQualityReport}
           onRunObsidianSetup={() => handleRuntime("obsidian_setup")}
         />
 

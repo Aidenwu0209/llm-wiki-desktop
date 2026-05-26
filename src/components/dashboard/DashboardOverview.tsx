@@ -57,6 +57,7 @@ type DashboardOverviewProps = {
   onRunLint: () => void;
   onRunPipeline: () => void;
   onOpenObsidian: () => void;
+  onOpenReadingQualityReport: () => void;
   onRunObsidianSetup: () => void;
 };
 
@@ -102,6 +103,7 @@ const dashboardCopy = {
     activity: "活动",
     choose: "选择",
     open: "打开",
+    report: "报告",
     setup: "配置",
     runLint: "运行检查",
     reviews: "审核",
@@ -211,6 +213,7 @@ const dashboardCopy = {
     activity: "Activity",
     choose: "Choose",
     open: "Open",
+    report: "Report",
     setup: "Setup",
     runLint: "Run lint",
     reviews: "Reviews",
@@ -439,6 +442,7 @@ export function DashboardOverview({
   onRunLint,
   onRunPipeline,
   onOpenObsidian,
+  onOpenReadingQualityReport,
   onRunObsidianSetup,
 }: DashboardOverviewProps) {
   const text = dashboardCopy[language];
@@ -454,6 +458,7 @@ export function DashboardOverview({
   const traceabilityTotal = traceabilityWarnings.length + brokenEvidence;
   const readingQualityIssues = status?.readingQuality?.findings ?? 0;
   const readingQualityDetailText = readingQualityDetail(status?.readingQuality, text);
+  const hasReadingQualityReport = Boolean(status?.readingQuality?.reportPath);
   const vaultErrors = status?.errors ?? [];
   const unsafePathParts = whitespacePathParts(vaultPath);
   const statusMessages: string[] = [];
@@ -551,8 +556,8 @@ export function DashboardOverview({
           value={readingQualityIssues ? `${readingQualityIssues} ${text.readingFindings}` : text.readingClear}
           detail={readingQualityIssues ? readingQualityDetailText : text.readingQualityDetail}
           tone={readingQualityIssues ? "warn" : "ok"}
-          action={text.open}
-          onAction={onOpenObsidian}
+          action={hasReadingQualityReport ? text.report : text.open}
+          onAction={hasReadingQualityReport ? onOpenReadingQualityReport : onOpenObsidian}
         />
         <ReadinessCard
           icon={ShieldCheck}
