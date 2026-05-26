@@ -13958,10 +13958,30 @@ mod tests {
     fn generated_obsidian_home_refreshes_managed_status_counts() {
         let vault = test_vault("obsidian-home-refresh");
         create_minimal_vault(&vault).expect("create vault");
+        let raw_dir = vault.join("raw").join("deepseek_paper");
+        fs::create_dir_all(&raw_dir).expect("create raw corpus dir");
+        let raw_pdf = raw_dir.join("DeepSeek-Test_2401.00001.pdf");
+        fs::write(&raw_pdf, b"%PDF-1.4\n% synthetic raw evidence\n").expect("write raw pdf");
+        let raw_hash = sha256_file(&raw_pdf).expect("hash raw pdf");
+        write_text(
+            &vault.join("_state").join("source-registry.jsonl"),
+            &format!(
+                "{{\"source_id\":\"LLM-0001\",\"source_uuid\":\"{}\",\"raw_path\":\"raw/deepseek_paper/DeepSeek-Test_2401.00001.pdf\",\"raw_hash\":\"{}\",\"status\":\"candidate\"}}\n",
+                source_uuid(&raw_hash),
+                raw_hash
+            ),
+        )
+        .expect("write registry candidate");
 
         let home = generate_entry_note(&vault).expect("generate home");
         let before = read_text(&home);
+        assert!(before.contains("- Raw evidence inputs: 1"));
+        assert!(before.contains("- Registry candidates: 1"));
+        assert!(before.contains("- Pending parse or ingest: 1"));
         assert!(before.contains("- Source pages: 0"));
+        assert!(before.contains("## Corpus Map"));
+        assert!(before.contains("### Raw Evidence Awaiting Ingest"));
+        assert!(before.contains("[[raw/deepseek_paper/DeepSeek-Test_2401.00001.pdf]]"));
 
         write_text(
             &vault.join("sources").join("LLM-0001.md"),
@@ -14711,6 +14731,19 @@ fn count_status_rows(path: &Path) -> HashMap<String, usize> {
     counts
 }
 
+fn pending_registry_rows(statuses: &HashMap<String, usize>) -> usize {
+    statuses
+        .iter()
+        .filter(|(status, _)| {
+            !matches!(
+                status.as_str(),
+                "published" | "archived" | "applied" | "ignored"
+            )
+        })
+        .map(|(_, count)| *count)
+        .sum()
+}
+
 fn count_writeback_statuses(vault: &Path) -> HashMap<String, usize> {
     let mut counts = HashMap::new();
     if let Ok(read_dir) = fs::read_dir(writeback_proposals_dir(vault)) {
@@ -14747,6 +14780,7 @@ fn generate_entry_note(vault: &Path) -> Result<PathBuf, String> {
     let registry_statuses = count_status_rows(&vault.join("_state").join("source-registry.jsonl"));
     let desktop_statuses =
         count_status_rows(&vault.join("_state").join("desktop-source-registry.jsonl"));
+    let raw_evidence_inputs = collect_ingest_inputs(vault);
     let lint_findings = count_jsonl(&vault.join("_state").join("lint-findings.jsonl"));
     let writeback_statuses = count_writeback_statuses(vault);
     let proposed_writebacks = writeback_statuses
@@ -14778,10 +14812,30 @@ fn generate_entry_note(vault: &Path) -> Result<PathBuf, String> {
                 .copied()
                 .unwrap_or_default(),
         );
+    let candidate_sources = registry_statuses
+        .get("candidate")
+        .copied()
+        .unwrap_or_default()
+        .max(
+            desktop_statuses
+                .get("candidate")
+                .copied()
+                .unwrap_or_default(),
+        );
+    let pending_source_inputs = pending_registry_rows(&registry_statuses)
+        .max(pending_registry_rows(&desktop_statuses))
+        .max(raw_evidence_inputs.len().saturating_sub(published_sources));
     let source_links = markdown_list_links(vault, &sources, "No generated source pages yet.", 12);
+    let raw_links = markdown_list_links(
+        vault,
+        &raw_evidence_inputs,
+        "No raw evidence inputs staged.",
+        12,
+    );
     let concept_links = markdown_list_links(vault, &concepts, "No concept pages yet.", 12);
     let rendered = format!(
-        "# LLM Wiki Home\n\n<!-- llm-wiki-desktop:generated-home -->\n\n## Start Here\n\n- Read the corpus map first to understand which source pages exist and which inputs are still stale or blocked.\n- Use the concept map for synthesis reading after checking the trust status below.\n- Resolve review-required claims before treating generated insights as stable knowledge.\n- Keep query writeback proposals in `reviews/query-writeback/` until a human explicitly approves them.\n\n## Corpus Map\n\n- Source pages: {source_count}\n- Published sources: {published_sources}\n- Stale sources: {stale_sources}\n- Blocked sources: {blocked_sources}\n\n{source_links}\n## Concept Map\n\n- Concept pages: {concept_count}\n\n{concept_links}\n## Reading Quality\n\n- Report: [`{reading_report}`]({reading_report})\n- Findings: {reading_findings}\n- Trust issues: {reading_trust_issues}\n- Duplicate groups: {reading_duplicate_groups}\n- Orphan concepts: {reading_orphan_concepts}\n- Low-synthesis concepts: {reading_low_synthesis}\n\n## Trust Status\n\n- Claims: {claims}\n- Claims needing review: {claims_needing_review}\n- Stale claims: {stale_claims}\n- Contradicted claims: {contradicted_claims}\n- Science review queue: [`{review_path}`]({review_path}) ({reviews} items)\n- Traceability / lint findings: [`{lint_path}`]({lint_path}) ({lint_findings} items)\n- Query writeback proposals waiting for review: {proposed_writebacks}\n\n## Review Queue\n\n- Claims ledger: [`claims/claims.jsonl`](claims/claims.jsonl)\n- Science review queue: [`{review_path}`]({review_path})\n- Query writeback review area: [`reviews/query-writeback/`](reviews/query-writeback/)\n\n## Suggested Questions\n\n- Which sources are published, stale, or blocked, and what is the next action for each?\n- Which concepts are safe to read as stable synthesis, and which still depend on review-required claims?\n- What evidence supports the main research strategy, and which conclusions are inference or forecast?\n- Which query writeback proposals are still review-only and should not be copied into concept pages?\n\n## Trust Boundary\n\nThis generated home note is a navigation aid. Source pages, claims, science review, reading quality findings, and query writeback approval remain runtime-owned state. Do not treat proposed writeback content or review-required claims as approved knowledge.\n",
+        "# LLM Wiki Home\n\n<!-- llm-wiki-desktop:generated-home -->\n\n## Start Here\n\n- Read the corpus map first to understand which source pages exist and which inputs are still stale or blocked.\n- Use the concept map for synthesis reading after checking the trust status below.\n- Resolve review-required claims before treating generated insights as stable knowledge.\n- Keep query writeback proposals in `reviews/query-writeback/` until a human explicitly approves them.\n\n## Corpus Map\n\n- Raw evidence inputs: {raw_evidence_count}\n- Registry candidates: {candidate_sources}\n- Pending parse or ingest: {pending_source_inputs}\n- Source pages: {source_count}\n- Published sources: {published_sources}\n- Stale sources: {stale_sources}\n- Blocked sources: {blocked_sources}\n\n### Raw Evidence Awaiting Ingest\n\n{raw_links}\n### Source Pages\n\n{source_links}\n## Concept Map\n\n- Concept pages: {concept_count}\n\n{concept_links}\n## Reading Quality\n\n- Report: [`{reading_report}`]({reading_report})\n- Findings: {reading_findings}\n- Trust issues: {reading_trust_issues}\n- Duplicate groups: {reading_duplicate_groups}\n- Orphan concepts: {reading_orphan_concepts}\n- Low-synthesis concepts: {reading_low_synthesis}\n\n## Trust Status\n\n- Claims: {claims}\n- Claims needing review: {claims_needing_review}\n- Stale claims: {stale_claims}\n- Contradicted claims: {contradicted_claims}\n- Science review queue: [`{review_path}`]({review_path}) ({reviews} items)\n- Traceability / lint findings: [`{lint_path}`]({lint_path}) ({lint_findings} items)\n- Query writeback proposals waiting for review: {proposed_writebacks}\n\n## Review Queue\n\n- Claims ledger: [`claims/claims.jsonl`](claims/claims.jsonl)\n- Science review queue: [`{review_path}`]({review_path})\n- Query writeback review area: [`reviews/query-writeback/`](reviews/query-writeback/)\n\n## Suggested Questions\n\n- Which raw evidence inputs are still waiting for parse or ingest?\n- Which sources are published, stale, or blocked, and what is the next action for each?\n- Which concepts are safe to read as stable synthesis, and which still depend on review-required claims?\n- What evidence supports the main research strategy, and which conclusions are inference or forecast?\n- Which query writeback proposals are still review-only and should not be copied into concept pages?\n\n## Trust Boundary\n\nThis generated home note is a navigation aid. Source pages, claims, science review, reading quality findings, and query writeback approval remain runtime-owned state. Do not treat proposed writeback content or review-required claims as approved knowledge.\n",
+        raw_evidence_count = raw_evidence_inputs.len(),
         source_count = sources.len(),
         concept_count = concepts.len(),
         reading_report = if reading_quality.report_path.is_empty() {
