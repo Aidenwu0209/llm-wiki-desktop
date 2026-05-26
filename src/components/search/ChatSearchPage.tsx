@@ -156,6 +156,7 @@ const chatCopy = {
       source: "资料",
       claim: "论断",
       concept: "概念",
+      note: "知识库笔记",
       draft: "草稿",
       review: "审核",
       writeback: "写回提案",
@@ -168,6 +169,7 @@ const chatCopy = {
       source: "资料",
       claim: "论断",
       concept: "概念",
+      note: "知识库笔记",
       draft: "草稿",
       review: "审核",
       writeback: "写回提案",
@@ -227,6 +229,7 @@ const chatCopy = {
       source: "sources",
       claim: "claims",
       concept: "concepts",
+      note: "wiki notes",
       draft: "drafts",
       review: "reviews",
       writeback: "writebacks",
@@ -239,6 +242,7 @@ const chatCopy = {
       source: "source",
       claim: "claim",
       concept: "concept",
+      note: "wiki note",
       draft: "draft",
       review: "review",
       writeback: "writeback",
@@ -688,7 +692,7 @@ function buildSearchIndex({
       evidence: file.qaVerdict || excerpt,
       relations,
       searchText: [title, file.name, file.path, file.kind, file.status, file.qaVerdict, file.updated, file.excerpt].join(" "),
-      priority: file.kind === "concept" ? 6 : file.kind === "source" ? 5 : 3,
+      priority: file.kind === "concept" ? 6 : file.kind === "source" ? 5 : file.kind === "note" ? 4 : 3,
     });
   }
 
@@ -1300,6 +1304,7 @@ export function ChatSearchPage({
             <option value="source">{text.filters.source}</option>
             <option value="claim">{text.filters.claim}</option>
             <option value="concept">{text.filters.concept}</option>
+            <option value="note">{text.filters.note}</option>
             <option value="draft">{text.filters.draft}</option>
             <option value="review">{text.filters.review}</option>
             <option value="writeback">{text.filters.writeback}</option>
