@@ -47,6 +47,9 @@ export type AgentReadApiReadiness = {
   reason: string;
   bindHost: string;
   tokenRequired: boolean;
+  scorecardReady: boolean;
+  serverImplemented: boolean;
+  serverAvailable: boolean;
   scorecard: ProductScorecardSummary;
   requiredMetrics: string[];
   unmetRequirements: string[];

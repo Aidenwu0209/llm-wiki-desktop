@@ -132,6 +132,9 @@ struct AgentReadApiReadiness {
     reason: String,
     bind_host: String,
     token_required: bool,
+    scorecard_ready: bool,
+    server_implemented: bool,
+    server_available: bool,
     scorecard: ProductScorecardSummary,
     required_metrics: Vec<String>,
     unmet_requirements: Vec<String>,
@@ -2944,6 +2947,8 @@ fn agent_read_api_required_metrics() -> Vec<&'static str> {
     ]
 }
 
+const AGENT_READ_API_SERVER_IMPLEMENTED: bool = false;
+
 fn build_agent_read_api_readiness(vault: &Path) -> AgentReadApiReadiness {
     let report = build_product_scorecard_report(vault);
     let required_metrics = agent_read_api_required_metrics();
@@ -2964,17 +2969,24 @@ fn build_agent_read_api_readiness(vault: &Path) -> AgentReadApiReadiness {
             }
         })
         .collect::<Vec<_>>();
-    let enabled = unmet_requirements.is_empty() && report.summary.failed == 0;
+    let scorecard_ready = unmet_requirements.is_empty() && report.summary.failed == 0;
+    let server_available = scorecard_ready && AGENT_READ_API_SERVER_IMPLEMENTED;
     AgentReadApiReadiness {
-        enabled,
-        reason: if enabled {
-            "Read-only localhost API may be enabled; core scorecard metrics passed.".to_string()
-        } else {
+        enabled: server_available,
+        reason: if !scorecard_ready {
             "Read-only localhost API remains deferred until core scorecard metrics pass."
                 .to_string()
+        } else if !AGENT_READ_API_SERVER_IMPLEMENTED {
+            "Core scorecard metrics passed, but this desktop build has no live localhost API server yet; agents must use the UI-backed flow."
+                .to_string()
+        } else {
+            "Read-only localhost API is available for this vault.".to_string()
         },
         bind_host: "127.0.0.1".to_string(),
         token_required: true,
+        scorecard_ready,
+        server_implemented: AGENT_READ_API_SERVER_IMPLEMENTED,
+        server_available,
         scorecard: report.summary,
         required_metrics: required_metrics
             .into_iter()
@@ -11664,6 +11676,9 @@ mod tests {
         assert!(!readiness.enabled);
         assert_eq!(readiness.bind_host, "127.0.0.1");
         assert!(readiness.token_required);
+        assert!(!readiness.scorecard_ready);
+        assert!(!readiness.server_implemented);
+        assert!(!readiness.server_available);
         assert!(readiness
             .unmet_requirements
             .iter()
@@ -11687,7 +11702,7 @@ mod tests {
     }
 
     #[test]
-    fn agent_read_api_readiness_enables_after_core_scorecard_metrics_pass() {
+    fn agent_read_api_readiness_keeps_server_unavailable_after_scorecard_pass() {
         let vault = test_vault("agent-api-readiness-pass");
         create_minimal_vault(&vault).expect("create minimal vault");
         let source = vault.join("raw").join("note.md");
@@ -11716,8 +11731,19 @@ mod tests {
         .expect("write proposal");
 
         let readiness = build_agent_read_api_readiness(&vault);
-        assert!(readiness.enabled, "{:?}", readiness.unmet_requirements);
+        assert!(
+            !readiness.enabled,
+            "no live server should be advertised yet"
+        );
+        assert!(
+            readiness.scorecard_ready,
+            "{:?}",
+            readiness.unmet_requirements
+        );
+        assert!(!readiness.server_implemented);
+        assert!(!readiness.server_available);
         assert!(readiness.unmet_requirements.is_empty());
+        assert!(readiness.reason.contains("no live localhost API server"));
         assert!(readiness
             .required_metrics
             .contains(&"query_writeback".to_string()));
