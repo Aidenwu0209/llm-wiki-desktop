@@ -2194,6 +2194,7 @@ function App() {
             onOpenReviews={() => setActivePage("reviews")}
             onOpenTraceability={() => setActivePage("traceability")}
             onOpenWriteback={() => setActivePage("writeback")}
+            onOpenGraph={() => setActivePage("graph")}
           />
         )}
         <DashboardOverview

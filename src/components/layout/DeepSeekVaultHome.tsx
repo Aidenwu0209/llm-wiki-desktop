@@ -1,4 +1,4 @@
-import { AlertTriangle, ClipboardList, Database, FileInput, GitCompare, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ClipboardList, Database, FileInput, GitCompare, Network, ShieldCheck } from "lucide-react";
 import type { UiLanguage } from "../../i18n";
 import type { VaultCounts } from "../../types";
 
@@ -14,6 +14,7 @@ type DeepSeekVaultHomeProps = {
   onOpenReviews: () => void;
   onOpenTraceability: () => void;
   onOpenWriteback: () => void;
+  onOpenGraph: () => void;
 };
 
 const deepSeekHomeCopy = {
@@ -31,6 +32,8 @@ const deepSeekHomeCopy = {
     contradictions: "冲突",
     writeback: "问答写回",
     proposalFirst: "先提案后写回的洞察",
+    graph: "证据图谱",
+    graphDetail: "资料 · 概念 · 论断关系",
     forecastNote: "预测在获得资料 / 论断 / 概念证据支撑并通过写回批准前，仍然只是待验证假设。",
   },
   en: {
@@ -47,6 +50,8 @@ const deepSeekHomeCopy = {
     contradictions: "contradictions",
     writeback: "Writeback",
     proposalFirst: "proposal-first insights",
+    graph: "Evidence Graph",
+    graphDetail: "source · concept · claim links",
     forecastNote: "Forecasts remain hypotheses until backed by source / claim / concept evidence and approved through writeback.",
   },
 } as const;
@@ -63,6 +68,7 @@ export function DeepSeekVaultHome({
   onOpenReviews,
   onOpenTraceability,
   onOpenWriteback,
+  onOpenGraph,
 }: DeepSeekVaultHomeProps) {
   const text = deepSeekHomeCopy[language];
   return (
@@ -102,6 +108,12 @@ export function DeepSeekVaultHome({
           <span>{text.writeback}</span>
           <strong>{proposalCount}</strong>
           <em>{text.proposalFirst}</em>
+        </button>
+        <button onClick={onOpenGraph} type="button">
+          <Network size={18} />
+          <span>{text.graph}</span>
+          <strong>{counts?.claims ?? 0}</strong>
+          <em>{text.graphDetail}</em>
         </button>
         <div className="deepseek-home-note">
           <AlertTriangle size={18} />
