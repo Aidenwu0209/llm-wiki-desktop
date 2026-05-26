@@ -2033,6 +2033,65 @@ textarea {
   line-height: 1.55;
 }
 
+.details-preview-outline {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid #e1e6e2;
+  border-radius: 6px;
+  background: #f7faf6;
+  padding: 8px;
+}
+
+.details-preview-outline strong {
+  color: #40514a;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.details-preview-outline div {
+  display: grid;
+  gap: 4px;
+  max-height: 138px;
+  overflow: auto;
+}
+
+.details-preview-outline button {
+  justify-content: flex-start;
+  min-height: 26px;
+  border-color: transparent;
+  background: transparent;
+  padding: 0 6px;
+  color: #245b93;
+  text-align: left;
+}
+
+.details-preview-outline button:hover {
+  border-color: #c8d5ce;
+  background: #ffffff;
+}
+
+.details-preview-outline button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.details-preview-outline .level-2 {
+  padding-left: 16px;
+}
+
+.details-preview-outline .level-3 {
+  padding-left: 26px;
+}
+
+.details-preview-outline .level-4,
+.details-preview-outline .level-5,
+.details-preview-outline .level-6 {
+  padding-left: 36px;
+}
+
 .details-markdown-preview > *:first-child {
   margin-top: 0;
 }
@@ -2057,6 +2116,23 @@ textarea {
   color: #26312d;
   font-size: 12px;
   line-height: 1.3;
+}
+
+.details-markdown-heading {
+  scroll-margin-top: 10px;
+}
+
+.details-heading-anchor {
+  opacity: 0;
+  margin-right: 4px;
+  color: #8b9690;
+  font-size: 11px;
+  text-decoration: none;
+}
+
+.details-markdown-heading:hover .details-heading-anchor,
+.details-heading-anchor:focus {
+  opacity: 1;
 }
 
 .details-markdown-preview p,
