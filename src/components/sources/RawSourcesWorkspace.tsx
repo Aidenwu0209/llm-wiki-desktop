@@ -550,6 +550,31 @@ function SourceActions({
   );
 }
 
+function PlanPathList({
+  items,
+  empty,
+  resolveVaultPath,
+  onOpenPath,
+}: {
+  items: string[];
+  empty: string;
+  resolveVaultPath: (path?: string | null) => string;
+  onOpenPath: (path: string) => void | Promise<void>;
+}) {
+  const paths = uniqueStrings(items);
+  if (paths.length === 0) return <code>{empty}</code>;
+  return (
+    <div className="raw-source-plan-path-list">
+      {paths.map((path) => (
+        <button key={path} type="button" onClick={() => onOpenPath(resolveVaultPath(path))}>
+          <FileText size={13} />
+          <span>{path}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function RawSourcesWorkspace({
   className,
   language = "zh",
@@ -888,9 +913,19 @@ export function RawSourcesWorkspace({
                   </dl>
                   <div className="raw-source-notes">
                     <strong>{text.inputs}</strong>
-                    {(selectedPlanEntry.inputs.length ? selectedPlanEntry.inputs : [selectedPlanEntry.sourcePath]).map((item) => <code key={`plan-input-${item}`}>{item}</code>)}
+                    <PlanPathList
+                      items={selectedPlanEntry.inputs.length ? selectedPlanEntry.inputs : [selectedPlanEntry.sourcePath]}
+                      empty={text.missing}
+                      resolveVaultPath={resolveVaultPath}
+                      onOpenPath={onOpenPath}
+                    />
                     <strong>{text.outputs}</strong>
-                    {(selectedPlanEntry.outputs.length ? selectedPlanEntry.outputs : [selectedPlanEntry.artifactPath || text.missing]).map((item) => <code key={`plan-output-${item}`}>{item}</code>)}
+                    <PlanPathList
+                      items={selectedPlanEntry.outputs.length ? selectedPlanEntry.outputs : selectedPlanEntry.artifactPath ? [selectedPlanEntry.artifactPath] : []}
+                      empty={text.missing}
+                      resolveVaultPath={resolveVaultPath}
+                      onOpenPath={onOpenPath}
+                    />
                   </div>
                   <div className="raw-source-actions">
                     <button type="button" disabled={!selectedPlanEntry.lastLogPath} onClick={() => selectedPlanEntry.lastLogPath && onOpenPath(resolveVaultPath(selectedPlanEntry.lastLogPath))}>
