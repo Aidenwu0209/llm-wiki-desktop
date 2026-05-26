@@ -93,6 +93,13 @@ export type VaultTextFilePreview = {
   truncated: boolean;
 };
 
+export type VaultImageFilePreview = {
+  path: string;
+  sizeBytes: number;
+  mimeType: string;
+  bytes: number[];
+};
+
 export type VaultStatus = {
   path: string;
   schemaValid: boolean;

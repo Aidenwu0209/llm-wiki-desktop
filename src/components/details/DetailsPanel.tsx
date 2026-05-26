@@ -13,7 +13,7 @@ import {
   SquareStack,
 } from "lucide-react";
 import type { UiLanguage } from "../../i18n";
-import { readVaultTextFile } from "../../tauri";
+import { readVaultImageFile, readVaultTextFile } from "../../tauri";
 import type { ClaimLedgerItem, EvidencePathItem, TraceabilityWarning, VaultFile, VaultTextFilePreview, WritebackProposal } from "../../types";
 
 export type DetailSelection =
@@ -133,7 +133,27 @@ type PreviewState =
   | { status: "ready"; preview: VaultTextFilePreview }
   | { status: "error"; error: string };
 
+type ImagePreviewState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "ready"; url: string; path: string; sizeBytes: number }
+  | { status: "error"; error: string };
+
 const WIKILINK_HREF_PREFIX = "#__llmwiki__=";
+const VAULT_ROOT_RELATIVE_PREFIXES = new Set([
+  ".graph",
+  "assets",
+  "claims",
+  "concepts",
+  "drafts",
+  "media",
+  "qa-reports",
+  "raw",
+  "reports",
+  "reviews",
+  "sources",
+  "templates",
+]);
 
 function canPreviewVaultText(path?: string | null) {
   return Boolean(path && /\.(md|markdown|txt|json|jsonl|csv|tsv)$/i.test(path));
@@ -234,6 +254,30 @@ function resolveMarkdownVaultLinkTarget(href: string, currentPath?: string | nul
   return normalizeVaultRelativePath([...currentParts, pathOnly].join("/"));
 }
 
+function isDirectRenderableImageSrc(src: string) {
+  return /^(data:|blob:|asset:|https:\/\/asset\.localhost)/i.test(src);
+}
+
+function resolveMarkdownVaultAssetTarget(src: string, currentPath?: string | null) {
+  const target = src.trim();
+  if (!target || target.startsWith("#") || isExternalMarkdownHref(target)) return "";
+  const pathOnly = decodeMarkdownHrefPath(target.split("#")[0].split("?")[0]);
+  const rootRelative = pathOnly.startsWith("/");
+  const cleaned = pathOnly.replace(/^\/+/, "");
+  if (!cleaned) return "";
+  const firstSegment = cleaned.replace(/\\/g, "/").split("/").filter(Boolean)[0] || "";
+  if (rootRelative || VAULT_ROOT_RELATIVE_PREFIXES.has(firstSegment)) {
+    return normalizeVaultRelativePath(cleaned);
+  }
+  const currentParts = (currentPath || "").replace(/\\/g, "/").split("/").filter(Boolean);
+  currentParts.pop();
+  return normalizeVaultRelativePath([...currentParts, cleaned].join("/"));
+}
+
+function imagePlaceholderText(alt?: string | null, src?: string | null) {
+  return alt || src ? `Image: ${alt || src}` : "Image omitted";
+}
+
 function DetailActions({
   text,
   path,
@@ -277,11 +321,13 @@ function DetailActions({
 function MarkdownPreview({
   content,
   currentPath,
+  vaultPath,
   outboundLinks,
   onOpenVaultPath,
 }: {
   content: string;
   currentPath?: string | null;
+  vaultPath: string;
   outboundLinks?: string[];
   onOpenVaultPath: (path?: string | null) => void;
 }) {
@@ -323,15 +369,83 @@ function MarkdownPreview({
           );
         },
         img: ({ alt, src }) => (
-          <span className="details-markdown-image-placeholder">
-            {alt || src ? `Image: ${alt || src}` : "Image omitted"}
-          </span>
+          <MarkdownImage
+            alt={alt}
+            currentPath={currentPath}
+            src={typeof src === "string" ? src : ""}
+            vaultPath={vaultPath}
+          />
         ),
       }}
     >
       {transformWikilinks(content)}
     </ReactMarkdown>
   );
+}
+
+function MarkdownImage({
+  alt,
+  currentPath,
+  src,
+  vaultPath,
+}: {
+  alt?: string | null;
+  currentPath?: string | null;
+  src: string;
+  vaultPath: string;
+}) {
+  const vaultTarget = resolveMarkdownVaultAssetTarget(src, currentPath);
+  const [state, setState] = useState<ImagePreviewState>({ status: "idle" });
+
+  useEffect(() => {
+    if (!vaultPath || !vaultTarget) {
+      setState({ status: "idle" });
+      return;
+    }
+    let cancelled = false;
+    let objectUrl = "";
+    setState({ status: "loading" });
+    readVaultImageFile(vaultPath, vaultTarget)
+      .then((preview) => {
+        const bytes = new Uint8Array(preview.bytes);
+        objectUrl = URL.createObjectURL(new Blob([bytes], { type: preview.mimeType }));
+        if (cancelled) {
+          URL.revokeObjectURL(objectUrl);
+          return;
+        }
+        setState({ status: "ready", url: objectUrl, path: preview.path, sizeBytes: preview.sizeBytes });
+      })
+      .catch((err) => {
+        if (!cancelled) setState({ status: "error", error: String(err) });
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [vaultPath, vaultTarget]);
+
+  if (src && isDirectRenderableImageSrc(src)) {
+    return <img alt={alt || ""} className="details-markdown-image" loading="lazy" src={src} />;
+  }
+  if (!vaultTarget) {
+    return <span className="details-markdown-image-placeholder">{imagePlaceholderText(alt, src)}</span>;
+  }
+  if (state.status === "ready") {
+    return (
+      <figure className="details-markdown-image-frame">
+        <img alt={alt || ""} className="details-markdown-image" loading="lazy" src={state.url} />
+        <figcaption>{alt || state.path} · {state.sizeBytes} bytes</figcaption>
+      </figure>
+    );
+  }
+  if (state.status === "error") {
+    return (
+      <span className="details-markdown-image-placeholder" title={state.error}>
+        {imagePlaceholderText(alt, src)} unavailable
+      </span>
+    );
+  }
+  return <span className="details-markdown-image-placeholder">{imagePlaceholderText(alt, src)} loading...</span>;
 }
 
 function LinkList({
@@ -455,6 +569,7 @@ export function DetailsPanel({
                     <MarkdownPreview
                       content={previewState.preview.content}
                       currentPath={previewState.preview.path || selection.file.path}
+                      vaultPath={vaultPath}
                       outboundLinks={selection.file.outboundLinks}
                       onOpenVaultPath={onOpenVaultPath}
                     />
