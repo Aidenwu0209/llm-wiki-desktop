@@ -133,6 +133,8 @@ type PreviewState =
   | { status: "ready"; preview: VaultTextFilePreview }
   | { status: "error"; error: string };
 
+const WIKILINK_HREF_PREFIX = "#__llmwiki__=";
+
 function canPreviewVaultText(path?: string | null) {
   return Boolean(path && /\.(md|markdown|txt|json|jsonl|csv|tsv)$/i.test(path));
 }
@@ -158,7 +160,7 @@ function replaceWikilinks(markdown: string) {
     const target = rawTarget.trim();
     const alias = rawAlias?.trim() || target;
     if (!target) return alias;
-    return `[${alias.replace(/\[/g, "\\[").replace(/\]/g, "\\]")}](#${encodeURIComponent(target)})`;
+    return `[${alias.replace(/\[/g, "\\[").replace(/\]/g, "\\]")}](${WIKILINK_HREF_PREFIX}${encodeURIComponent(target)})`;
   });
 }
 
@@ -194,6 +196,42 @@ function resolveWikilinkTarget(target: string, outboundLinks?: string[]) {
     .trim();
   if (fallbackPath.includes("/")) return /\.(md|markdown)$/i.test(fallbackPath) ? fallbackPath : `${fallbackPath}.md`;
   return fallbackPath;
+}
+
+function isExternalMarkdownHref(href: string) {
+  return /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//");
+}
+
+function decodeMarkdownHrefPath(path: string) {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
+}
+
+function normalizeVaultRelativePath(path: string) {
+  const parts: string[] = [];
+  for (const part of path.replace(/\\/g, "/").split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      if (parts.length === 0) return "";
+      parts.pop();
+      continue;
+    }
+    parts.push(part);
+  }
+  return parts.join("/");
+}
+
+function resolveMarkdownVaultLinkTarget(href: string, currentPath?: string | null) {
+  const target = href.trim();
+  if (!target || target.startsWith("#") || isExternalMarkdownHref(target)) return "";
+  const pathOnly = decodeMarkdownHrefPath(target.split("#")[0].split("?")[0]).replace(/^\/+/, "");
+  if (!pathOnly) return "";
+  const currentParts = (currentPath || "").replace(/\\/g, "/").split("/").filter(Boolean);
+  currentParts.pop();
+  return normalizeVaultRelativePath([...currentParts, pathOnly].join("/"));
 }
 
 function DetailActions({
@@ -238,10 +276,12 @@ function DetailActions({
 
 function MarkdownPreview({
   content,
+  currentPath,
   outboundLinks,
   onOpenVaultPath,
 }: {
   content: string;
+  currentPath?: string | null;
   outboundLinks?: string[];
   onOpenVaultPath: (path?: string | null) => void;
 }) {
@@ -251,17 +291,23 @@ function MarkdownPreview({
       components={{
         a: ({ children, href }) => {
           const target = typeof href === "string" ? href : "";
-          const isWikilink = target.startsWith("#");
+          const isWikilink = target.startsWith(WIKILINK_HREF_PREFIX);
+          const markdownVaultTarget = isWikilink ? "" : resolveMarkdownVaultLinkTarget(target, currentPath);
+          const isVaultLink = Boolean(markdownVaultTarget);
           return (
             <a
               href={target || undefined}
-              rel={isWikilink ? undefined : "noreferrer"}
-              target={isWikilink ? undefined : "_blank"}
-              className={isWikilink ? "details-wikilink" : undefined}
+              rel={isWikilink || isVaultLink ? undefined : "noreferrer"}
+              target={isWikilink || isVaultLink ? undefined : "_blank"}
+              className={classNames(isWikilink && "details-wikilink", isVaultLink && "details-vault-link")}
               onClick={(event) => {
-                if (!isWikilink) return;
+                if (!isWikilink && !isVaultLink) return;
                 event.preventDefault();
-                const raw = target.slice(1);
+                if (isVaultLink) {
+                  onOpenVaultPath(markdownVaultTarget);
+                  return;
+                }
+                const raw = target.slice(WIKILINK_HREF_PREFIX.length);
                 const decoded = (() => {
                   try {
                     return decodeURIComponent(raw);
@@ -408,6 +454,7 @@ export function DetailsPanel({
                   <div className="details-markdown-preview">
                     <MarkdownPreview
                       content={previewState.preview.content}
+                      currentPath={previewState.preview.path || selection.file.path}
                       outboundLinks={selection.file.outboundLinks}
                       onOpenVaultPath={onOpenVaultPath}
                     />
