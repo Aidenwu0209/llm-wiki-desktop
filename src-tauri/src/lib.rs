@@ -1710,16 +1710,22 @@ fn detect_mime(path: &Path) -> String {
     .to_string()
 }
 
-fn list_markdown(dir: &Path) -> Vec<PathBuf> {
-    let mut files = Vec::new();
+fn collect_markdown_recursive(dir: &Path, files: &mut Vec<PathBuf>) {
     if let Ok(read_dir) = fs::read_dir(dir) {
         for entry in read_dir.flatten() {
             let path = entry.path();
-            if path.extension().and_then(OsStr::to_str) == Some("md") {
+            if path.is_dir() {
+                collect_markdown_recursive(&path, files);
+            } else if path.extension().and_then(OsStr::to_str) == Some("md") {
                 files.push(path);
             }
         }
     }
+}
+
+fn list_markdown(dir: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    collect_markdown_recursive(dir, &mut files);
     files.sort();
     files
 }
@@ -1777,21 +1783,8 @@ fn json_string_any(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
 }
 
 fn list_markdown_recursive(dir: &Path) -> Vec<PathBuf> {
-    fn collect(dir: &Path, files: &mut Vec<PathBuf>) {
-        if let Ok(read_dir) = fs::read_dir(dir) {
-            for entry in read_dir.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    collect(&path, files);
-                } else if path.extension().and_then(OsStr::to_str) == Some("md") {
-                    files.push(path);
-                }
-            }
-        }
-    }
-
     let mut files = Vec::new();
-    collect(dir, &mut files);
+    collect_markdown_recursive(dir, &mut files);
     files.sort();
     files
 }
@@ -12189,6 +12182,57 @@ mod tests {
             save_desktop_settings(to_display(&vault), settings).expect("save safe settings path");
         assert_eq!(saved.scheduled_import_path, "raw/deepseek_paper");
         assert!(read_text(&desktop_settings_path(&vault)).contains("\"raw/deepseek_paper\""));
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn inspect_vault_discovers_nested_generated_markdown_pages() {
+        let vault = test_vault("nested-markdown-discovery");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        fs::create_dir_all(vault.join("sources").join("deepseek")).expect("nested sources");
+        fs::create_dir_all(vault.join("concepts").join("architecture")).expect("nested concepts");
+        fs::create_dir_all(vault.join("drafts").join("batch-1")).expect("nested drafts");
+        fs::create_dir_all(vault.join("qa-reports").join("batch-1")).expect("nested reports");
+        write_text(
+            &vault.join("sources").join("deepseek").join("LLM-0001.md"),
+            "# Nested DeepSeek Source\n",
+        )
+        .expect("nested source");
+        write_text(
+            &vault
+                .join("concepts")
+                .join("architecture")
+                .join("moe-routing.md"),
+            "# MoE Routing\n",
+        )
+        .expect("nested concept");
+        write_text(
+            &vault.join("drafts").join("batch-1").join("LLM-0002.md"),
+            "# Nested Draft\n",
+        )
+        .expect("nested draft");
+        write_text(
+            &vault.join("qa-reports").join("batch-1").join("LLM-0001.md"),
+            "# Nested QA Report\n",
+        )
+        .expect("nested report");
+
+        let status = inspect_vault(to_display(&vault)).expect("inspect vault");
+        assert_eq!(status.counts.sources, 1);
+        assert_eq!(status.counts.concepts, 1);
+        assert_eq!(status.counts.drafts, 1);
+        assert!(status.counts.reports >= 2);
+        assert!(status.files.iter().any(
+            |file| file.kind == "source" && file.path.ends_with("sources/deepseek/LLM-0001.md")
+        ));
+        assert!(status.files.iter().any(|file| {
+            file.kind == "concept" && file.path.ends_with("concepts/architecture/moe-routing.md")
+        }));
+        assert!(status
+            .files
+            .iter()
+            .any(|file| file.kind == "report"
+                && file.path.ends_with("qa-reports/batch-1/LLM-0001.md")));
 
         let _ = fs::remove_dir_all(vault);
     }
