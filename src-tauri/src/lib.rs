@@ -1475,18 +1475,43 @@ fn require_existing_dir(path: &Path, label: &str) -> Result<(), String> {
 }
 
 fn ensure_inside(path: &Path, root: &Path, message: &str) -> Result<PathBuf, String> {
-    let resolved = path
-        .canonicalize()
-        .or_else(|_| Ok::<PathBuf, std::io::Error>(path.to_path_buf()))
-        .map_err(|e| format!("failed to resolve {}: {e}", path.display()))?;
     let root_resolved = root
         .canonicalize()
         .map_err(|e| format!("failed to resolve {}: {e}", root.display()))?;
-    if resolved.starts_with(&root_resolved) || path.starts_with(root) {
+    let resolved = resolve_with_existing_parent(path)
+        .map_err(|e| format!("failed to resolve {}: {e}", path.display()))?;
+    if resolved.starts_with(&root_resolved) {
         Ok(resolved)
     } else {
         Err(message.to_string())
     }
+}
+
+fn resolve_with_existing_parent(path: &Path) -> std::io::Result<PathBuf> {
+    if let Ok(resolved) = path.canonicalize() {
+        return Ok(resolved);
+    }
+
+    let mut current = path;
+    let mut missing_parts = Vec::new();
+    while !current.exists() {
+        let Some(name) = current.file_name() else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "path has no existing parent",
+            ));
+        };
+        missing_parts.push(name.to_os_string());
+        current = current.parent().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::NotFound, "path has no parent")
+        })?;
+    }
+
+    let mut resolved = current.canonicalize()?;
+    for part in missing_parts.iter().rev() {
+        resolved.push(part);
+    }
+    Ok(resolved)
 }
 
 fn read_text(path: &Path) -> String {
@@ -1502,10 +1527,15 @@ fn write_text(path: &Path, text: &str) -> Result<(), String> {
 }
 
 fn rel_path(vault: &Path, path: &Path) -> String {
-    path.strip_prefix(vault)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .to_string()
+    if let Ok(stripped) = path.strip_prefix(vault) {
+        return stripped.to_string_lossy().to_string();
+    }
+    if let Ok(canonical_vault) = vault.canonicalize() {
+        if let Ok(stripped) = path.strip_prefix(canonical_vault) {
+            return stripped.to_string_lossy().to_string();
+        }
+    }
+    path.to_string_lossy().to_string()
 }
 
 fn sha256_text(text: &str) -> String {
@@ -7967,16 +7997,15 @@ enum WritebackTargetKind {
 }
 
 fn writeback_target_kind(vault: &Path, target: &Path) -> Result<WritebackTargetKind, String> {
-    let target_resolved = target
-        .canonicalize()
-        .unwrap_or_else(|_| target.to_path_buf());
+    let target_resolved =
+        resolve_with_existing_parent(target).unwrap_or_else(|_| target.to_path_buf());
     let concepts_root = vault.join("concepts");
-    let concepts_resolved = concepts_root.canonicalize().unwrap_or(concepts_root);
+    let concepts_resolved = resolve_with_existing_parent(&concepts_root).unwrap_or(concepts_root);
     if target_resolved.starts_with(&concepts_resolved) {
         return Ok(WritebackTargetKind::Concept);
     }
     let review_root = vault.join("reviews").join("query-writeback");
-    let review_resolved = review_root.canonicalize().unwrap_or(review_root);
+    let review_resolved = resolve_with_existing_parent(&review_root).unwrap_or(review_root);
     if target_resolved.starts_with(&review_resolved) {
         return Ok(WritebackTargetKind::ReviewProposal);
     }
@@ -10918,6 +10947,34 @@ mod tests {
         assert!(read_text(&artifact).contains("This proposal is review evidence only."));
 
         let _ = fs::remove_dir_all(vault);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn writeback_rejects_symlinked_concept_target_escape() {
+        use std::os::unix::fs as unix_fs;
+
+        let vault = test_vault("writeback-symlink-concepts");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        let outside = vault.with_extension("outside");
+        fs::create_dir_all(&outside).expect("create outside target");
+        write_text(&outside.join("escaped.md"), "# Escaped\n\nOld content.\n")
+            .expect("write escaped concept");
+        fs::remove_dir_all(vault.join("concepts")).expect("remove concepts dir");
+        unix_fs::symlink(&outside, vault.join("concepts")).expect("create concepts symlink");
+
+        let rejected = create_writeback_proposal(
+            to_display(&vault),
+            "concepts/escaped.md".to_string(),
+            "Unsafe concept target".to_string(),
+            "# Escaped\n\nNew content.\n".to_string(),
+        );
+
+        assert!(rejected.is_err());
+        assert!(read_text(&outside.join("escaped.md")).contains("Old content."));
+
+        let _ = fs::remove_dir_all(vault);
+        let _ = fs::remove_dir_all(outside);
     }
 
     #[test]
