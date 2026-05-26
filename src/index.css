@@ -2758,6 +2758,12 @@ textarea {
   font-weight: 700;
 }
 
+.chat-answer-draft .chat-answer-vault-link {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
 .chat-answer-draft blockquote {
   margin: 0 0 10px;
   border-left: 3px solid #9dc4aa;

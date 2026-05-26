@@ -564,6 +564,25 @@ function unique(items: Array<string | null>) {
   return Array.from(new Set(items.filter((item): item is string => Boolean(item))));
 }
 
+function markdownLinkLabel(value: string) {
+  return value.replace(/\\/g, "\\\\").replace(/\[/g, "\\[").replace(/\]/g, "\\]");
+}
+
+function vaultMarkdownLink(path?: string | null) {
+  const cleanPath = (path || "").trim();
+  if (!cleanPath) return "";
+  return `[${markdownLinkLabel(cleanPath)}](#vault:${encodeURIComponent(cleanPath)})`;
+}
+
+function vaultPathFromMarkdownHref(href?: string | null) {
+  if (!href?.startsWith("#vault:")) return null;
+  try {
+    return decodeURIComponent(href.slice("#vault:".length));
+  } catch {
+    return null;
+  }
+}
+
 function isBlockedEvidenceResult(item: SearchResult) {
   const status = (item.status || "").toLowerCase();
   const severity = (item.severity || "").toLowerCase();
@@ -906,14 +925,14 @@ function buildAnswerDraft(question: string, targetPath: string, evidence: Search
   const coverageBlock = renderAnswerCitationCoverage(answerCitationCoverage(evidence), language);
   const usableEvidenceBullets = usableEvidence.length
     ? usableEvidence.map((item, index) => (
-      `- E${index + 1} [${typeLabel(item.type)}] ${item.title} (${item.path}): ${item.snippet}${item.evidence ? ` ${language === "zh" ? "证据" : "Evidence"}: ${item.evidence}` : ""}`
+      `- E${index + 1} [${typeLabel(item.type)}] ${item.title} (${vaultMarkdownLink(item.path)}): ${item.snippet}${item.evidence ? ` ${language === "zh" ? "证据" : "Evidence"}: ${item.evidence}` : ""}`
     )).join("\n")
     : language === "zh"
       ? "- 没有 fresh/可用证据可作为确定性结论。"
       : "- No fresh usable evidence can support firm conclusions.";
   const blockedEvidenceBullets = blockedEvidence.length
     ? blockedEvidence.map((item, index) => (
-      `- R${index + 1} [${typeLabel(item.type)}] ${item.title} (${item.path}): ${blockedEvidenceReason(item, language)}`
+      `- R${index + 1} [${typeLabel(item.type)}] ${item.title} (${vaultMarkdownLink(item.path)}): ${blockedEvidenceReason(item, language)}`
     )).join("\n")
     : language === "zh"
       ? "- 当前回答证据中没有 blocked evidence。"
@@ -947,7 +966,7 @@ function buildAnswerDraft(question: string, targetPath: string, evidence: Search
       "- 只有当证据图中可见支撑资料或论断链时，预测才应写成可能演进路径。",
       "",
       "## 先提案后写回",
-      `- 目标提案路径：${targetPath || "reviews/query-writeback/deepseek-research-insights.md"}。`,
+      `- 目标提案路径：${vaultMarkdownLink(targetPath || "reviews/query-writeback/deepseek-research-insights.md")}。`,
       "- 下一步：创建问答写回提案供审核。本页面不会应用写入，也不会批准提案。",
     ].join("\n");
   }
@@ -976,7 +995,7 @@ function buildAnswerDraft(question: string, targetPath: string, evidence: Search
     "- Forecasts should be written as possible evolution paths only when the supporting source or claim chain is visible in the evidence map.",
     "",
     "## Proposal-first writeback",
-    `- Target proposal path: ${targetPath || "reviews/query-writeback/deepseek-research-insights.md"}.`,
+    `- Target proposal path: ${vaultMarkdownLink(targetPath || "reviews/query-writeback/deepseek-research-insights.md")}.`,
     "- Next action: create a query writeback proposal for review. This page does not apply writes or approve proposals.",
   ].join("\n");
 }
@@ -1019,12 +1038,46 @@ function buildLlmAnswerRequest(
   };
 }
 
-function AnswerMarkdown({ content, placeholder }: { content: string; placeholder: string }) {
+function AnswerMarkdown({
+  content,
+  placeholder,
+  onOpenVaultItem,
+}: {
+  content: string;
+  placeholder: string;
+  onOpenVaultItem?: (path?: string | null) => void | Promise<void>;
+}) {
   if (!content.trim()) {
     return <p className="chat-answer-placeholder">{placeholder}</p>;
   }
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        a({ href, children }) {
+          const vaultTarget = vaultPathFromMarkdownHref(href);
+          if (vaultTarget) {
+            return (
+              <a
+                className="chat-answer-vault-link"
+                href={href}
+                onClick={(event) => {
+                  event.preventDefault();
+                  void onOpenVaultItem?.(vaultTarget);
+                }}
+              >
+                {children}
+              </a>
+            );
+          }
+          return (
+            <a href={href} rel="noreferrer" target="_blank">
+              {children}
+            </a>
+          );
+        },
+      }}
+    >
       {content}
     </ReactMarkdown>
   );
@@ -1423,7 +1476,7 @@ export function ChatSearchPage({
         )}
 
         <div className="chat-answer-draft">
-          <AnswerMarkdown content={answerDraft} placeholder={text.draftPlaceholder} />
+          <AnswerMarkdown content={answerDraft} placeholder={text.draftPlaceholder} onOpenVaultItem={onOpenVaultItem} />
         </div>
       </section>
 
