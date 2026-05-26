@@ -7368,6 +7368,14 @@ fn desktop_settings_path(vault: &Path) -> PathBuf {
     vault.join("_state").join("desktop-settings.json")
 }
 
+fn normalize_desktop_settings(mut settings: DesktopSettings) -> Result<DesktopSettings, String> {
+    settings.default_pdf_parser = selected_pdf_parser(&settings.default_pdf_parser)?;
+    settings.scheduled_import_path =
+        normalize_scheduled_import_path(&settings.scheduled_import_path)?;
+    settings.source_watch_auto_ingest = false;
+    Ok(settings)
+}
+
 #[tauri::command]
 fn load_desktop_settings(vault_path: String) -> Result<DesktopSettings, String> {
     let vault = PathBuf::from(vault_path);
@@ -7389,10 +7397,7 @@ fn load_desktop_settings(vault_path: String) -> Result<DesktopSettings, String> 
     {
         settings.layout_parsing_token_present = true;
     }
-    settings.default_pdf_parser = selected_pdf_parser(&settings.default_pdf_parser)?;
-    settings.scheduled_import_path =
-        normalize_scheduled_import_path(&settings.scheduled_import_path)?;
-    Ok(settings)
+    normalize_desktop_settings(settings)
 }
 
 #[tauri::command]
@@ -7411,9 +7416,7 @@ fn save_desktop_settings(
             .ok()
             .filter(|value| !value.trim().is_empty())
             .is_some();
-    settings.default_pdf_parser = selected_pdf_parser(&settings.default_pdf_parser)?;
-    settings.scheduled_import_path =
-        normalize_scheduled_import_path(&settings.scheduled_import_path)?;
+    settings = normalize_desktop_settings(settings)?;
     let rendered = serde_json::to_string_pretty(&settings)
         .map_err(|e| format!("failed to serialize desktop settings: {e}"))?;
     write_text(&desktop_settings_path(&vault), &(rendered + "\n"))?;
@@ -10702,6 +10705,36 @@ mod tests {
         fs::create_dir_all(vault.join("raw").join("inbox")).expect("create raw inbox");
         fs::create_dir_all(vault.join("_state")).expect("create state dir");
         vault
+    }
+
+    #[test]
+    fn load_desktop_settings_disables_deferred_source_auto_ingest() {
+        let vault = test_vault("settings-load-source-auto-ingest");
+        let mut settings = DesktopSettings::default();
+        settings.source_watch_enabled = true;
+        settings.source_watch_auto_ingest = true;
+        let rendered = serde_json::to_string_pretty(&settings).expect("serialize settings");
+        write_text(&desktop_settings_path(&vault), &(rendered + "\n")).expect("write settings");
+
+        let loaded = load_desktop_settings(to_display(&vault)).expect("load settings");
+
+        assert!(loaded.source_watch_enabled);
+        assert!(!loaded.source_watch_auto_ingest);
+    }
+
+    #[test]
+    fn save_desktop_settings_persists_deferred_source_auto_ingest_as_false() {
+        let vault = test_vault("settings-save-source-auto-ingest");
+        let mut settings = DesktopSettings::default();
+        settings.source_watch_enabled = true;
+        settings.source_watch_auto_ingest = true;
+
+        let saved = save_desktop_settings(to_display(&vault), settings).expect("save settings");
+        let rendered = read_text(&desktop_settings_path(&vault));
+
+        assert!(saved.source_watch_enabled);
+        assert!(!saved.source_watch_auto_ingest);
+        assert!(rendered.contains("\"sourceWatchAutoIngest\": false"));
     }
 
     #[test]
