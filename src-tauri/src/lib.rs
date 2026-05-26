@@ -1379,6 +1379,25 @@ fn path_whitespace_suggestion(path: &Path) -> Option<PathBuf> {
     None
 }
 
+fn trailing_space_component(path: &Path) -> Option<String> {
+    path.components().find_map(|component| match component {
+        Component::Normal(name) => {
+            let value = name.to_string_lossy();
+            value.ends_with(' ').then(|| value.to_string())
+        }
+        _ => None,
+    })
+}
+
+fn reject_trailing_space_path(path: &Path, label: &str) -> Result<(), String> {
+    if let Some(component) = trailing_space_component(path) {
+        return Err(format!(
+            "{label} contains a path component with trailing space: `{component}`. Choose or rename a portable path without trailing spaces before creating a vault."
+        ));
+    }
+    Ok(())
+}
+
 fn workspace_root_from_path(start: &Path) -> Option<PathBuf> {
     let mut current = if start.is_file() {
         start.parent()?.to_path_buf()
@@ -3852,6 +3871,7 @@ fn create_vault(
     skip_downloads: bool,
 ) -> Result<VaultStatus, String> {
     let vault = PathBuf::from(vault_path);
+    reject_trailing_space_path(&vault, "vault path")?;
     if vault.exists() {
         return Err(format!("target already exists: {}", vault.display()));
     }
@@ -12094,6 +12114,43 @@ mod tests {
         assert!(read_text(&desktop_settings_path(&vault)).contains("\"raw/deepseek_paper\""));
 
         let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn create_vault_rejects_trailing_space_path_components() {
+        let root = test_vault("create-space-root");
+        let portable_parent = root.join("portable");
+        fs::create_dir_all(&portable_parent).expect("create portable parent");
+
+        let trailing_target = portable_parent.join("deepseek-vault ");
+        let error = create_vault(
+            to_display(&trailing_target),
+            None,
+            "python3".to_string(),
+            false,
+            "minimal".to_string(),
+            true,
+        )
+        .expect_err("reject trailing-space target");
+        assert!(error.contains("trailing space"));
+        assert!(!trailing_target.exists());
+
+        let spaced_parent = root.join("LLM-Wiki ");
+        fs::create_dir_all(&spaced_parent).expect("create spaced parent");
+        let nested_target = spaced_parent.join("vault");
+        let nested_error = create_vault(
+            to_display(&nested_target),
+            None,
+            "python3".to_string(),
+            false,
+            "minimal".to_string(),
+            true,
+        )
+        .expect_err("reject trailing-space parent");
+        assert!(nested_error.contains("LLM-Wiki "));
+        assert!(!nested_target.exists());
+
+        let _ = fs::remove_dir_all(root);
     }
 
     fn registry_entry(status: &str, source_page: Option<String>) -> DesktopRegistryEntry {
