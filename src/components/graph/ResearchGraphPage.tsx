@@ -12,7 +12,7 @@ import type {
   WritebackProposal,
 } from "../../types";
 
-type ResearchNodeType = "source" | "claim" | "concept" | "review" | "proposal" | "warning";
+type ResearchNodeType = "note" | "source" | "claim" | "concept" | "review" | "proposal" | "warning";
 type ResearchEdgeType =
   | "source_claim"
   | "claim_concept"
@@ -127,6 +127,7 @@ type ResearchGraphPageProps = {
 
 const nodeTypes: Array<ResearchNodeType | "all"> = [
   "all",
+  "note",
   "source",
   "claim",
   "concept",
@@ -253,6 +254,7 @@ const graphCopy = {
     conceptTag: "概念标签",
     nodeTypes: {
       all: "全部",
+      note: "笔记",
       source: "资料",
       claim: "论断",
       concept: "概念",
@@ -370,6 +372,7 @@ const graphCopy = {
     conceptTag: "concept tag",
     nodeTypes: {
       all: "All",
+      note: "Notes",
       source: "Sources",
       claim: "Claims",
       concept: "Concepts",
@@ -392,6 +395,7 @@ const graphCopy = {
 } as const;
 
 const typeOrder: Record<ResearchNodeType, number> = {
+  note: 0,
   warning: 0,
   source: 0,
   claim: 1,
@@ -401,6 +405,7 @@ const typeOrder: Record<ResearchNodeType, number> = {
 };
 
 const typeColors: Record<ResearchNodeType, string> = {
+  note: "#4d6f7a",
   source: "#245b93",
   claim: "#6d4fb0",
   concept: "#1f6f45",
@@ -816,6 +821,10 @@ function reviewNodeId(value: string) {
   return `review:${key(value)}`;
 }
 
+function noteNodeId(value: string) {
+  return `note:${key(value)}`;
+}
+
 function sourceNodeId(value: string) {
   return `source:${key(value)}`;
 }
@@ -866,10 +875,11 @@ export function buildResearchGraph(input: {
 
     const isConcept = file.kind === "concept";
     const isReport = file.kind === "report";
-    const id = isConcept ? conceptNodeId(file.path) : isReport ? reviewNodeId(file.path) : sourceNodeId(file.path);
+    const isNote = file.kind === "note";
+    const id = isConcept ? conceptNodeId(file.path) : isReport ? reviewNodeId(file.path) : isNote ? noteNodeId(file.path) : sourceNodeId(file.path);
     upsertNode(nodes, {
       id,
-      type: isConcept ? "concept" : isReport ? "review" : "source",
+      type: isConcept ? "concept" : isReport ? "review" : isNote ? "note" : "source",
       label: file.title || file.name || labelFromPath(file.path),
       subtitle: file.path,
       path: file.path,
@@ -879,6 +889,8 @@ export function buildResearchGraph(input: {
     addPageAliases(pageAliases, id, file.path, file.title, file.name, labelFromPath(file.path));
     if (isConcept) {
       addAlias(conceptAliases, id, file.path, file.title, file.name, labelFromPath(file.path));
+    } else if (isNote) {
+      addPageAliases(pageAliases, id, file.path, file.title, file.name, labelFromPath(file.path));
     } else if (!isReport) {
       addAlias(sourceAliases, id, file.path, file.title, file.name);
     }
@@ -902,7 +914,7 @@ export function buildResearchGraph(input: {
   }
 
   for (const file of input.status?.files ?? []) {
-    if (file.kind === "source" || file.kind === "concept" || file.kind === "report") {
+    if (file.kind === "note" || file.kind === "source" || file.kind === "concept" || file.kind === "report") {
       ensureFileNode(file);
     }
   }
