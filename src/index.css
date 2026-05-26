@@ -2075,6 +2075,16 @@ textarea {
   white-space: normal;
 }
 
+.details-markdown-preview .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0;
+}
+
+.details-markdown-preview .katex {
+  font-size: 1em;
+}
+
 .details-markdown-preview pre {
   overflow: auto;
   border-radius: 6px;
