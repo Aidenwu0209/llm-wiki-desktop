@@ -57,6 +57,9 @@ const detailsCopy = {
     log: "日志",
     copyDiff: "复制差异",
     notUpdated: "未更新",
+    outboundLinks: "出站链接",
+    inboundLinks: "反向链接",
+    noLinks: "没有页面级 wikilink。",
   },
   en: {
     title: "Details",
@@ -82,6 +85,9 @@ const detailsCopy = {
     log: "log",
     copyDiff: "copy diff",
     notUpdated: "not updated",
+    outboundLinks: "Outbound links",
+    inboundLinks: "Backlinks",
+    noLinks: "No page-level wikilinks.",
   },
 } as const;
 
@@ -147,6 +153,30 @@ function DetailActions({
   );
 }
 
+function LinkList({
+  title,
+  links,
+  empty,
+  onOpenVaultPath,
+}: {
+  title: string;
+  links?: string[];
+  empty: string;
+  onOpenVaultPath: (path?: string | null) => void;
+}) {
+  return (
+    <div className="details-link-section">
+      <strong>{title}</strong>
+      {(!links || links.length === 0) && <p>{empty}</p>}
+      {links?.slice(0, 8).map((link) => (
+        <button key={link} type="button" onClick={() => onOpenVaultPath(link)}>
+          <span>{link}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function DetailsPanel({
   language = "zh",
   selection,
@@ -192,6 +222,20 @@ export function DetailsPanel({
             onCopy={onCopy}
             onOpenObsidian={onOpenObsidian}
           />
+          <div className="details-link-grid">
+            <LinkList
+              title={text.outboundLinks}
+              links={selection.file.outboundLinks}
+              empty={text.noLinks}
+              onOpenVaultPath={onOpenVaultPath}
+            />
+            <LinkList
+              title={text.inboundLinks}
+              links={selection.file.inboundLinks}
+              empty={text.noLinks}
+              onOpenVaultPath={onOpenVaultPath}
+            />
+          </div>
         </div>
       )}
 

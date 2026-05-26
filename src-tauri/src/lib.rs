@@ -150,6 +150,8 @@ struct VaultFile {
     updated: Option<String>,
     qa_verdict: Option<String>,
     needs_review: usize,
+    outbound_links: Vec<String>,
+    inbound_links: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -3200,8 +3202,125 @@ fn qa_verdict(path: &Path) -> Option<String> {
     }
 }
 
-fn file_item(vault: &Path, path: &Path, kind: &str) -> VaultFile {
+fn normalize_wikilink_key(value: &str) -> Option<String> {
+    let mut target = value
+        .split('|')
+        .next()
+        .unwrap_or_default()
+        .split('#')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .replace('\\', "/");
+    while let Some(stripped) = target.strip_prefix("./") {
+        target = stripped.to_string();
+    }
+    let target = target.trim_matches('/').trim();
+    let target = target
+        .strip_suffix(".markdown")
+        .or_else(|| target.strip_suffix(".md"))
+        .unwrap_or(target)
+        .trim();
+    if target.is_empty() {
+        None
+    } else {
+        Some(target.to_ascii_lowercase())
+    }
+}
+
+fn extract_wikilink_targets(text: &str) -> Vec<String> {
+    let mut targets = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("[[") {
+        rest = &rest[start + 2..];
+        let Some(end) = rest.find("]]") else {
+            break;
+        };
+        if let Some(target) = normalize_wikilink_key(&rest[..end]) {
+            if !targets.contains(&target) {
+                targets.push(target);
+            }
+        }
+        rest = &rest[end + 2..];
+    }
+    targets
+}
+
+fn strip_markdown_extension(value: &str) -> &str {
+    value
+        .strip_suffix(".markdown")
+        .or_else(|| value.strip_suffix(".md"))
+        .unwrap_or(value)
+}
+
+fn wikilink_aliases(vault: &Path, path: &Path) -> Vec<String> {
+    let mut aliases = Vec::new();
+    let rel = rel_path(vault, path);
+    if let Some(alias) = normalize_wikilink_key(strip_markdown_extension(&rel)) {
+        aliases.push(alias);
+    }
+    if let Some(stem) = path.file_stem().and_then(OsStr::to_str) {
+        if let Some(alias) = normalize_wikilink_key(stem) {
+            aliases.push(alias);
+        }
+    }
+    if let Some(title) = page_title(path) {
+        if let Some(alias) = normalize_wikilink_key(&title) {
+            aliases.push(alias);
+        }
+    }
+    aliases.sort();
+    aliases.dedup();
+    aliases
+}
+
+#[derive(Debug, Default)]
+struct WikilinkContext {
+    outbound: HashMap<String, Vec<String>>,
+    inbound: HashMap<String, Vec<String>>,
+}
+
+fn build_wikilink_context(vault: &Path, paths: &[PathBuf]) -> WikilinkContext {
+    let mut aliases = HashMap::new();
+    for path in paths {
+        let rel = rel_path(vault, path);
+        for alias in wikilink_aliases(vault, path) {
+            aliases.entry(alias).or_insert_with(|| rel.clone());
+        }
+    }
+
+    let mut outbound: HashMap<String, Vec<String>> = HashMap::new();
+    let mut inbound: HashMap<String, Vec<String>> = HashMap::new();
+    for path in paths {
+        let rel = rel_path(vault, path);
+        let mut links = Vec::new();
+        for target in extract_wikilink_targets(&read_text(path)) {
+            let resolved = aliases
+                .get(&target)
+                .cloned()
+                .unwrap_or_else(|| target.clone());
+            if !links.contains(&resolved) {
+                links.push(resolved.clone());
+            }
+            if resolved != rel && aliases.values().any(|value| value == &resolved) {
+                inbound.entry(resolved).or_default().push(rel.clone());
+            }
+        }
+        links.sort();
+        outbound.insert(rel, links);
+    }
+
+    for links in inbound.values_mut() {
+        links.sort();
+        links.dedup();
+    }
+
+    WikilinkContext { outbound, inbound }
+}
+
+fn file_item(vault: &Path, path: &Path, kind: &str, links: &WikilinkContext) -> VaultFile {
     let fields = parse_frontmatter(path);
+    let rel = rel_path(vault, path);
     VaultFile {
         name: path
             .file_name()
@@ -3215,6 +3334,8 @@ fn file_item(vault: &Path, path: &Path, kind: &str) -> VaultFile {
         updated: fields.get("updated").cloned(),
         qa_verdict: source_qa(vault, path),
         needs_review: 0,
+        outbound_links: links.outbound.get(&rel).cloned().unwrap_or_default(),
+        inbound_links: links.inbound.get(&rel).cloned().unwrap_or_default(),
     }
 }
 
@@ -3475,18 +3596,30 @@ fn inspect_vault(vault_path: String) -> Result<VaultStatus, String> {
         .then(|| write_product_scorecard_report(&vault).ok())
         .flatten()
         .map(|report| report.summary);
+    let sources = list_markdown(&vault.join("sources"));
+    let drafts = list_markdown(&vault.join("drafts"));
+    let concepts = list_markdown(&vault.join("concepts"));
+    let reports = list_markdown(&vault.join("qa-reports"));
+    let markdown_files = sources
+        .iter()
+        .chain(drafts.iter())
+        .chain(concepts.iter())
+        .chain(reports.iter())
+        .cloned()
+        .collect::<Vec<_>>();
+    let wikilinks = build_wikilink_context(&vault, &markdown_files);
     let mut files = Vec::new();
-    for path in list_markdown(&vault.join("sources")) {
-        files.push(file_item(&vault, &path, "source"));
+    for path in &sources {
+        files.push(file_item(&vault, path, "source", &wikilinks));
     }
-    for path in list_markdown(&vault.join("drafts")) {
-        files.push(file_item(&vault, &path, "draft"));
+    for path in &drafts {
+        files.push(file_item(&vault, path, "draft", &wikilinks));
     }
-    for path in list_markdown(&vault.join("concepts")) {
-        files.push(file_item(&vault, &path, "concept"));
+    for path in &concepts {
+        files.push(file_item(&vault, path, "concept", &wikilinks));
     }
-    for path in list_markdown(&vault.join("qa-reports")) {
-        files.push(file_item(&vault, &path, "report"));
+    for path in &reports {
+        files.push(file_item(&vault, path, "report", &wikilinks));
     }
     let mut inbox_files = Vec::new();
     collect_inbox_files(&vault.join("raw").join("inbox"), &mut inbox_files);
@@ -3504,6 +3637,8 @@ fn inspect_vault(vault_path: String) -> Result<VaultStatus, String> {
             updated: None,
             qa_verdict: None,
             needs_review: 0,
+            outbound_links: Vec::new(),
+            inbound_links: Vec::new(),
         });
     }
 
@@ -3527,10 +3662,10 @@ fn inspect_vault(vault_path: String) -> Result<VaultStatus, String> {
         last_updated: latest_modified_time(&vault),
         counts: VaultCounts {
             inbox: files.iter().filter(|item| item.kind == "inbox").count(),
-            sources: list_markdown(&vault.join("sources")).len(),
-            drafts: list_markdown(&vault.join("drafts")).len(),
-            concepts: list_markdown(&vault.join("concepts")).len(),
-            reports: list_markdown(&vault.join("qa-reports")).len(),
+            sources: sources.len(),
+            drafts: drafts.len(),
+            concepts: concepts.len(),
+            reports: reports.len(),
             claims,
             claims_needing_review,
             science_review_queue: count_jsonl(
@@ -3715,6 +3850,8 @@ fn import_to_inbox(vault_path: String, paths: Vec<String>) -> Result<ImportResul
                 updated: None,
                 qa_verdict: None,
                 needs_review: 0,
+                outbound_links: Vec::new(),
+                inbound_links: Vec::new(),
             })
         })
         .collect();
@@ -10933,6 +11070,58 @@ mod tests {
             .expect("concept apply command");
         assert_eq!(concept_apply.0, "wiki_concept_revision.py");
         assert!(concept_apply.1.contains(&"--apply".to_string()));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn vault_status_surfaces_wikilink_backlinks() {
+        let vault = test_vault("wikilink-backlinks");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        write_text(
+            &vault.join("sources").join("LLM-0001.md"),
+            "# DeepSeek Source\n\nSee [[research-strategy]] and [[concepts/decision-logic|Decision Logic]].\n",
+        )
+        .expect("source page");
+        write_text(
+            &vault.join("concepts").join("research-strategy.md"),
+            "# Research Strategy\n\nSupported by [[LLM-0001]].\n",
+        )
+        .expect("research concept");
+        write_text(
+            &vault.join("concepts").join("decision-logic.md"),
+            "# Decision Logic\n\nTradeoff synthesis.\n",
+        )
+        .expect("decision concept");
+
+        let status = inspect_vault(to_display(&vault)).expect("inspect vault");
+        let source = status
+            .files
+            .iter()
+            .find(|file| file.name == "LLM-0001.md")
+            .expect("source file");
+        assert_eq!(
+            source.outbound_links,
+            vec![
+                "concepts/decision-logic.md".to_string(),
+                "concepts/research-strategy.md".to_string()
+            ]
+        );
+        assert_eq!(
+            source.inbound_links,
+            vec!["concepts/research-strategy.md".to_string()]
+        );
+
+        let decision = status
+            .files
+            .iter()
+            .find(|file| file.name == "decision-logic.md")
+            .expect("decision concept");
+        assert_eq!(decision.outbound_links.len(), 0);
+        assert_eq!(
+            decision.inbound_links,
+            vec!["sources/LLM-0001.md".to_string()]
+        );
 
         let _ = fs::remove_dir_all(vault);
     }

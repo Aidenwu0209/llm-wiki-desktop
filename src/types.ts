@@ -63,6 +63,8 @@ export type VaultFile = {
   updated?: string | null;
   qaVerdict?: string | null;
   needsReview?: number;
+  outboundLinks?: string[];
+  inboundLinks?: string[];
 };
 
 export type VaultStatus = {
