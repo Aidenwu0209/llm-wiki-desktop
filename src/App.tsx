@@ -2548,6 +2548,7 @@ function App() {
           writebacks={writebacks}
           traceabilityWarnings={traceabilityWarnings}
           onOpenPath={openPath}
+          onOpenVaultItem={openVaultItem}
           onRevealPath={revealPath}
           onCopyText={copyText}
           onOpenObsidian={handleOpenObsidian}
