@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 const MAX_VAULT_TEXT_PREVIEW_BYTES: u64 = 64 * 1024;
+const GENERATED_PURPOSE_MARKER: &str = "<!-- llm-wiki-desktop:generated-purpose -->";
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -7865,6 +7866,53 @@ fn desktop_settings_path(vault: &Path) -> PathBuf {
     vault.join("_state").join("desktop-settings.json")
 }
 
+fn render_project_purpose_note(settings: &DesktopSettings) -> Option<String> {
+    let project_name = settings.project_name.trim();
+    let project_purpose = settings.project_purpose.trim();
+    if project_name.is_empty() && project_purpose.is_empty() {
+        return None;
+    }
+    let title = if project_name.is_empty() {
+        "LLM Wiki Purpose"
+    } else {
+        project_name
+    };
+    let template = settings.project_template.trim();
+    let output_language = settings.ai_output_language.trim();
+    let purpose = if project_purpose.is_empty() {
+        "Use this page to keep the wiki goal, scope, and recurring questions visible to readers and agents."
+    } else {
+        project_purpose
+    };
+    Some(format!(
+        "# {title}\n\n{GENERATED_PURPOSE_MARKER}\n\n## Project Direction\n\n{purpose}\n\n## Operating Context\n\n- Template: `{}`\n- Output language: {}\n\n## Trust Boundary\n\nThis page records user-provided project direction. It is not evidence by itself; source pages, claims, review state, and writeback approvals remain the evidence boundary for synthesis.\n",
+        if template.is_empty() {
+            "unspecified"
+        } else {
+            template
+        },
+        if output_language.is_empty() {
+            "unspecified"
+        } else {
+            output_language
+        }
+    ))
+}
+
+fn sync_project_purpose_note(vault: &Path, settings: &DesktopSettings) -> Result<(), String> {
+    let Some(rendered) = render_project_purpose_note(settings) else {
+        return Ok(());
+    };
+    let path = vault.join("purpose.md");
+    if path.is_file() {
+        let existing = read_text(&path);
+        if !existing.contains(GENERATED_PURPOSE_MARKER) {
+            return Ok(());
+        }
+    }
+    write_text(&path, &rendered)
+}
+
 fn is_loopback_http_url(value: &str) -> bool {
     let lower = value.trim().to_ascii_lowercase();
     let Some(rest) = lower.strip_prefix("http://") else {
@@ -7958,6 +8006,7 @@ fn save_desktop_settings(
     let rendered = serde_json::to_string_pretty(&settings)
         .map_err(|e| format!("failed to serialize desktop settings: {e}"))?;
     write_text(&desktop_settings_path(&vault), &(rendered + "\n"))?;
+    sync_project_purpose_note(&vault, &settings)?;
     Ok(settings)
 }
 
@@ -11469,6 +11518,55 @@ mod tests {
         assert!(saved.source_watch_enabled);
         assert!(!saved.source_watch_auto_ingest);
         assert!(rendered.contains("\"sourceWatchAutoIngest\": false"));
+    }
+
+    #[test]
+    fn save_desktop_settings_syncs_generated_project_purpose_note() {
+        let vault = test_vault("settings-project-purpose-note");
+        let mut settings = DesktopSettings::default();
+        settings.project_name = "DeepSeek Research Wiki".to_string();
+        settings.project_template = "research".to_string();
+        settings.project_purpose =
+            "Track DeepSeek evidence, decisions, review state, and writeback ideas.".to_string();
+        settings.ai_output_language = "简体中文".to_string();
+
+        let saved = save_desktop_settings(to_display(&vault), settings).expect("save settings");
+        let purpose = read_text(&vault.join("purpose.md"));
+
+        assert_eq!(saved.project_name, "DeepSeek Research Wiki");
+        assert!(purpose.contains("# DeepSeek Research Wiki"));
+        assert!(purpose.contains(GENERATED_PURPOSE_MARKER));
+        assert!(purpose
+            .contains("Track DeepSeek evidence, decisions, review state, and writeback ideas."));
+        assert!(purpose.contains("- Template: `research`"));
+        assert!(purpose.contains("- Output language: 简体中文"));
+        assert!(purpose.contains("It is not evidence by itself"));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn save_desktop_settings_preserves_manual_project_purpose_note() {
+        let vault = test_vault("settings-manual-purpose-note");
+        write_text(
+            &vault.join("purpose.md"),
+            "# Manual Purpose\n\nDo not replace this user-authored note.\n",
+        )
+        .expect("write manual purpose");
+        let mut settings = DesktopSettings::default();
+        settings.project_name = "Generated Name".to_string();
+        settings.project_purpose =
+            "Generated purpose should not overwrite manual text.".to_string();
+
+        save_desktop_settings(to_display(&vault), settings).expect("save settings");
+        let purpose = read_text(&vault.join("purpose.md"));
+
+        assert!(purpose.contains("# Manual Purpose"));
+        assert!(purpose.contains("Do not replace this user-authored note."));
+        assert!(!purpose.contains(GENERATED_PURPOSE_MARKER));
+        assert!(!purpose.contains("Generated purpose should not overwrite manual text."));
+
+        let _ = fs::remove_dir_all(vault);
     }
 
     #[test]
