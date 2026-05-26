@@ -49,6 +49,7 @@ type ResearchGraphCommunity = {
   size: number;
   edgeCount: number;
   density: number;
+  nodeIds: string[];
   types: Partial<Record<ResearchNodeType, number>>;
   labels: string[];
 };
@@ -198,6 +199,9 @@ const graphCopy = {
     searchPlaceholder: "搜索节点、路径、论断、概念、提案目标和警告文本",
     nodeType: "节点类型",
     edgeType: "边类型",
+    colorMode: "着色",
+    colorByType: "类型",
+    colorByCommunity: "知识簇",
     relationshipMap: "证据图谱",
     nodeDetails: "节点详情",
     noGraphNodes: "当前筛选下没有图谱节点。",
@@ -319,6 +323,9 @@ const graphCopy = {
     searchPlaceholder: "Search nodes, paths, claims, concepts, proposal targets, and warning text",
     nodeType: "Node type",
     edgeType: "Edge type",
+    colorMode: "Color",
+    colorByType: "Type",
+    colorByCommunity: "Cluster",
     relationshipMap: "Evidence Graph",
     nodeDetails: "Node details",
     noGraphNodes: "No graph node matches the current filter.",
@@ -420,6 +427,21 @@ const typeColors: Record<ResearchNodeType, string> = {
   proposal: "#6d5f2a",
   warning: "#a43131",
 };
+
+const communityColors = [
+  "#245b93",
+  "#1f6f45",
+  "#a04d1d",
+  "#6d4fb0",
+  "#4d6f7a",
+  "#9a5a8f",
+  "#2f7f83",
+  "#8a6a20",
+  "#5f6f38",
+  "#b7552b",
+  "#3b5d8a",
+  "#7a4b64",
+];
 
 function classNames(...items: Array<string | false | null | undefined>) {
   return items.filter(Boolean).join(" ");
@@ -620,6 +642,7 @@ function graphCommunities(nodes: ResearchGraphNode[], edges: ResearchGraphEdge[]
       size: componentNodes.length,
       edgeCount,
       density,
+      nodeIds: componentNodes.map((item) => item.id),
       types,
       labels: componentNodes.slice(0, 4).map((item) => item.label),
     });
@@ -1397,6 +1420,7 @@ export function ResearchGraphPage({
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [colorMode, setColorMode] = useState<"type" | "community">("type");
   const [zoom, setZoom] = useState(1);
   const graph = useMemo(
     () => buildResearchGraph({ status, registry, claims, evidencePaths, reviewItems, writebacks, traceabilityWarnings }),
@@ -1477,6 +1501,16 @@ export function ResearchGraphPage({
   const visualEdges = visibleEdges.filter((edge) => visualNodeIds.has(edge.from) && visualNodeIds.has(edge.to)).slice(0, VISUAL_EDGE_LIMIT);
   const graphIsTruncated = visualNodes.length < filteredNodes.length || visualEdges.length < visibleEdges.length;
   const positions = graphPositions(visualNodes);
+  const communityByNodeId = useMemo(() => {
+    const result = new Map<string, { community: ResearchGraphCommunity; color: string }>();
+    graph.summary.communities.forEach((community, index) => {
+      const color = communityColors[index % communityColors.length];
+      for (const nodeId of community.nodeIds) {
+        result.set(nodeId, { community, color });
+      }
+    });
+    return result;
+  }, [graph.summary.communities]);
   const selected = (selectedId ? filteredNodes.find((node) => node.id === selectedId) : null) || filteredNodes[0] || null;
   const relatedEdges = selected ? visibleEdges.filter((edge) => edge.from === selected.id || edge.to === selected.id) : [];
   const indirectRecommendations = selected ? sharedNeighborRecommendations(selected.id, filteredNodes, visibleEdges) : [];
@@ -1559,6 +1593,10 @@ export function ResearchGraphPage({
   const zoomInGraph = () => setZoom((value) => Math.min(GRAPH_ZOOM_MAX, Number((value + GRAPH_ZOOM_STEP).toFixed(2))));
   const zoomOutGraph = () => setZoom((value) => Math.max(GRAPH_ZOOM_MIN, Number((value - GRAPH_ZOOM_STEP).toFixed(2))));
   const resetGraphZoom = () => setZoom(1);
+  const nodeFillColor = (node: ResearchGraphNode) =>
+    colorMode === "community"
+      ? communityByNodeId.get(node.id)?.color || typeColors[node.type]
+      : typeColors[node.type];
 
   return (
     <section className={["research-graph-page", className].filter(Boolean).join(" ")}>
@@ -1743,6 +1781,23 @@ export function ResearchGraphPage({
             ))}
           </div>
         </div>
+        <div className="graph-filter-group">
+          <span>{text.colorMode}</span>
+          <div className="graph-filter-row">
+            <button
+              className={colorMode === "type" ? "active" : ""}
+              onClick={() => setColorMode("type")}
+            >
+              {text.colorByType}
+            </button>
+            <button
+              className={colorMode === "community" ? "active" : ""}
+              onClick={() => setColorMode("community")}
+            >
+              {text.colorByCommunity}
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className="graph-workspace">
@@ -1839,7 +1894,7 @@ export function ResearchGraphPage({
                       onMouseLeave={() => setHoveredId((current) => current === node.id ? null : current)}
                     >
                       <title>{node.label}</title>
-                      <circle cx={position.x} cy={position.y} r={active ? 13 : 10} fill={typeColors[node.type]} />
+                      <circle cx={position.x} cy={position.y} r={active ? 13 : 10} fill={nodeFillColor(node)} />
                       <text x={position.x + 15} y={position.y + 4}>{node.label.slice(0, 32)}</text>
                     </g>
                   );
@@ -1851,9 +1906,17 @@ export function ResearchGraphPage({
             <p className="empty">{text.limitHint(visualNodes.length, filteredNodes.length, visualEdges.length, visibleEdges.length)}</p>
           )}
           <div className="graph-legend">
-            {(Object.keys(typeColors) as ResearchNodeType[]).map((type) => (
-              <span key={type}><i style={{ backgroundColor: typeColors[type] }} />{text.nodeTypes[type]}</span>
-            ))}
+            {colorMode === "type"
+              ? (Object.keys(typeColors) as ResearchNodeType[]).map((type) => (
+                <span key={type}><i style={{ backgroundColor: typeColors[type] }} />{text.nodeTypes[type]}</span>
+              ))
+              : graph.summary.communities.slice(0, communityColors.length).map((community, index) => (
+                <span key={community.id}>
+                  <i style={{ backgroundColor: communityColors[index % communityColors.length] }} />
+                  {community.labels[0] || community.id}
+                  <em>{community.size} {text.nodes} · {Math.round(community.density * 100)}%</em>
+                </span>
+              ))}
           </div>
         </section>
 

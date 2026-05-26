@@ -3760,9 +3760,15 @@ textarea {
 }
 
 .graph-legend i {
+  flex: 0 0 auto;
   width: 10px;
   height: 10px;
   border-radius: 999px;
+}
+
+.graph-legend em {
+  color: #64706a;
+  font-style: normal;
 }
 
 .graph-node-detail {
