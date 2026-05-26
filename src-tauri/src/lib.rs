@@ -4160,6 +4160,22 @@ fn is_symlink_path(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+fn auxiliary_raw_support_file(path: &Path) -> bool {
+    let extension = path
+        .extension()
+        .and_then(OsStr::to_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let stem = path
+        .file_stem()
+        .and_then(OsStr::to_str)
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
+    matches!(extension.as_str(), "md" | "markdown" | "txt")
+        && matches!(stem.as_str(), "index" | "索引")
+}
+
 fn collect_import_dir(
     root: &Path,
     current: &Path,
@@ -4187,7 +4203,10 @@ fn collect_import_dir(
             }
             if path.is_dir() {
                 collect_import_dir(root, &path, preserve_folders, out, errors);
-            } else if path.is_file() && supported_import_file(&path) {
+            } else if path.is_file()
+                && supported_import_file(&path)
+                && !auxiliary_raw_support_file(&path)
+            {
                 let folder_context = if preserve_folders {
                     path.parent()
                         .and_then(|parent| parent.strip_prefix(root).ok())
@@ -4218,7 +4237,9 @@ fn collect_import_candidates(
         } else if path.is_dir() {
             collect_import_dir(&path, &path, preserve_folders, &mut candidates, &mut errors);
         } else if path.is_file() {
-            if supported_import_file(&path) {
+            if auxiliary_raw_support_file(&path) {
+                continue;
+            } else if supported_import_file(&path) {
                 candidates.push(ImportCandidate {
                     source: path,
                     folder_context: None,
@@ -11489,6 +11510,34 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn folder_import_skips_raw_support_indexes() {
+        let vault = test_vault("folder-import-support-index");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        let import_root = test_vault("external-folder-support-index");
+        fs::create_dir_all(&import_root).expect("create import folder");
+        write_text(
+            &import_root.join("DeepSeek-LLM_2401.02954.md"),
+            "# DeepSeek LLM\n\narXiv:2401.02954\n",
+        )
+        .expect("write paper source");
+        write_text(
+            &import_root.join("索引.md"),
+            "# deepseek_paper 中文转换索引\n\n- DeepSeek-Coder-V2 2406.11931\n",
+        )
+        .expect("write support index");
+
+        let batch = import_sources_impl(&vault, vec![to_display(&import_root)], false, true)
+            .expect("import folder");
+
+        assert_eq!(batch.imported.len(), 1);
+        assert_eq!(batch.imported[0].file_name, "DeepSeek-LLM_2401.02954.md");
+        assert!(!vault.join("raw").join("inbox").join("索引.md").exists());
+
+        let _ = fs::remove_dir_all(vault);
+        let _ = fs::remove_dir_all(import_root);
     }
 
     #[test]
