@@ -3231,16 +3231,16 @@ fn job_id_for_source_id(source_id: Option<&str>, hash: &str) -> String {
 fn parse_frontmatter(path: &Path) -> HashMap<String, String> {
     let text = read_text(path);
     let mut fields = HashMap::new();
-    if !text.starts_with("---\n") {
-        return fields;
-    }
-    let Some(rest) = text.strip_prefix("---\n") else {
+    let mut lines = text.lines();
+    if lines.next().map(str::trim) != Some("---") {
         return fields;
     };
-    let Some((block, _body)) = rest.split_once("---\n") else {
-        return fields;
-    };
-    for line in block.lines() {
+    let mut closed = false;
+    for line in lines {
+        if line.trim() == "---" {
+            closed = true;
+            break;
+        }
         if let Some((key, value)) = line.split_once(':') {
             fields.insert(
                 key.trim().to_string(),
@@ -3248,7 +3248,11 @@ fn parse_frontmatter(path: &Path) -> HashMap<String, String> {
             );
         }
     }
-    fields
+    if closed {
+        fields
+    } else {
+        HashMap::new()
+    }
 }
 
 fn page_title(path: &Path) -> Option<String> {
@@ -10927,6 +10931,29 @@ mod tests {
             .missing
             .contains(&"needs science review".to_string()));
         assert!(evidence[0].artifact_path.is_some());
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn vault_status_parses_crlf_frontmatter_metadata() {
+        let vault = test_vault("crlf-frontmatter");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        write_text(
+            &vault.join("sources").join("LLM-0001.md"),
+            "---\r\ntitle: CRLF Source\r\nstatus: current\r\nupdated: 2026-05-26\r\n---\r\n# Fallback Title\r\n\r\nBody.\r\n",
+        )
+        .expect("write source page");
+
+        let status = inspect_vault(to_display(&vault)).expect("inspect vault");
+        let source = status
+            .files
+            .iter()
+            .find(|file| file.name == "LLM-0001.md")
+            .expect("source file");
+        assert_eq!(source.title.as_deref(), Some("CRLF Source"));
+        assert_eq!(source.status.as_deref(), Some("current"));
+        assert_eq!(source.updated.as_deref(), Some("2026-05-26"));
 
         let _ = fs::remove_dir_all(vault);
     }
