@@ -7062,9 +7062,26 @@ fn sanitize_optional_env_var_name(value: &str) -> Result<Option<String>, String>
 
 fn is_local_http_endpoint(value: &str) -> bool {
     let lower = value.trim().to_ascii_lowercase();
-    lower.starts_with("http://localhost")
-        || lower.starts_with("http://127.0.0.1")
-        || lower.starts_with("http://[::1]")
+    let Some(rest) = lower.strip_prefix("http://") else {
+        return false;
+    };
+    let authority = rest
+        .split(|ch| matches!(ch, '/' | '?' | '#'))
+        .next()
+        .unwrap_or("");
+    if authority.is_empty() || authority.contains('@') {
+        return false;
+    }
+    if let Some(bracketed) = authority.strip_prefix('[') {
+        let Some(end) = bracketed.find(']') else {
+            return false;
+        };
+        let host = &bracketed[..end];
+        let suffix = &bracketed[end + 1..];
+        return host == "::1" && (suffix.is_empty() || suffix.starts_with(':'));
+    }
+    let host = authority.split(':').next().unwrap_or("");
+    matches!(host, "localhost" | "127.0.0.1")
 }
 
 fn validate_llm_base_url(value: &str) -> Result<String, String> {
@@ -10188,7 +10205,17 @@ mod tests {
     fn llm_provider_rejects_remote_plain_http() {
         assert!(validate_llm_base_url("http://api.example.com/v1").is_err());
         assert!(validate_llm_base_url("http://localhost:11434/v1").is_ok());
+        assert!(validate_llm_base_url("http://127.0.0.1:11434/v1").is_ok());
+        assert!(validate_llm_base_url("http://[::1]:11434/v1").is_ok());
         assert!(validate_llm_base_url("https://api.example.com/v1").is_ok());
+    }
+
+    #[test]
+    fn llm_provider_rejects_localhost_prefix_spoofing() {
+        assert!(validate_llm_base_url("http://localhost.evil.com/v1").is_err());
+        assert!(validate_llm_base_url("http://127.0.0.1.evil.com/v1").is_err());
+        assert!(validate_llm_base_url("http://[::1].evil.com/v1").is_err());
+        assert!(validate_llm_base_url("http://localhost@api.example.com/v1").is_err());
     }
 
     #[test]
