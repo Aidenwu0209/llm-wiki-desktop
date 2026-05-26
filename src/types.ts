@@ -58,6 +58,7 @@ export type VaultFile = {
   name: string;
   path: string;
   kind: "source" | "draft" | "concept" | "report" | "inbox";
+  sourceId?: string | null;
   title?: string | null;
   status?: string | null;
   updated?: string | null;
