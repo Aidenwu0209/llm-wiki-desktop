@@ -202,6 +202,8 @@ const graphCopy = {
     colorMode: "着色",
     colorByType: "类型",
     colorByCommunity: "知识簇",
+    quickFilters: "快速过滤",
+    hideLowLinkNodes: "隐藏低连接节点",
     relationshipMap: "证据图谱",
     nodeDetails: "节点详情",
     noGraphNodes: "当前筛选下没有图谱节点。",
@@ -326,6 +328,8 @@ const graphCopy = {
     colorMode: "Color",
     colorByType: "Type",
     colorByCommunity: "Cluster",
+    quickFilters: "Quick filters",
+    hideLowLinkNodes: "Hide low-link nodes",
     relationshipMap: "Evidence Graph",
     nodeDetails: "Node details",
     noGraphNodes: "No graph node matches the current filter.",
@@ -1421,6 +1425,7 @@ export function ResearchGraphPage({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [colorMode, setColorMode] = useState<"type" | "community">("type");
+  const [hideLowLinkNodes, setHideLowLinkNodes] = useState(false);
   const [zoom, setZoom] = useState(1);
   const graph = useMemo(
     () => buildResearchGraph({ status, registry, claims, evidencePaths, reviewItems, writebacks, traceabilityWarnings }),
@@ -1465,9 +1470,24 @@ export function ResearchGraphPage({
     return labels[edge.label] || edge.label;
   };
   const nodeById = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph.nodes]);
+  const degreeByNodeId = useMemo(() => {
+    const degree = new Map<string, number>();
+    for (const edge of graph.edges) {
+      degree.set(edge.from, (degree.get(edge.from) || 0) + 1);
+      degree.set(edge.to, (degree.get(edge.to) || 0) + 1);
+    }
+    return degree;
+  }, [graph.edges]);
+  const lowLinkNodeIds = useMemo(
+    () => new Set(graph.nodes.filter((node) => (degreeByNodeId.get(node.id) || 0) <= 1).map((node) => node.id)),
+    [degreeByNodeId, graph.nodes],
+  );
   const normalizedQuery = query.trim().toLowerCase();
   const nodeMatchedIds = new Set<string>();
-  const typeMatchedNodes = graph.nodes.filter((node) => typeFilter === "all" || node.type === typeFilter);
+  const typeMatchedNodes = graph.nodes.filter((node) =>
+    (typeFilter === "all" || node.type === typeFilter)
+    && (!hideLowLinkNodes || !lowLinkNodeIds.has(node.id))
+  );
 
   for (const node of typeMatchedNodes) {
     if (!normalizedQuery || nodeSearchText(node).includes(normalizedQuery)) {
@@ -1477,6 +1497,7 @@ export function ResearchGraphPage({
 
   const visibleEdges = graph.edges.filter((edge) => {
     if (edgeFilter !== "all" && edge.type !== edgeFilter) return false;
+    if (hideLowLinkNodes && (lowLinkNodeIds.has(edge.from) || lowLinkNodeIds.has(edge.to))) return false;
     const fromNode = nodeById.get(edge.from);
     const toNode = nodeById.get(edge.to);
     const typeMatch = typeFilter === "all" || fromNode?.type === typeFilter || toNode?.type === typeFilter;
@@ -1530,7 +1551,7 @@ export function ResearchGraphPage({
   }, [focusedGraphNodeId, visualEdges]);
   const summary = graphSummaryText(graph, language);
   const hasGraphData = graph.nodes.length > 0;
-  const graphFilterActive = Boolean(normalizedQuery) || typeFilter !== "all" || edgeFilter !== "all";
+  const graphFilterActive = Boolean(normalizedQuery) || typeFilter !== "all" || edgeFilter !== "all" || hideLowLinkNodes;
   const graphViewBox = useMemo(() => {
     const width = GRAPH_VIEWBOX.width / zoom;
     const height = GRAPH_VIEWBOX.height / zoom;
@@ -1589,6 +1610,7 @@ export function ResearchGraphPage({
     setQuery("");
     setTypeFilter("all");
     setEdgeFilter("all");
+    setHideLowLinkNodes(false);
   };
   const zoomInGraph = () => setZoom((value) => Math.min(GRAPH_ZOOM_MAX, Number((value + GRAPH_ZOOM_STEP).toFixed(2))));
   const zoomOutGraph = () => setZoom((value) => Math.max(GRAPH_ZOOM_MIN, Number((value - GRAPH_ZOOM_STEP).toFixed(2))));
@@ -1795,6 +1817,17 @@ export function ResearchGraphPage({
               onClick={() => setColorMode("community")}
             >
               {text.colorByCommunity}
+            </button>
+          </div>
+        </div>
+        <div className="graph-filter-group">
+          <span>{text.quickFilters}</span>
+          <div className="graph-filter-row">
+            <button
+              className={hideLowLinkNodes ? "active" : ""}
+              onClick={() => setHideLowLinkNodes((value) => !value)}
+            >
+              {text.hideLowLinkNodes}
             </button>
           </div>
         </div>
