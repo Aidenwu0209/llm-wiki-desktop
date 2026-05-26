@@ -394,7 +394,7 @@ const shellCopy: Record<UiLanguage, {
     nextActionTitle: "下一步",
     nextActionHelp: "用左侧导航检查不同工作流，同时保留当前知识库上下文。",
     selectEvidence: "选择证据后查看路径、证据和可执行动作。",
-    importDropTitle: "导入 PDF / Markdown / TXT / 文件夹",
+    importDropTitle: "导入 PDF / Markdown / TXT / ZIP / 文件夹",
     importDropQueued: "导入后写入运行时管理的导入队列",
     importDropInboxOnly: "仅进入原始收件箱，等待手动规划",
     importFiles: "导入文件",
@@ -486,7 +486,7 @@ const shellCopy: Record<UiLanguage, {
       chooseVault: "选择 open-llm-wiki 知识库",
       chooseRuntime: "选择 open-llm-wiki 运行时仓库或已安装知识库",
       chooseParent: "选择新 Wiki Project 的父目录",
-      importFiles: "导入 PDF / Markdown / txt 到 raw/inbox",
+      importFiles: "导入 PDF / Markdown / txt / zip 到 raw/inbox",
       importFolder: "导入文件夹到 raw/inbox",
     },
     errors: {
@@ -519,7 +519,7 @@ const shellCopy: Record<UiLanguage, {
     nextActionTitle: "Next Action",
     nextActionHelp: "Use the navigation rail to inspect focused workflows without losing vault context.",
     selectEvidence: "Select evidence to inspect its path, provenance, and actions.",
-    importDropTitle: "Import PDF / Markdown / txt / folder",
+    importDropTitle: "Import PDF / Markdown / txt / zip / folder",
     importDropQueued: "After import, enqueue into the runtime-owned ingest queue",
     importDropInboxOnly: "Import into raw/inbox only, then plan manually",
     importFiles: "Import files",
@@ -611,7 +611,7 @@ const shellCopy: Record<UiLanguage, {
       chooseVault: "Choose open-llm-wiki vault",
       chooseRuntime: "Choose open-llm-wiki runtime repository or installed vault",
       chooseParent: "Choose parent directory for the new Wiki Project",
-      importFiles: "Import PDF / Markdown / txt to raw/inbox",
+      importFiles: "Import PDF / Markdown / txt / zip to raw/inbox",
       importFolder: "Import folders to raw/inbox",
     },
     errors: {
@@ -1209,7 +1209,7 @@ function App() {
       directory: false,
       multiple: true,
       title: copy.dialogs.importFiles,
-      filters: [{ name: "Documents", extensions: ["pdf", "md", "markdown", "txt"] }],
+      filters: [{ name: "Documents", extensions: ["pdf", "md", "markdown", "txt", "zip"] }],
     });
     const paths = Array.isArray(picked) ? picked.filter((item): item is string => typeof item === "string") : [];
     await handleImportPaths(paths);

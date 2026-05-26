@@ -48,7 +48,7 @@ open "src-tauri/target/release/bundle/macos/LLM Wiki.app"
 
 进入 `原始资料` 页面：
 
-1. 点击 `导入文件`，选择 PDF、Markdown 或 txt。
+1. 点击 `导入文件`，选择 PDF、Markdown、txt 或 zip 论文包。
 2. 文件会进入 vault 的 `raw/inbox/`。
 3. 点击 `规划 ingest` 检查哪些资料可解析、哪些已发布、哪些被阻塞。
 4. 选中任一资料，可以在中间预览 artifact，并在右侧查看 path、hash、parser、claims、concepts 和 traceability。
@@ -98,7 +98,7 @@ log-archive/desktop/
 ## MVP 能力
 
 - 创建或打开 open-llm-wiki vault；新建 vault 时会拒绝带尾随空格的路径段，避免生成跨设备不稳定的目录名。
-- 将 PDF / Markdown / txt 导入到 `raw/inbox/`，并按 SHA-256 跳过重复文件。
+- 将 PDF / Markdown / txt / zip 导入到 `raw/inbox/`，并按 SHA-256 跳过重复文件；zip 会作为 corpus package 进入 plan，先提示解包再进入逐篇解析。
 - 文件夹导入会保留目录上下文，但不会跟随 symlink，避免把未显式选择的外部文件复制进 raw evidence。
 - 生成桌面端 ingest plan：扫描 `raw/inbox/` 与 `raw/*_markdown/combined.md`，按 SHA-256 标记 desktop-only 的 `ready`、`stageable`、`blocked`、`cached`、`published`，并写入 `_state/desktop-ingest-plan.json`。
 - 对 Markdown / txt 输入执行本地 staging，生成 `raw/<source>_markdown/combined.md`、`manifest.json` 和 `chunks.jsonl`，再交给 open-llm-wiki runtime。
@@ -180,7 +180,7 @@ npm run start
 
 1. 选择或创建一个 `open-llm-wiki` vault。
 2. 如果 vault 内还没有 runtime，在 UI 中选择本地 `open-llm-wiki` 仓库路径。
-3. 导入 PDF、Markdown 或 txt 到 `raw/inbox/`。
+3. 导入 PDF、Markdown、txt 或 zip 论文包到 `raw/inbox/`。
 4. 先查看 ingest plan 和 action panel，再运行 ingest pipeline。
 5. 需要浏览知识库时，从桌面端打开 Obsidian vault，而不是直接打开原始论文目录。
 6. 需要 query writeback 时，先生成 proposal 并检查 diff。没有人工批准时不要 apply 到 `concepts/`。
