@@ -3207,6 +3207,19 @@ textarea {
   white-space: normal;
 }
 
+.graph-insight-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  border: 1px solid #cbd8ce;
+  border-radius: 6px;
+  background: #f6f9f6;
+  color: #1e4b36;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
 .graph-control-panel {
   display: grid;
   gap: 10px;
