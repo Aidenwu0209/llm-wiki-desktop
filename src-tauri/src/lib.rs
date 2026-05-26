@@ -7,6 +7,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{mpsc, Mutex, OnceLock};
@@ -140,6 +141,20 @@ struct AgentReadApiReadiness {
     scorecard: ProductScorecardSummary,
     required_metrics: Vec<String>,
     unmet_requirements: Vec<String>,
+    endpoints: Vec<AgentReadApiEndpoint>,
+    blocked_operations: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct AgentReadApiServerInfo {
+    enabled: bool,
+    reason: String,
+    bind_host: String,
+    port: u16,
+    base_url: String,
+    token: Option<String>,
+    vault_path: String,
     endpoints: Vec<AgentReadApiEndpoint>,
     blocked_operations: Vec<String>,
 }
@@ -2957,11 +2972,7 @@ fn agent_read_api_endpoints() -> Vec<AgentReadApiEndpoint> {
             "/vault/search",
             "vault-scoped evidence refs and snippets only",
         ),
-        (
-            "GET",
-            "/vault/graph",
-            "read-only evidence graph traversal",
-        ),
+        ("GET", "/vault/graph", "read-only evidence graph traversal"),
         (
             "POST",
             "/vault/read-file",
@@ -2997,7 +3008,7 @@ fn agent_read_api_required_metrics() -> Vec<&'static str> {
     ]
 }
 
-const AGENT_READ_API_SERVER_IMPLEMENTED: bool = false;
+const AGENT_READ_API_SERVER_IMPLEMENTED: bool = true;
 
 fn build_agent_read_api_readiness(vault: &Path) -> AgentReadApiReadiness {
     let report = build_product_scorecard_report(vault);
@@ -3059,6 +3070,411 @@ fn agent_read_api_readiness(vault_path: String) -> Result<AgentReadApiReadiness,
     let vault = PathBuf::from(vault_path);
     require_existing_dir(&vault, "vault")?;
     Ok(build_agent_read_api_readiness(&vault))
+}
+
+struct AgentReadApiServer {
+    info: AgentReadApiServerInfo,
+    stop_tx: mpsc::Sender<()>,
+    handle: thread::JoinHandle<()>,
+}
+
+#[derive(Debug)]
+struct AgentHttpRequest {
+    method: String,
+    path: String,
+    headers: HashMap<String, String>,
+    body: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentSearchRequest {
+    query: String,
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentReadFileRequest {
+    path: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentSearchResult {
+    path: String,
+    title: String,
+    snippet: String,
+}
+
+static AGENT_READ_API_SERVER: OnceLock<Mutex<Option<AgentReadApiServer>>> = OnceLock::new();
+
+fn agent_read_api_server_state() -> &'static Mutex<Option<AgentReadApiServer>> {
+    AGENT_READ_API_SERVER.get_or_init(|| Mutex::new(None))
+}
+
+fn agent_read_api_token(vault: &Path) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(to_display(vault).as_bytes());
+    hasher.update(Local::now().to_rfc3339().as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn parse_http_request(stream: &mut TcpStream) -> Result<AgentHttpRequest, String> {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .map_err(|e| format!("failed to set read timeout: {e}"))?;
+    let mut buf = Vec::new();
+    let mut chunk = [0_u8; 1024];
+    let mut header_end = None;
+    let mut content_length = 0_usize;
+    loop {
+        let read = stream
+            .read(&mut chunk)
+            .map_err(|e| format!("failed to read request: {e}"))?;
+        if read == 0 {
+            break;
+        }
+        buf.extend_from_slice(&chunk[..read]);
+        if buf.len() > 1024 * 1024 {
+            return Err("request too large".to_string());
+        }
+        if header_end.is_none() {
+            if let Some(index) = buf.windows(4).position(|window| window == b"\r\n\r\n") {
+                header_end = Some(index + 4);
+                let header_text = String::from_utf8_lossy(&buf[..index]);
+                for line in header_text.lines().skip(1) {
+                    if let Some((name, value)) = line.split_once(':') {
+                        if name.eq_ignore_ascii_case("content-length") {
+                            content_length = value.trim().parse::<usize>().unwrap_or(0);
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(end) = header_end {
+            if buf.len() >= end + content_length {
+                break;
+            }
+        }
+    }
+    let Some(end) = header_end else {
+        return Err("malformed HTTP request".to_string());
+    };
+    let header_text = String::from_utf8_lossy(&buf[..end]);
+    let mut lines = header_text.lines();
+    let request_line = lines
+        .next()
+        .ok_or_else(|| "missing HTTP request line".to_string())?;
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next().unwrap_or_default().to_ascii_uppercase();
+    let raw_path = parts.next().unwrap_or_default();
+    let path = raw_path.split('?').next().unwrap_or_default().to_string();
+    let mut headers = HashMap::new();
+    for line in lines {
+        if let Some((name, value)) = line.split_once(':') {
+            headers.insert(name.trim().to_ascii_lowercase(), value.trim().to_string());
+        }
+    }
+    let body = String::from_utf8_lossy(&buf[end..end + content_length]).to_string();
+    Ok(AgentHttpRequest {
+        method,
+        path,
+        headers,
+        body,
+    })
+}
+
+fn agent_request_authorized(headers: &HashMap<String, String>, token: &str) -> bool {
+    headers
+        .get("authorization")
+        .is_some_and(|value| value.trim() == format!("Bearer {token}"))
+        || headers
+            .get("x-llm-wiki-token")
+            .is_some_and(|value| value.trim() == token)
+}
+
+fn write_http_json<T: Serialize>(
+    stream: &mut TcpStream,
+    status: &str,
+    value: &T,
+) -> Result<(), String> {
+    let body = serde_json::to_string_pretty(value)
+        .map_err(|e| format!("failed to serialize HTTP response: {e}"))?;
+    let response = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: application/json; charset=utf-8\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.as_bytes().len(),
+        body
+    );
+    stream
+        .write_all(response.as_bytes())
+        .map_err(|e| format!("failed to write HTTP response: {e}"))
+}
+
+fn snippet_for_query(content: &str, query: &str) -> Option<String> {
+    let lower = content.to_ascii_lowercase();
+    let query_lower = query.to_ascii_lowercase();
+    let term = query_lower
+        .split_whitespace()
+        .find(|part| !part.is_empty())
+        .unwrap_or(query_lower.as_str());
+    let index = if term.is_empty() {
+        Some(0)
+    } else {
+        lower.find(term)
+    }?;
+    let mut start = index.saturating_sub(120);
+    while start > 0 && !content.is_char_boundary(start) {
+        start -= 1;
+    }
+    let mut end = (index + 280).min(content.len());
+    while end > start && !content.is_char_boundary(end) {
+        end -= 1;
+    }
+    Some(content[start..end].replace('\n', " ").trim().to_string())
+}
+
+fn agent_search_vault(
+    vault: &Path,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<AgentSearchResult>, String> {
+    let normalized = query.trim();
+    if normalized.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut candidates = Vec::new();
+    for dir in [
+        "sources",
+        "concepts",
+        "drafts",
+        "qa-reports",
+        "reviews/query-writeback",
+    ] {
+        candidates.extend(list_markdown(&vault.join(dir)));
+    }
+    let mut results = Vec::new();
+    for path in candidates {
+        let content = read_text(&path);
+        if let Some(snippet) = snippet_for_query(&content, normalized) {
+            results.push(AgentSearchResult {
+                path: rel_path(vault, &path),
+                title: markdown_title(&content, &path),
+                snippet,
+            });
+        }
+        if results.len() >= limit.min(20) {
+            break;
+        }
+    }
+    Ok(results)
+}
+
+fn handle_agent_read_api_request(
+    vault: &Path,
+    token: &str,
+    request: AgentHttpRequest,
+) -> (String, serde_json::Value) {
+    if !agent_request_authorized(&request.headers, token) {
+        return (
+            "401 Unauthorized".to_string(),
+            serde_json::json!({
+                "error": "missing or invalid bearer token",
+                "tokenRequired": true
+            }),
+        );
+    }
+    let result = match (request.method.as_str(), request.path.as_str()) {
+        ("GET", "/health") => Ok(serde_json::json!({
+            "ok": true,
+            "readOnly": true,
+            "vaultPath": to_display(vault),
+            "blockedOperations": build_agent_read_api_readiness(vault).blocked_operations,
+        })),
+        ("GET", "/vault/status") => inspect_vault(to_display(vault)).and_then(|value| {
+            serde_json::to_value(value).map_err(|e| format!("failed to serialize status: {e}"))
+        }),
+        ("GET", "/vault/ingest-plan") | ("POST", "/vault/rescan-plan") => {
+            plan_ingest(to_display(vault)).and_then(|value| {
+                serde_json::to_value(value).map_err(|e| format!("failed to serialize plan: {e}"))
+            })
+        }
+        ("GET", "/vault/sources") => plan_ingest(to_display(vault)).map(|plan| {
+            serde_json::json!({
+                "registry": plan.registry,
+                "artifacts": plan.artifacts,
+                "sourceAliases": plan.source_aliases,
+            })
+        }),
+        ("GET", "/vault/traceability-warnings") => list_traceability_warnings(to_display(vault))
+            .and_then(|value| {
+                serde_json::to_value(value)
+                    .map_err(|e| format!("failed to serialize traceability warnings: {e}"))
+            }),
+        ("GET", "/vault/writeback-proposals") => list_writeback_proposals(to_display(vault))
+            .and_then(|value| {
+                serde_json::to_value(value)
+                    .map_err(|e| format!("failed to serialize writeback proposals: {e}"))
+            }),
+        ("GET", "/vault/graph") => inspect_vault(to_display(vault)).and_then(|status| {
+            let edges = status
+                .files
+                .iter()
+                .flat_map(|file| {
+                    file.outbound_links.iter().map(move |target| {
+                        serde_json::json!({
+                            "source": rel_path(vault, &PathBuf::from(&file.path)),
+                            "target": target,
+                            "kind": "wikilink",
+                        })
+                    })
+                })
+                .collect::<Vec<_>>();
+            serde_json::to_value(serde_json::json!({
+                "nodes": status.files,
+                "edges": edges,
+            }))
+            .map_err(|e| format!("failed to serialize graph: {e}"))
+        }),
+        ("POST", "/vault/search") => {
+            let parsed = serde_json::from_str::<AgentSearchRequest>(&request.body)
+                .map_err(|e| format!("invalid search request JSON: {e}"));
+            parsed.and_then(|body| {
+                let limit = body.limit.unwrap_or(10);
+                agent_search_vault(vault, &body.query, limit).and_then(|results| {
+                    serde_json::to_value(serde_json::json!({
+                        "query": body.query,
+                        "results": results,
+                    }))
+                    .map_err(|e| format!("failed to serialize search results: {e}"))
+                })
+            })
+        }
+        ("POST", "/vault/read-file") => {
+            let parsed = serde_json::from_str::<AgentReadFileRequest>(&request.body)
+                .map_err(|e| format!("invalid read-file request JSON: {e}"));
+            parsed.and_then(|body| {
+                read_vault_text_file(to_display(vault), body.path).and_then(|preview| {
+                    serde_json::to_value(preview)
+                        .map_err(|e| format!("failed to serialize file preview: {e}"))
+                })
+            })
+        }
+        _ => Err(format!(
+            "unsupported read-only route: {} {}",
+            request.method, request.path
+        )),
+    };
+    match result {
+        Ok(value) => ("200 OK".to_string(), value),
+        Err(err) => (
+            "400 Bad Request".to_string(),
+            serde_json::json!({ "error": err }),
+        ),
+    }
+}
+
+fn handle_agent_read_api_stream(mut stream: TcpStream, vault: &Path, token: &str) {
+    let _ = stream.set_nonblocking(false);
+    let response = parse_http_request(&mut stream)
+        .map(|request| handle_agent_read_api_request(vault, token, request))
+        .unwrap_or_else(|err| {
+            (
+                "400 Bad Request".to_string(),
+                serde_json::json!({ "error": err }),
+            )
+        });
+    let _ = write_http_json(&mut stream, &response.0, &response.1);
+}
+
+fn start_agent_read_api_impl(vault: &Path, port: u16) -> Result<AgentReadApiServerInfo, String> {
+    require_existing_dir(vault, "vault")?;
+    let readiness = build_agent_read_api_readiness(vault);
+    if !readiness.enabled {
+        return Err(format!(
+            "{} {}",
+            readiness.reason,
+            readiness.unmet_requirements.join("; ")
+        ));
+    }
+    let mut guard = agent_read_api_server_state()
+        .lock()
+        .map_err(|_| "agent API server state lock poisoned".to_string())?;
+    if let Some(existing) = guard.as_ref() {
+        return Err(format!(
+            "agent read API already running at {} for {}",
+            existing.info.base_url, existing.info.vault_path
+        ));
+    }
+    let vault = vault.canonicalize().unwrap_or_else(|_| vault.to_path_buf());
+    let listener = TcpListener::bind(("127.0.0.1", port))
+        .map_err(|e| format!("failed to bind agent read API on 127.0.0.1:{port}: {e}"))?;
+    let actual_port = listener
+        .local_addr()
+        .map_err(|e| format!("failed to read bound agent API port: {e}"))?
+        .port();
+    listener
+        .set_nonblocking(true)
+        .map_err(|e| format!("failed to configure agent API listener: {e}"))?;
+    let token = agent_read_api_token(&vault);
+    let info = AgentReadApiServerInfo {
+        enabled: true,
+        reason: "Read-only localhost API is running for this vault.".to_string(),
+        bind_host: "127.0.0.1".to_string(),
+        port: actual_port,
+        base_url: format!("http://127.0.0.1:{actual_port}"),
+        token: Some(token.clone()),
+        vault_path: to_display(&vault),
+        endpoints: agent_read_api_endpoints(),
+        blocked_operations: readiness.blocked_operations,
+    };
+    let (stop_tx, stop_rx) = mpsc::channel::<()>();
+    let server_vault = vault.clone();
+    let server_token = token.clone();
+    let handle = thread::spawn(move || loop {
+        if stop_rx.try_recv().is_ok() {
+            break;
+        }
+        match listener.accept() {
+            Ok((stream, _)) => handle_agent_read_api_stream(stream, &server_vault, &server_token),
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(30));
+            }
+            Err(_) => break,
+        }
+    });
+    *guard = Some(AgentReadApiServer {
+        info: info.clone(),
+        stop_tx,
+        handle,
+    });
+    Ok(info)
+}
+
+#[tauri::command]
+fn start_agent_read_api(
+    vault_path: String,
+    port: Option<u16>,
+) -> Result<AgentReadApiServerInfo, String> {
+    start_agent_read_api_impl(&PathBuf::from(vault_path), port.unwrap_or(19828))
+}
+
+#[tauri::command]
+fn stop_agent_read_api() -> Result<AgentReadApiServerInfo, String> {
+    let mut guard = agent_read_api_server_state()
+        .lock()
+        .map_err(|_| "agent API server state lock poisoned".to_string())?;
+    let Some(server) = guard.take() else {
+        return Err("agent read API is not running".to_string());
+    };
+    let _ = server.stop_tx.send(());
+    let _ = server.handle.join();
+    Ok(AgentReadApiServerInfo {
+        enabled: false,
+        reason: "Read-only localhost API stopped.".to_string(),
+        token: None,
+        ..server.info
+    })
 }
 
 fn status_override_path(vault: &Path, file_name: &str) -> PathBuf {
@@ -10915,6 +11331,35 @@ mod tests {
         vault
     }
 
+    fn agent_http_request(
+        port: u16,
+        token: Option<&str>,
+        method: &str,
+        path: &str,
+        body: &str,
+    ) -> String {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect agent API");
+        let auth = token
+            .map(|value| format!("Authorization: Bearer {value}\r\n"))
+            .unwrap_or_default();
+        let request = format!(
+            "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{auth}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.as_bytes().len(),
+        );
+        stream.write_all(request.as_bytes()).expect("write request");
+        let mut response = Vec::new();
+        let mut chunk = [0_u8; 1024];
+        loop {
+            match stream.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(read) => response.extend_from_slice(&chunk[..read]),
+                Err(err) if err.kind() == std::io::ErrorKind::ConnectionReset => break,
+                Err(err) => panic!("read response: {err}"),
+            }
+        }
+        String::from_utf8_lossy(&response).to_string()
+    }
+
     #[test]
     fn load_desktop_settings_disables_deferred_source_auto_ingest() {
         let vault = test_vault("settings-load-source-auto-ingest");
@@ -12516,7 +12961,7 @@ mod tests {
         assert_eq!(readiness.bind_host, "127.0.0.1");
         assert!(readiness.token_required);
         assert!(!readiness.scorecard_ready);
-        assert!(!readiness.server_implemented);
+        assert!(readiness.server_implemented);
         assert!(!readiness.server_available);
         assert!(readiness
             .unmet_requirements
@@ -12553,7 +12998,7 @@ mod tests {
     }
 
     #[test]
-    fn agent_read_api_readiness_keeps_server_unavailable_after_scorecard_pass() {
+    fn agent_read_api_readiness_marks_server_available_after_scorecard_pass() {
         let vault = test_vault("agent-api-readiness-pass");
         create_minimal_vault(&vault).expect("create minimal vault");
         let source = vault.join("raw").join("note.md");
@@ -12583,18 +13028,18 @@ mod tests {
 
         let readiness = build_agent_read_api_readiness(&vault);
         assert!(
-            !readiness.enabled,
-            "no live server should be advertised yet"
+            readiness.enabled,
+            "live server should be advertised after scorecard pass"
         );
         assert!(
             readiness.scorecard_ready,
             "{:?}",
             readiness.unmet_requirements
         );
-        assert!(!readiness.server_implemented);
-        assert!(!readiness.server_available);
+        assert!(readiness.server_implemented);
+        assert!(readiness.server_available);
         assert!(readiness.unmet_requirements.is_empty());
-        assert!(readiness.reason.contains("no live localhost API server"));
+        assert!(readiness.reason.contains("available for this vault"));
         assert!(readiness
             .required_metrics
             .contains(&"query_writeback".to_string()));
@@ -12614,6 +13059,104 @@ mod tests {
             .blocked_operations
             .iter()
             .any(|operation| operation.contains("apply writeback proposal")));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn agent_read_api_starts_token_protected_read_only_server() {
+        let vault = test_vault("agent-api-server");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        let source = vault.join("raw").join("note.md");
+        write_text(
+            &source,
+            "# Note\n\nDeepSeek emphasizes efficient reasoning and careful evaluation.\n",
+        )
+        .expect("write source");
+        let staged = stage_text_artifacts(&vault).expect("stage source");
+        assert_eq!(staged.len(), 1);
+        let plan = plan_ingest(to_display(&vault)).expect("plan source");
+        let entry = &plan.registry[0];
+        write_text(
+            &vault.join("sources").join("LLM-0001.md"),
+            "# DeepSeek Source\n\nDeepSeek emphasizes efficient reasoning and careful evaluation.\n",
+        )
+        .expect("source page");
+        write_text(
+            &vault.join("claims").join("claims.jsonl"),
+            &format!(
+                "{{\"claim_id\":\"c1\",\"claim_text\":\"DeepSeek emphasizes efficient reasoning.\",\"needs_review\":false,\"verdict\":\"supported\",\"status\":\"supported\",\"source_uuid\":\"{}\",\"source_id\":\"{}\",\"chunk_id\":\"{}:00001\",\"concepts\":[\"Reasoning\"],\"evidence_quote\":\"efficient reasoning\",\"evidence_hash\":\"{}\"}}\n",
+                entry.source_uuid,
+                entry.source_id.clone().unwrap_or_default(),
+                entry.source_uuid,
+                sha256_text("efficient reasoning")
+            ),
+        )
+        .expect("write claim");
+        create_writeback_proposal(
+            to_display(&vault),
+            "reviews/query-writeback/agent-api-server.md".to_string(),
+            "Agent API proposal".to_string(),
+            "Review-only proposal.".to_string(),
+        )
+        .expect("write proposal");
+
+        let info = start_agent_read_api_impl(&vault, 0).expect("start agent API");
+        assert!(info.enabled);
+        assert_eq!(info.bind_host, "127.0.0.1");
+        assert!(info.token.is_some());
+        let token = info.token.as_deref().expect("token");
+
+        let denied = agent_http_request(info.port, None, "GET", "/health", "");
+        assert!(denied.starts_with("HTTP/1.1 401 Unauthorized"), "{denied}");
+
+        let health = agent_http_request(info.port, Some(token), "GET", "/health", "");
+        assert!(health.starts_with("HTTP/1.1 200 OK"), "{health}");
+        assert!(health.contains("\"readOnly\": true"));
+        assert!(health.contains("apply writeback proposal"));
+
+        let search = agent_http_request(
+            info.port,
+            Some(token),
+            "POST",
+            "/vault/search",
+            "{\"query\":\"efficient reasoning\",\"limit\":5}",
+        );
+        assert!(search.starts_with("HTTP/1.1 200 OK"), "{search}");
+        assert!(search.contains("sources/LLM-0001.md"));
+        assert!(search.contains("efficient reasoning"));
+
+        let graph = agent_http_request(info.port, Some(token), "GET", "/vault/graph", "");
+        assert!(graph.starts_with("HTTP/1.1 200 OK"), "{graph}");
+        assert!(graph.contains("\"nodes\""));
+        assert!(graph.contains("\"edges\""));
+
+        let read_file = agent_http_request(
+            info.port,
+            Some(token),
+            "POST",
+            "/vault/read-file",
+            "{\"path\":\"sources/LLM-0001.md\"}",
+        );
+        assert!(read_file.starts_with("HTTP/1.1 200 OK"), "{read_file}");
+        assert!(read_file.contains("DeepSeek Source"));
+
+        let escaped = agent_http_request(
+            info.port,
+            Some(token),
+            "POST",
+            "/vault/read-file",
+            "{\"path\":\"../outside.md\"}",
+        );
+        assert!(escaped.starts_with("HTTP/1.1 400 Bad Request"), "{escaped}");
+        assert!(
+            escaped.contains("inside the vault") || escaped.contains("outside vault"),
+            "{escaped}"
+        );
+
+        let stopped = stop_agent_read_api().expect("stop agent API");
+        assert!(!stopped.enabled);
+        assert!(stopped.token.is_none());
 
         let _ = fs::remove_dir_all(vault);
     }
@@ -13205,9 +13748,8 @@ mod tests {
         create_minimal_vault(&vault).expect("create minimal vault");
         let source = vault.join("sources").join("LLM-0001.md");
         write_text(&source, "# Source\n\nEvidence-backed note.").expect("source");
-        let preview =
-            read_vault_text_file(to_display(&vault), "sources/LLM-0001.md".to_string())
-                .expect("preview markdown");
+        let preview = read_vault_text_file(to_display(&vault), "sources/LLM-0001.md".to_string())
+            .expect("preview markdown");
         assert_eq!(preview.path, "sources/LLM-0001.md");
         assert!(preview.content.contains("Evidence-backed note"));
         assert!(!preview.truncated);
@@ -14277,6 +14819,8 @@ pub fn run() {
             repair_obsidian_templates,
             generate_product_scorecard,
             agent_read_api_readiness,
+            start_agent_read_api,
+            stop_agent_read_api,
             import_to_inbox,
             import_sources,
             load_desktop_settings,

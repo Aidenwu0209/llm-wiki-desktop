@@ -1,6 +1,6 @@
-# Agent Read API Readiness
+# Agent Read API
 
-The desktop app does not expose a localhost agent API until the vault state is trustworthy enough for agents to read. DFC-style corpora are evaluation inputs for this gate; they do not change the product into a DFC-specific tool.
+The desktop app exposes a localhost agent API only after the vault state is trustworthy enough for agents to read. DFC-style corpora are evaluation inputs for this gate; they do not change the product into a DFC-specific tool.
 
 ## Readiness Gate
 
@@ -29,11 +29,23 @@ Important distinction:
 - `serverAvailable: true` means an agent can actually connect to the server.
 - `enabled` is true only when the vault passed the gate and a live server is available.
 
-Until `serverImplemented` and `serverAvailable` are true, agents must not attempt to connect to `127.0.0.1`. Treat the endpoint list below as a future contract, not as a currently running server.
+## Start / Stop
 
-## Future Localhost API Contract
+When the gate passes, Settings -> Agent API can start a token-protected read-only server on `127.0.0.1:19828`:
 
-When the gate passes and a live server exists, the API may expose only localhost, token-protected, read-only routes:
+```ts
+import { startAgentReadApi, stopAgentReadApi } from "./src/tauri";
+
+const info = await startAgentReadApi(vaultPath);
+console.log(info.baseUrl, info.token);
+await stopAgentReadApi();
+```
+
+The token is returned for the current desktop session. Agents must send either `Authorization: Bearer <token>` or `X-LLM-Wiki-Token: <token>`.
+
+## Localhost API Contract
+
+The API exposes only localhost, token-protected, read-only routes:
 
 - `GET /health`
 - `GET /vault/status`
@@ -41,10 +53,12 @@ When the gate passes and a live server exists, the API may expose only localhost
 - `GET /vault/sources`
 - `GET /vault/traceability-warnings`
 - `POST /vault/search`
+- `GET /vault/graph`
+- `POST /vault/read-file`
 - `GET /vault/writeback-proposals`
 - `POST /vault/rescan-plan`
 
-`POST /vault/search` must return evidence references and snippets only. `POST /vault/rescan-plan` may refresh plan state but must not run parser, ingest, model, OCR, writeback apply, or external network work.
+`POST /vault/search` must return evidence references and snippets only. `POST /vault/read-file` accepts a vault-relative text path and rejects path escapes. `POST /vault/rescan-plan` may refresh plan state but must not run parser, ingest, model, OCR, writeback apply, or external network work.
 
 ## Blocked Operations
 
@@ -58,7 +72,7 @@ Agents must not get endpoints that:
 
 ## Claude Code / Codex Usage
 
-Until a live server exists, ask the desktop app for the readiness report first. If `enabled` or `serverAvailable` is false, the agent should stay on the existing UI-backed flow:
+Ask the desktop app for the readiness report first. If `enabled` or `serverAvailable` is false, the agent should stay on the existing UI-backed flow:
 
 1. Open Dashboard and run Refresh.
 2. Open Raw Sources and run Plan.
