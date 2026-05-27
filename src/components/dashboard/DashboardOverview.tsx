@@ -26,6 +26,7 @@ import type {
   WritebackProposal,
 } from "../../types";
 import type { UiLanguage } from "../../i18n";
+import { runnableIngestCount } from "../../lib/ingestPlan";
 
 type ReadinessTone = "ok" | "warn" | "danger" | "idle";
 
@@ -447,10 +448,8 @@ export function DashboardOverview({
 }: DashboardOverviewProps) {
   const text = dashboardCopy[language];
   const summary = ingestPlan?.summary;
-  const parseablePdfs =
-    ingestPlan?.entries.filter((entry) => entry.action === "parse_required" && entry.fileName.toLowerCase().endsWith(".pdf")).length ?? 0;
   const topPlanEntry = topIngestPlanEntry(ingestPlan);
-  const runnableIngest = (summary?.ready ?? 0) + (summary?.stageable ?? 0) + (summary?.cached ?? 0) + parseablePdfs;
+  const runnableIngest = runnableIngestCount(ingestPlan);
   const contractP0P1 = lintFindings.filter((finding) => finding.severity === "p0" || finding.severity === "p1").length;
   const proposedWritebacks = writebacks.filter((proposal) => proposal.status === "proposed").length;
   const writebackIssues = writebacks.filter((proposal) => proposal.status === "rejected").length;
