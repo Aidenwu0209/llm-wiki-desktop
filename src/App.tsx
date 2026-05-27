@@ -118,6 +118,7 @@ import {
   runtimeText,
   type UiLanguage,
 } from "./i18n";
+import { isRunnableIngestEntry, runnableIngestCount } from "./lib/ingestPlan";
 
 const runtimeActions = [
   { id: "lint", label: "Run lint", icon: ListChecks },
@@ -766,13 +767,10 @@ function runtimeSettings(settings: DesktopSettings): RuntimeSettings {
 
 function pipelineState(index: number, status: VaultStatus | null, plan: IngestPlan | null) {
   const inbox = status?.counts.inbox ?? 0;
-  const ready = plan?.summary.ready ?? 0;
-  const stageable = plan?.summary.stageable ?? 0;
   const blocked = plan?.summary.blocked ?? 0;
-  const cached = plan?.summary.cached ?? 0;
   const published = plan?.summary.published ?? 0;
-  const parseable = plan?.entries.filter((entry) => entry.action === "parse_required" && entry.fileName.toLowerCase().endsWith(".pdf")).length ?? 0;
-  const runnable = ready + stageable + cached + parseable;
+  const parseable = plan?.entries.filter((entry) => entry.action === "parse_required" && isRunnableIngestEntry(entry)).length ?? 0;
+  const runnable = runnableIngestCount(plan);
   if (index === 0) return inbox > 0 ? "ready" : "waiting";
   if (index === 1) {
     if (blocked > 0 && parseable > 0) return "local parse ready";
@@ -844,8 +842,7 @@ function App() {
   const enqueueAfterImport = desktopSettings.defaultIngestMode === "enqueue_after_import";
   const tone = statusTone(status);
   const planned = ingestPlan?.summary;
-  const runnableIngest = (planned?.ready ?? 0) + (planned?.stageable ?? 0) + (planned?.cached ?? 0);
-  const parseablePdfs = ingestPlan?.entries.filter((entry) => entry.action === "parse_required" && entry.fileName.toLowerCase().endsWith(".pdf")).length ?? 0;
+  const runnableIngest = runnableIngestCount(ingestPlan);
   const actions = ingestPlan?.actions ?? [];
   const jobs = ingestPlan?.jobs ?? [];
   const artifacts = ingestPlan?.artifacts ?? [];
@@ -1749,7 +1746,7 @@ function App() {
       ];
     }
     return [
-      { label: copy.actionStrip.pipeline, icon: <Play size={15} />, onClick: handleIngestPipeline, disabled: runtimeRunning || busy === "start:ingest_pipeline" || (runnableIngest + parseablePdfs) === 0, tone: "primary" },
+      { label: copy.actionStrip.pipeline, icon: <Play size={15} />, onClick: handleIngestPipeline, disabled: runtimeRunning || busy === "start:ingest_pipeline" || runnableIngest === 0, tone: "primary" },
       { label: copy.nav.writeback, icon: <GitCompare size={15} />, onClick: () => setActivePage("writeback") },
     ];
   })();
@@ -2323,7 +2320,7 @@ function App() {
         <section className={classNames("action-strip view-section", pageVisible("dashboard") && "visible")}>
           <button onClick={handlePlanIngest} disabled={!vaultPath || busy === "plan_ingest"}><ListChecks size={16} />{copy.actionStrip.plan}</button>
           <button onClick={handleIngestLint} disabled={!vaultPath || busy === "ingest_lint"}><ShieldCheck size={16} />{copy.actionStrip.lint}</button>
-          <button onClick={handleIngestPipeline} disabled={!vaultPath || runtimeRunning || busy === "start:ingest_pipeline" || (runnableIngest + parseablePdfs) === 0}><Play size={16} />{copy.actionStrip.pipeline}</button>
+          <button onClick={handleIngestPipeline} disabled={!vaultPath || runtimeRunning || busy === "start:ingest_pipeline" || runnableIngest === 0}><Play size={16} />{copy.actionStrip.pipeline}</button>
           <button onClick={handleRepairTemplates} disabled={!vaultPath || busy === "repair_templates"}><Wrench size={16} />{copy.actionStrip.repair}</button>
           <button onClick={handleDiagnostic} disabled={!vaultPath || busy === "diagnostic"}><TerminalSquare size={16} />{copy.actionStrip.diagnostic}</button>
           {runtimeActions.map((action) => {

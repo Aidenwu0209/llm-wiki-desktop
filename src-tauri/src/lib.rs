@@ -5882,6 +5882,27 @@ fn plan_state_can_be_overridden(state: &str) -> bool {
     )
 }
 
+fn plan_entry_is_review_gated(entry: &IngestPlanEntry) -> bool {
+    entry.requires_human_approval
+        || matches!(
+            entry.current_state.as_str(),
+            "duplicate" | "needs_review" | "blocked_contract"
+        )
+}
+
+fn plan_entry_is_pipeline_runnable(entry: &IngestPlanEntry) -> bool {
+    if plan_entry_is_review_gated(entry) {
+        return false;
+    }
+    matches!(entry.status.as_str(), "ready" | "stageable" | "cached")
+        || (entry.action == "parse_required"
+            && is_parseable_binary(&PathBuf::from(&entry.source_path)))
+}
+
+fn plan_entry_is_runtime_ready(entry: &IngestPlanEntry) -> bool {
+    !plan_entry_is_review_gated(entry) && matches!(entry.status.as_str(), "ready" | "cached")
+}
+
 fn enrich_ingest_plan_entries(
     vault: &Path,
     entries: &mut [IngestPlanEntry],
@@ -6988,17 +7009,27 @@ fn job_for_plan_entry(
     entry: &IngestPlanEntry,
     source_id: Option<&str>,
 ) -> DesktopIngestJob {
-    let status = match entry.status.as_str() {
-        "published" => "succeeded",
-        "blocked" => "blocked",
-        _ => "queued",
+    let review_gated = entry.requires_human_approval
+        || matches!(entry.current_state.as_str(), "duplicate" | "needs_review");
+    let status = if review_gated {
+        "blocked"
+    } else {
+        match entry.status.as_str() {
+            "published" => "succeeded",
+            "blocked" => "blocked",
+            _ => "queued",
+        }
     };
-    let current_step = match entry.action.as_str() {
-        "stage_text_artifact" | "restage_text_artifact" => "stage_artifact",
-        "parse_required" => "parse_artifact",
-        "run_ingest_corpus" | "skip_staging" => "runtime_ingest",
-        "skip_runtime" => "published",
-        _ => "inspect",
+    let current_step = if review_gated {
+        "review_gate"
+    } else {
+        match entry.action.as_str() {
+            "stage_text_artifact" | "restage_text_artifact" => "stage_artifact",
+            "parse_required" => "parse_artifact",
+            "run_ingest_corpus" | "skip_staging" => "runtime_ingest",
+            "skip_runtime" => "published",
+            _ => "inspect",
+        }
     };
     DesktopIngestJob {
         job_id: job_id_for_source_id(source_id, &entry.sha256),
@@ -7013,13 +7044,21 @@ fn job_for_plan_entry(
             .map(|path| rel_path(vault, &PathBuf::from(path))),
         status: status.to_string(),
         current_step: current_step.to_string(),
-        next_action: entry.action.clone(),
+        next_action: if review_gated {
+            "inspect_source".to_string()
+        } else {
+            entry.action.clone()
+        },
         reason: entry.reason.clone(),
         attempt: 0,
         max_attempts: 3,
         started_at: None,
         ended_at: None,
-        last_error: (entry.status == "blocked").then(|| entry.reason.clone()),
+        last_error: if review_gated || entry.status == "blocked" {
+            Some(entry.reason.clone())
+        } else {
+            None
+        },
         log_path: None,
         inputs: entry.inputs.clone(),
         outputs: entry.outputs.clone(),
@@ -7154,6 +7193,31 @@ fn action_for_plan_entry(vault: &Path, entry: &IngestPlanEntry) -> Option<Dashbo
         links.push(DashboardLink {
             label: "artifact".to_string(),
             path: rel_path(vault, &PathBuf::from(path)),
+        });
+    }
+    if plan_entry_is_review_gated(entry) {
+        let severity = if entry.current_state == "blocked_contract" {
+            "p1"
+        } else {
+            "p2"
+        };
+        return Some(DashboardAction {
+            action_id: format!("act-source-review-{}", short_hash(&entry.sha256)),
+            kind: "source_review_required".to_string(),
+            severity: severity.to_string(),
+            title: format!("{} 需要人工确认后再进入 ingest", entry.file_name),
+            body: entry.next_action_label.clone(),
+            reason: entry.reason.clone(),
+            status: "open".to_string(),
+            recommended_action: "inspect_source".to_string(),
+            primary_object_type: "source".to_string(),
+            primary_object_id: source_uuid(&entry.sha256),
+            affected_objects: vec![DashboardAffectedObject {
+                object_type: "source".to_string(),
+                object_id: source_uuid(&entry.sha256),
+                status: entry.current_state.clone(),
+            }],
+            links,
         });
     }
     let (kind, severity, title, body, recommended_action) = match entry.status.as_str() {
@@ -7899,11 +7963,32 @@ fn write_ingest_plan(
         source_aliases,
         artifacts,
         jobs,
-        mut actions,
+        actions: _pre_enrichment_actions,
         impact_edges,
     } = build_ingest_contracts(vault, &entries)?;
     let source_aliases = merge_source_id_aliases(vault, source_aliases);
     enrich_ingest_plan_entries(vault, &mut entries, &registry, &jobs);
+    let source_ids = registry
+        .iter()
+        .map(|entry| (entry.source_sha256.clone(), entry.source_id.clone()))
+        .collect::<HashMap<_, _>>();
+    let jobs = entries
+        .iter()
+        .map(|entry| {
+            job_for_plan_entry(
+                vault,
+                entry,
+                source_ids.get(&entry.sha256).and_then(Option::as_deref),
+            )
+        })
+        .collect::<Vec<_>>();
+    let jobs = merge_ingest_jobs(vault, jobs);
+    let mut actions = entries
+        .iter()
+        .filter_map(|entry| action_for_plan_entry(vault, entry))
+        .collect::<Vec<_>>();
+    actions.extend(vault_level_actions(vault));
+    apply_dashboard_action_overrides(vault, &mut actions);
     let mut lint_findings =
         lint_ingest_contracts(vault, &registry, &artifacts, &jobs, &impact_edges);
     let mut seen_findings = lint_findings
@@ -10400,18 +10485,16 @@ fn create_diagnostic_bundle(vault_path: String) -> Result<String, String> {
 }
 
 fn stage_text_artifacts(vault: &Path) -> Result<Vec<String>, String> {
-    let _ = plan_ingest(to_display(vault))?;
-    let cached_hashes = load_cached_ingest_hashes(vault);
-    let published_keys = load_published_ingest_keys(vault);
+    let plan = plan_ingest(to_display(vault))?;
     let cancelled = cancelled_job_ids(vault);
     let mut staged = Vec::new();
-    for source in collect_ingest_inputs(vault) {
-        let entry = plan_entry_for_source(vault, &source, &cached_hashes, &published_keys)?;
-        let source_id = source_id_for_hash(vault, &entry.sha256);
-        if cancelled.contains(&job_id_for_source_id(source_id.as_deref(), &entry.sha256)) {
+    for entry in plan.entries {
+        if !plan_entry_is_pipeline_runnable(&entry) || entry.status != "stageable" {
             continue;
         }
-        if entry.status != "stageable" {
+        let source = PathBuf::from(&entry.source_path);
+        let source_id = source_id_for_hash(vault, &entry.sha256);
+        if cancelled.contains(&job_id_for_source_id(source_id.as_deref(), &entry.sha256)) {
             continue;
         }
         let artifact = entry
@@ -11287,7 +11370,7 @@ fn parse_pdf_artifacts(
     let mut logs = Vec::new();
     let mut next_job_id_override = job_id_override;
     for entry in &plan.entries {
-        if entry.action != "parse_required" {
+        if entry.action != "parse_required" || !plan_entry_is_pipeline_runnable(entry) {
             continue;
         }
         let source = PathBuf::from(&entry.source_path);
@@ -11384,7 +11467,7 @@ fn record_published_ingest(
         if cancelled.contains(&job_id_for_source_id(source_id.as_deref(), &entry.sha256)) {
             continue;
         }
-        if entry.status != "ready" && entry.status != "cached" {
+        if !plan_entry_is_runtime_ready(entry) {
             continue;
         }
         let Some(artifact_path) = &entry.artifact_path else {
@@ -11467,19 +11550,13 @@ fn run_ingest_pipeline(
             let source_id = source_id_for_hash(&vault, &entry.sha256);
             !cancelled.contains(&job_id_for_source_id(source_id.as_deref(), &entry.sha256))
         })
-        .filter(|entry| {
-            matches!(entry.status.as_str(), "ready" | "stageable" | "cached")
-                || (entry.action == "parse_required"
-                    && is_parseable_binary(&PathBuf::from(&entry.source_path)))
-        })
+        .filter(|entry| plan_entry_is_pipeline_runnable(entry))
         .count();
     if runnable == 0 {
         let cancelled_runnable = initial_plan.entries.iter().any(|entry| {
             let source_id = source_id_for_hash(&vault, &entry.sha256);
             cancelled.contains(&job_id_for_source_id(source_id.as_deref(), &entry.sha256))
-                && (matches!(entry.status.as_str(), "ready" | "stageable" | "cached")
-                    || (entry.action == "parse_required"
-                        && is_parseable_binary(&PathBuf::from(&entry.source_path))))
+                && plan_entry_is_pipeline_runnable(entry)
         });
         if cancelled_runnable {
             return Err(
@@ -11510,10 +11587,18 @@ fn run_ingest_pipeline(
     )?;
     let staged_artifacts = stage_text_artifacts(&vault)?;
     let final_plan = plan_ingest(to_display(&vault))?;
+    if final_plan.entries.iter().any(|entry| {
+        plan_entry_is_review_gated(entry) && matches!(entry.status.as_str(), "ready" | "cached")
+    }) {
+        return Err(
+            "review-gated ingest inputs have ready artifacts; inspect duplicate/review state before running the runtime pipeline"
+                .to_string(),
+        );
+    }
     let runnable_job_ids = final_plan
         .entries
         .iter()
-        .filter(|entry| matches!(entry.status.as_str(), "ready" | "cached"))
+        .filter(|entry| plan_entry_is_runtime_ready(entry))
         .filter_map(|entry| {
             let source_id = source_id_for_hash(&vault, &entry.sha256);
             let job_id = job_id_for_source_id(source_id.as_deref(), &entry.sha256);
@@ -12682,6 +12767,58 @@ mod tests {
             .source_aliases
             .iter()
             .any(|alias| alias.match_reason == "renamed_or_moved_same_sha256"));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn review_gated_duplicate_sources_do_not_become_pipeline_runnable() {
+        let vault = test_vault("duplicate-review-gate");
+        let primary = vault.join("raw").join("a-primary.md");
+        let duplicate = vault.join("raw").join("z-duplicate.md");
+        write_text(&primary, "# Same Source\n").expect("write primary");
+        write_text(&duplicate, "# Same Source\n").expect("write duplicate");
+
+        let plan = plan_ingest(to_display(&vault)).expect("plan duplicate sources");
+        let duplicate_entry = plan
+            .entries
+            .iter()
+            .find(|entry| entry.file_name == "z-duplicate.md")
+            .expect("duplicate plan entry");
+        assert_eq!(duplicate_entry.current_state, "duplicate");
+        assert!(duplicate_entry.requires_human_approval);
+        assert!(!plan_entry_is_pipeline_runnable(duplicate_entry));
+
+        let duplicate_job = plan
+            .jobs
+            .iter()
+            .find(|job| job.file_name == "z-duplicate.md")
+            .expect("duplicate ingest job");
+        assert_eq!(duplicate_job.status, "blocked");
+        assert_eq!(duplicate_job.current_step, "review_gate");
+        assert_eq!(duplicate_job.next_action, "inspect_source");
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == "source_review_required"
+                && action.primary_object_id == source_uuid(&duplicate_entry.sha256)
+        }));
+
+        let staged = stage_text_artifacts(&vault).expect("stage non-gated text artifacts");
+        assert_eq!(staged.len(), 1);
+        assert!(staged
+            .iter()
+            .all(|path| !path.contains("z-duplicate_markdown")));
+        let duplicate_artifact = artifact_for_source(&vault, &duplicate, &duplicate_entry.sha256);
+        assert!(!duplicate_artifact.is_file());
+
+        let after_stage = plan_ingest(to_display(&vault)).expect("plan after staging");
+        let duplicate_after = after_stage
+            .entries
+            .iter()
+            .find(|entry| entry.file_name == "z-duplicate.md")
+            .expect("duplicate plan entry after staging");
+        assert_eq!(duplicate_after.current_state, "duplicate");
+        assert!(duplicate_after.requires_human_approval);
+        assert!(!plan_entry_is_pipeline_runnable(duplicate_after));
 
         let _ = fs::remove_dir_all(vault);
     }
