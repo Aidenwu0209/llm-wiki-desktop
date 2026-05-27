@@ -3253,7 +3253,7 @@ fn build_product_scorecard_report(vault: &Path) -> ProductScorecardReport {
 
     let claims_count = count_jsonl(&vault.join("claims").join("claims.jsonl"));
     let evidence_paths = list_evidence_paths(to_display(vault)).unwrap_or_default();
-    let traceability_findings = load_existing_evidence_anchor_findings(vault).len();
+    let traceability_findings = load_existing_claim_traceability_findings(vault).len();
     metrics.push(if claims_count == 0 {
         scorecard_metric(
             "traceability",
@@ -8680,7 +8680,7 @@ fn is_evidence_anchor_finding(finding: &ContractFinding) -> bool {
     text.contains("evidence") && (text.contains("anchor") || text.contains("heading"))
 }
 
-fn load_existing_evidence_anchor_findings(vault: &Path) -> Vec<ContractFinding> {
+fn load_existing_lint_findings(vault: &Path) -> Vec<ContractFinding> {
     read_text(&vault.join("_state").join("lint-findings.jsonl"))
         .lines()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
@@ -8717,7 +8717,28 @@ fn load_existing_evidence_anchor_findings(vault: &Path) -> Vec<ContractFinding> 
                 .or_else(|| json_string(&value, "source_path"))
                 .or_else(|| json_string(&value, "claim_path")),
         })
+        .collect()
+}
+
+fn load_existing_evidence_anchor_findings(vault: &Path) -> Vec<ContractFinding> {
+    load_existing_lint_findings(vault)
+        .into_iter()
         .filter(is_evidence_anchor_finding)
+        .collect()
+}
+
+fn is_claim_traceability_finding(finding: &ContractFinding) -> bool {
+    is_evidence_anchor_finding(finding)
+        || matches!(
+            finding.kind.as_str(),
+            "claim_missing_evidence" | "claim_unknown_source"
+        )
+}
+
+fn load_existing_claim_traceability_findings(vault: &Path) -> Vec<ContractFinding> {
+    load_existing_lint_findings(vault)
+        .into_iter()
+        .filter(is_claim_traceability_finding)
         .collect()
 }
 
@@ -15198,6 +15219,35 @@ mod tests {
         let rendered = read_text(&product_scorecard_report_path(&vault));
         assert!(rendered.contains("DFC is used here as an evaluation corpus / benchmark"));
         assert!(rendered.contains("| Query writeback proposal boundary | `pass` |"));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn product_scorecard_fails_on_claim_unknown_source_traceability() {
+        let vault = test_vault("product-scorecard-unknown-claim-source");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        write_text(
+            &vault.join("claims").join("claims.jsonl"),
+            "{\"claim_id\":\"unknown-source\",\"claim_text\":\"Unsupported source claim must not pass traceability.\",\"verdict\":\"supported\",\"status\":\"supported\",\"source_uuid\":\"sha256:unknown\",\"evidence_quote\":\"Unsupported source evidence\",\"evidence_hash\":\"quote-hash\"}\n",
+        )
+        .expect("claims");
+
+        let report = build_product_scorecard_report(&vault);
+        let traceability = report
+            .metrics
+            .iter()
+            .find(|metric| metric.metric_id == "traceability")
+            .expect("traceability metric");
+        assert_eq!(traceability.status, "fail");
+        assert!(traceability
+            .counts
+            .contains(&"traceability_findings: 1".to_string()));
+        let warnings =
+            list_traceability_warnings(to_display(&vault)).expect("traceability warnings");
+        assert!(warnings
+            .iter()
+            .any(|warning| warning.claim_id == "unknown-source"));
 
         let _ = fs::remove_dir_all(vault);
     }
