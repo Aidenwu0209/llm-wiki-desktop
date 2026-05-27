@@ -437,6 +437,7 @@ struct ImportPreview {
     arxiv_id: Option<String>,
     title_hint: Option<String>,
     status: String,
+    reason: Option<String>,
     enqueued: bool,
 }
 
@@ -445,6 +446,7 @@ struct ImportPreview {
 struct ImportBatchResult {
     imported: Vec<ImportPreview>,
     skipped_duplicates: Vec<ImportPreview>,
+    skipped_source_watch: Vec<ImportPreview>,
     errors: Vec<String>,
     enqueued_jobs: usize,
 }
@@ -4878,6 +4880,7 @@ struct ImportCandidate {
     source: PathBuf,
     folder_context: Option<String>,
     source_display: Option<String>,
+    rule_path: PathBuf,
 }
 
 fn supported_import_file(path: &Path) -> bool {
@@ -4960,9 +4963,13 @@ fn collect_import_dir(
                     None
                 };
                 out.push(ImportCandidate {
-                    source: path,
+                    source: path.clone(),
                     folder_context,
                     source_display: None,
+                    rule_path: path
+                        .strip_prefix(root)
+                        .map(Path::to_path_buf)
+                        .unwrap_or_else(|_| PathBuf::from(path.file_name().unwrap_or_default())),
                 });
             }
         }
@@ -4986,9 +4993,12 @@ fn collect_import_candidates(
                 continue;
             } else if supported_import_file(&path) {
                 candidates.push(ImportCandidate {
-                    source: path,
+                    source: path.clone(),
                     folder_context: None,
                     source_display: None,
+                    rule_path: PathBuf::from(
+                        path.file_name().unwrap_or_else(|| OsStr::new("source")),
+                    ),
                 });
             } else {
                 errors.push(format!("unsupported import type: {raw_path}"));
@@ -5166,6 +5176,12 @@ fn extract_archive_import_candidates(
                 rel_path.parent(),
             ),
             source_display: Some(format!("{}!{}", archive_display, rel_path.display())),
+            rule_path: candidate
+                .rule_path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .map(|parent| parent.join(&rel_path))
+                .unwrap_or_else(|| rel_path.clone()),
         });
     }
 
@@ -5359,6 +5375,8 @@ fn import_sources_impl(
     require_existing_dir(&vault, "vault")?;
     let inbox = vault.join("raw").join("inbox");
     fs::create_dir_all(&inbox).map_err(|e| format!("failed to create inbox: {e}"))?;
+    let source_watch_rules =
+        SourceWatchRules::from_settings(&load_desktop_settings(to_display(&vault))?);
     let mut known_hashes = HashMap::new();
     collect_hashes(&vault.join("raw"), &mut known_hashes);
     let (mut doi_index, mut arxiv_index, mut known_titles) = import_report_metadata(&vault);
@@ -5381,12 +5399,16 @@ fn import_sources_impl(
     }
     let mut imported = Vec::new();
     let mut skipped_duplicates = Vec::new();
+    let mut skipped_source_watch = Vec::new();
 
     for candidate in expanded_candidates {
-        let source = candidate.source;
-        let source_display = candidate
-            .source_display
-            .unwrap_or_else(|| to_display(&source));
+        let ImportCandidate {
+            source,
+            folder_context,
+            source_display,
+            rule_path,
+        } = candidate;
+        let source_display = source_display.unwrap_or_else(|| to_display(&source));
         let file_name = source
             .file_name()
             .unwrap_or_default()
@@ -5400,6 +5422,36 @@ fn import_sources_impl(
                 continue;
             }
         };
+        if let Some(reason) = source_watch_rules
+            .as_ref()
+            .and_then(|rules| rules.exclusion_reason_for_rule_path(&rule_path, &source))
+        {
+            let preview = ImportPreview {
+                source_path: source_display,
+                file_name,
+                size_bytes,
+                mime: detect_mime(&source),
+                sha256: hash,
+                target_path: None,
+                folder_context,
+                duplicate_of: None,
+                duplicate_reason: None,
+                approximate_duplicate_of: None,
+                doi: None,
+                arxiv_id: None,
+                title_hint: title_hint_from_path(&source),
+                status: "skipped_source_watch".to_string(),
+                reason: Some(reason),
+                enqueued: false,
+            };
+            skipped_source_watch.push(preview.clone());
+            let _ = append_jsonl_value(
+                &vault.join("_state").join("import-report.jsonl"),
+                &serde_json::to_value(&preview)
+                    .map_err(|e| format!("failed to serialize import preview: {e}"))?,
+            );
+            continue;
+        }
         let (doi, arxiv_id, title_hint) = import_metadata(&source);
         let doi_duplicate = doi
             .as_ref()
@@ -5412,8 +5464,7 @@ fn import_sources_impl(
         let title_duplicate = title_hint
             .as_deref()
             .and_then(|title| approximate_title_duplicate(title, &known_titles));
-        let target_dir = candidate
-            .folder_context
+        let target_dir = folder_context
             .as_ref()
             .filter(|value| !value.is_empty())
             .map(|context| inbox.join(context))
@@ -5433,7 +5484,7 @@ fn import_sources_impl(
                 mime: detect_mime(&source),
                 sha256: hash,
                 target_path: Some(to_display(&dest)),
-                folder_context: candidate.folder_context,
+                folder_context,
                 duplicate_of: Some(existing.clone()),
                 duplicate_reason: Some("sha256".to_string()),
                 approximate_duplicate_of: title_duplicate.or(doi_duplicate).or(arxiv_duplicate),
@@ -5441,6 +5492,7 @@ fn import_sources_impl(
                 arxiv_id,
                 title_hint,
                 status: "skipped_duplicate".to_string(),
+                reason: Some("source sha256 already exists in raw evidence".to_string()),
                 enqueued: false,
             };
             skipped_duplicates.push(preview.clone());
@@ -5485,7 +5537,7 @@ fn import_sources_impl(
             mime: detect_mime(&source),
             sha256: hash,
             target_path: Some(to_display(&dest)),
-            folder_context: candidate.folder_context,
+            folder_context,
             duplicate_of,
             duplicate_reason: duplicate_reason.map(ToString::to_string),
             approximate_duplicate_of: title_duplicate,
@@ -5493,6 +5545,7 @@ fn import_sources_impl(
             arxiv_id,
             title_hint,
             status: status.to_string(),
+            reason: None,
             enqueued: enqueue_after_import,
         };
         append_jsonl_value(
@@ -5519,6 +5572,7 @@ fn import_sources_impl(
     Ok(ImportBatchResult {
         imported,
         skipped_duplicates,
+        skipped_source_watch,
         errors,
         enqueued_jobs,
     })
@@ -5784,14 +5838,12 @@ impl SourceWatchRules {
         })
     }
 
-    fn exclusion_reason(&self, vault: &Path, path: &Path) -> Option<String> {
-        let raw = vault.join("raw");
-        let relative = path
-            .strip_prefix(&raw)
-            .or_else(|_| path.strip_prefix(vault))
-            .unwrap_or(path);
-
-        for component in relative.components() {
+    fn exclusion_reason_for_rule_path(
+        &self,
+        rule_path: &Path,
+        metadata_path: &Path,
+    ) -> Option<String> {
+        for component in rule_path.components() {
             if let Component::Normal(part) = component {
                 let name = part.to_string_lossy().to_ascii_lowercase();
                 if self.exclude_dirs.contains(&name) {
@@ -5802,7 +5854,7 @@ impl SourceWatchRules {
             }
         }
 
-        let extension = source_watch_extension(path);
+        let extension = source_watch_extension(rule_path);
         if !extension.is_empty() && self.exclude_extensions.contains(&extension) {
             return Some(format!(
                 "Source Watch excludes extension `.{extension}`; update Source Watch settings if this source should enter ingest."
@@ -5821,12 +5873,12 @@ impl SourceWatchRules {
             ));
         }
 
-        let file_name = path
+        let file_name = rule_path
             .file_name()
             .and_then(OsStr::to_str)
             .unwrap_or_default()
             .to_ascii_lowercase();
-        let relative_text = relative
+        let relative_text = rule_path
             .to_string_lossy()
             .replace('\\', "/")
             .to_ascii_lowercase();
@@ -5839,7 +5891,7 @@ impl SourceWatchRules {
         }
 
         if let Some(max_bytes) = self.max_file_size_bytes {
-            if fs::metadata(path)
+            if fs::metadata(metadata_path)
                 .map(|metadata| metadata.len() > max_bytes)
                 .unwrap_or(false)
             {
@@ -5847,7 +5899,7 @@ impl SourceWatchRules {
                     "Source Watch max file size is {} MB; this source is {} MB.",
                     source_watch_file_size_mb(max_bytes),
                     source_watch_file_size_mb(
-                        fs::metadata(path)
+                        fs::metadata(metadata_path)
                             .map(|metadata| metadata.len())
                             .unwrap_or(0)
                     )
@@ -5856,6 +5908,15 @@ impl SourceWatchRules {
         }
 
         None
+    }
+
+    fn exclusion_reason(&self, vault: &Path, path: &Path) -> Option<String> {
+        let raw = vault.join("raw");
+        let relative = path
+            .strip_prefix(&raw)
+            .or_else(|_| path.strip_prefix(vault))
+            .unwrap_or(path);
+        self.exclusion_reason_for_rule_path(relative, path)
     }
 }
 
@@ -13503,6 +13564,83 @@ mod tests {
             .imported
             .iter()
             .any(|item| item.file_name == "deepseek-eval.csv" && item.mime == "text/csv"));
+
+        let _ = fs::remove_dir_all(vault);
+        let _ = fs::remove_dir_all(incoming);
+    }
+
+    #[test]
+    fn import_sources_applies_source_watch_rules_before_copying_raw_evidence() {
+        let vault = test_vault("import-source-watch-rules");
+        let incoming = test_vault("external-source-watch-rules");
+        let keep = incoming.join("keep.md");
+        let excluded_dir = incoming.join("skipdir").join("ignored.md");
+        let disallowed_extension = incoming.join("metrics.csv");
+        let excluded_glob = incoming.join("paper.draft.pdf");
+        let too_large = incoming.join("too-large.pdf");
+        write_text(&keep, "# Keep\n").expect("write kept source");
+        write_text(&excluded_dir, "# Ignored\n").expect("write excluded dir source");
+        fs::write(&disallowed_extension, b"model,score\n").expect("write csv source");
+        fs::write(&excluded_glob, b"pdf bytes").expect("write draft source");
+        fs::write(&too_large, vec![0_u8; 1024 * 1024 + 1]).expect("write large source");
+
+        let mut settings = DesktopSettings::default();
+        settings.source_watch_enabled = true;
+        settings.source_watch_allowed_extensions = "md,pdf".to_string();
+        settings.source_watch_exclude_dirs = "skipdir".to_string();
+        settings.source_watch_exclude_extensions = String::new();
+        settings.source_watch_exclude_globs = "*.draft.*".to_string();
+        settings.source_watch_max_file_size_mb = 1;
+        save_desktop_settings(to_display(&vault), settings).expect("save source watch settings");
+
+        let batch = import_sources_impl(&vault, vec![to_display(&incoming)], false, true)
+            .expect("import folder with source watch rules");
+
+        assert_eq!(batch.imported.len(), 1);
+        assert_eq!(batch.imported[0].file_name, "keep.md");
+        assert_eq!(batch.skipped_duplicates.len(), 0);
+        assert_eq!(batch.skipped_source_watch.len(), 4);
+        assert!(batch.errors.is_empty(), "{:?}", batch.errors);
+        for (file_name, expected_reason) in [
+            ("ignored.md", "excludes directory `skipdir`"),
+            ("metrics.csv", "allows only"),
+            ("paper.draft.pdf", "excludes glob `*.draft.*`"),
+            ("too-large.pdf", "max file size is 1 MB"),
+        ] {
+            let skipped = batch
+                .skipped_source_watch
+                .iter()
+                .find(|item| item.file_name == file_name)
+                .unwrap_or_else(|| panic!("missing source watch skip for {file_name}"));
+            assert_eq!(skipped.status, "skipped_source_watch");
+            assert!(skipped.target_path.is_none());
+            assert!(skipped
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains(expected_reason)));
+            assert!(!skipped.enqueued);
+        }
+        assert!(vault.join("raw").join("inbox").join("keep.md").is_file());
+        assert!(!vault
+            .join("raw")
+            .join("inbox")
+            .join("skipdir")
+            .join("ignored.md")
+            .exists());
+        assert!(!vault.join("raw").join("inbox").join("metrics.csv").exists());
+        assert!(!vault
+            .join("raw")
+            .join("inbox")
+            .join("paper.draft.pdf")
+            .exists());
+        assert!(!vault
+            .join("raw")
+            .join("inbox")
+            .join("too-large.pdf")
+            .exists());
+        let report = read_text(&vault.join("_state").join("import-report.jsonl"));
+        assert!(report.contains("skipped_source_watch"));
+        assert!(report.contains("Source Watch"));
 
         let _ = fs::remove_dir_all(vault);
         let _ = fs::remove_dir_all(incoming);

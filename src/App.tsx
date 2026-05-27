@@ -1191,7 +1191,7 @@ function App() {
     setError(null);
     try {
       const result = await importSources(vaultPath, paths, enqueueAfterImport, preserveFolders);
-      setImportResults([...result.imported, ...result.skippedDuplicates]);
+      setImportResults([...result.imported, ...result.skippedDuplicates, ...result.skippedSourceWatch]);
       if (result.errors.length) setError(result.errors.join("\n"));
       await refresh();
     } catch (err) {
@@ -2401,7 +2401,7 @@ function App() {
                   <span className={classNames("status-chip", item.status)}>{item.status}</span>
                   <strong>{item.fileName}</strong>
                   <em>{item.mime} · {(item.sizeBytes / 1024).toFixed(1)} KB · {item.folderContext || (interfaceLanguage === "zh" ? "根目录" : "root")}</em>
-                  <code>{item.sha256.slice(0, 16)} · {item.doi || item.arxivId || item.titleHint || (interfaceLanguage === "zh" ? "无元数据" : "no metadata")} · {item.duplicateOf || item.approximateDuplicateOf || item.targetPath}</code>
+                  <code>{item.sha256.slice(0, 16)} · {item.reason || item.doi || item.arxivId || item.titleHint || (interfaceLanguage === "zh" ? "无元数据" : "no metadata")} · {item.duplicateOf || item.approximateDuplicateOf || item.targetPath || item.sourcePath}</code>
                 </button>
               ))}
             </div>

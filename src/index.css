@@ -1249,6 +1249,7 @@ textarea {
 .status-chip.legacy,
 .status-chip.needs_review,
 .status-chip.imported_with_duplicate_warning,
+.status-chip.skipped_source_watch,
 .status-chip.proposed,
 .status-chip.p1 {
   background: #fff0d5;
