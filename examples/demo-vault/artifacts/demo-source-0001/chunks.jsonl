@@ -1,0 +1,4 @@
+{"evidence_id":"demo:p1:parser","source_uuid":"demo-source-0001","source_path":"raw/inbox/sample-project.md","page":1,"text":"PaddleOCR-VL-1.5 parsed the synthetic sample."}
+{"evidence_id":"demo:p1:artifact","source_uuid":"demo-source-0001","source_path":"raw/inbox/sample-project.md","page":1,"text":"Markdown and JSON artifacts were generated before runtime ingestion."}
+{"evidence_id":"demo:p2:evidence-map","source_uuid":"demo-source-0001","source_path":"raw/inbox/sample-project.md","page":2,"text":"ERNIE answers should cite local evidence ids from the evidence map."}
+{"evidence_id":"demo:p3:writeback","source_uuid":"demo-source-0001","source_path":"raw/inbox/sample-project.md","page":3,"text":"Writeback must remain proposal-first until reviewed."}

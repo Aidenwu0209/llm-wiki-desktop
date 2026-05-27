@@ -1,0 +1,1 @@
+{"finding_id":"demo-finding-0001","severity":"p2","kind":"writeback_gate","object_type":"proposal","object_id":"demo-proposal-0001","title":"Proposal is not approved yet","detail":"The demo answer must not silently write into concept pages.","status":"open","path":"reviews/query-writeback/sample-proposal.md"}

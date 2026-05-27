@@ -2041,6 +2041,35 @@ function App() {
     void persistInterfaceLanguage(oppositeLanguage(interfaceLanguage));
   };
 
+  const loadDemoTour = () => {
+    const demoSettings = {
+      ...initialDesktopSettings,
+      projectName: "DeepSeek Research Wiki",
+      projectPurpose: "Evidence-backed DeepSeek paper reading and writeback review.",
+      interfaceLanguage,
+    };
+    setVaultPath(shellDemoVaultPath);
+    setStatus(shellDemoStatus);
+    setIngestPlan(shellDemoIngestPlan);
+    setClaims(shellDemoClaims);
+    setEvidencePaths(shellDemoEvidencePaths);
+    setTraceabilityWarnings(shellDemoTraceabilityWarnings);
+    setRuntimeHistory(shellDemoRuntimeHistory);
+    setReviewItems(shellDemoReviewItems);
+    setWritebacks(shellDemoWritebacks);
+    setEntryNote(shellDemoEntryNote);
+    setDesktopSettings(demoSettings);
+    setAppState({ lastSelectedVault: shellDemoVaultPath, recentVaults: [shellDemoVaultPath], interfaceLanguage });
+    setVaultSuggestions([{ label: "DeepSeek Shell Demo", path: shellDemoVaultPath, kind: "deepseek", exists: true }]);
+    setDetailSelection({ kind: "claim", claim: shellDemoClaims[0], evidence: shellDemoEvidencePaths[0] });
+    setSelectedFile(shellDemoFiles[1]);
+    setActivePage("dashboard");
+    setRestoreError(null);
+    setError(null);
+  };
+
+  const isDemoTourActive = () => vaultPath === shellDemoVaultPath && status?.runtimeVersion === "shell-demo";
+
   useEffect(() => {
     setQueryText((current) => {
       if (interfaceLanguage === "en" && current === DEFAULT_DEEPSEEK_RESEARCH_STRATEGY_QUERY) {
@@ -2058,28 +2087,7 @@ function App() {
     async function boot() {
       if (!isTauriAvailable()) {
         if (isShellDemoMode()) {
-          const demoSettings = {
-            ...initialDesktopSettings,
-            projectName: "DeepSeek Research Wiki",
-            projectPurpose: "Evidence-backed DeepSeek paper reading and writeback review.",
-            interfaceLanguage,
-          };
-          setVaultPath(shellDemoVaultPath);
-          setStatus(shellDemoStatus);
-          setIngestPlan(shellDemoIngestPlan);
-          setClaims(shellDemoClaims);
-          setEvidencePaths(shellDemoEvidencePaths);
-          setTraceabilityWarnings(shellDemoTraceabilityWarnings);
-          setRuntimeHistory(shellDemoRuntimeHistory);
-          setReviewItems(shellDemoReviewItems);
-          setWritebacks(shellDemoWritebacks);
-          setEntryNote(shellDemoEntryNote);
-          setDesktopSettings(demoSettings);
-          setAppState({ lastSelectedVault: shellDemoVaultPath, recentVaults: [shellDemoVaultPath], interfaceLanguage });
-          setVaultSuggestions([{ label: "DeepSeek Shell Demo", path: shellDemoVaultPath, kind: "deepseek", exists: true }]);
-          setDetailSelection({ kind: "claim", claim: shellDemoClaims[0], evidence: shellDemoEvidencePaths[0] });
-          setSelectedFile(shellDemoFiles[1]);
-          setRestoreError(null);
+          loadDemoTour();
           return;
         }
         setAppState({ recentVaults: [] });
@@ -2515,7 +2523,7 @@ function App() {
     setBusy("query_writeback");
     setError(null);
     try {
-      if (isShellDemoMode()) {
+      if (isDemoTourActive()) {
         const target = queryTarget.trim() || "reviews/query-writeback/deepseek-research-insights.md";
         const draft = createShellDemoQueryWritebackDraft(queryText, target, interfaceLanguage);
         setQueryTarget(target);
@@ -2550,7 +2558,7 @@ function App() {
     setBusy("query_writeback");
     setError(null);
     try {
-      if (isShellDemoMode()) {
+      if (isDemoTourActive()) {
         const draft = createShellDemoQueryWritebackDraft(question, target, interfaceLanguage);
         setQueryDraft(draft);
         setWritebacks((current) => [draft.proposal, ...current.filter((item) => item.proposalId !== draft.proposal.proposalId)]);
@@ -3448,6 +3456,7 @@ function App() {
           onToggleLanguage={toggleInterfaceLanguage}
           onChooseVault={chooseVault}
           onSelectVault={selectVault}
+          onViewDemoTour={loadDemoTour}
           createOpen={createProjectOpen}
           onCreateOpenChange={setCreateProjectOpen}
           onCreateVault={handleCreateVault}
@@ -3607,6 +3616,7 @@ function App() {
             onToggleLanguage={toggleInterfaceLanguage}
             onChooseVault={chooseVault}
             onSelectVault={selectVault}
+            onViewDemoTour={loadDemoTour}
             createOpen={createProjectOpen}
             onCreateOpenChange={setCreateProjectOpen}
             onCreateVault={handleCreateVault}
