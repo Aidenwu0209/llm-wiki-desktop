@@ -533,6 +533,63 @@ textarea {
   font-weight: 800;
 }
 
+.shell-research-readiness {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.shell-research-readiness-card {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid #e0e6e2;
+  border-left: 3px solid #b47528;
+  border-radius: 6px;
+  background: #fffaf3;
+  padding: 8px;
+}
+
+.shell-research-readiness-card.ready {
+  border-left-color: #315f46;
+  background: #f8fbf7;
+}
+
+.shell-research-readiness-card > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: #64706a;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.shell-research-readiness-card svg {
+  flex: 0 0 auto;
+}
+
+.shell-research-readiness-card strong,
+.shell-research-readiness-card em {
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+}
+
+.shell-research-readiness-card strong {
+  color: #17201d;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.shell-research-readiness-card em {
+  color: #64706a;
+  font-size: 11px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
 .shell-research-panel textarea {
   min-height: 112px;
   resize: vertical;
