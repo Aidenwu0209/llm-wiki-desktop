@@ -421,6 +421,49 @@ export type LlmAnswerResult = {
   evidenceCount: number;
 };
 
+export type ProviderAnswerCitation = {
+  evidenceId: string;
+  claimId?: string | null;
+  sourceId?: string | null;
+  conceptId?: string | null;
+  reviewId?: string | null;
+  quote?: string | null;
+  note?: string | null;
+};
+
+export type ProviderAnswerDraftStatus =
+  | "ready"
+  | "missing_key"
+  | "network_error"
+  | "auth_error"
+  | "model_not_found"
+  | "rate_limited"
+  | "unsupported"
+  | "unknown";
+
+export type ProviderAnswerDraft = {
+  question: string;
+  answer: string;
+  provider: "ernie-ai-studio";
+  model: string;
+  evidenceIds: string[];
+  citations: ProviderAnswerCitation[];
+  unsupportedClaims: string[];
+  followUpQuestions: string[];
+  warnings: string[];
+  generatedAt: string;
+  latencyMs?: number | null;
+  usage?: Record<string, unknown> | null;
+  status: ProviderAnswerDraftStatus | string;
+};
+
+export type ProviderAnswerRequest = {
+  question: string;
+  model: string;
+  language: "zh" | "en" | string;
+  evidence: LlmAnswerEvidenceRef[];
+};
+
 export type LlmCliCheckResult = {
   command: string;
   available: boolean;

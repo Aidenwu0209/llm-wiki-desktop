@@ -687,6 +687,46 @@ struct LlmAnswerResult {
     evidence_count: usize,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderAnswerRequest {
+    question: String,
+    model: String,
+    language: String,
+    #[serde(default)]
+    evidence: Vec<LlmAnswerEvidenceRef>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct ProviderAnswerCitation {
+    evidence_id: String,
+    claim_id: Option<String>,
+    source_id: Option<String>,
+    concept_id: Option<String>,
+    review_id: Option<String>,
+    quote: Option<String>,
+    note: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderAnswerDraft {
+    question: String,
+    answer: String,
+    provider: String,
+    model: String,
+    evidence_ids: Vec<String>,
+    citations: Vec<ProviderAnswerCitation>,
+    unsupported_claims: Vec<String>,
+    follow_up_questions: Vec<String>,
+    warnings: Vec<String>,
+    generated_at: String,
+    latency_ms: Option<u128>,
+    usage: Option<serde_json::Value>,
+    status: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct IngestPlanSummary {
@@ -10012,6 +10052,310 @@ fn parse_openai_answer(value: &serde_json::Value) -> Result<String, String> {
     Err("provider returned an empty assistant message".to_string())
 }
 
+fn compact_provider_prompt_text(value: &str, max_len: usize) -> String {
+    let text = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if text.chars().count() <= max_len {
+        return text;
+    }
+    let mut out = text
+        .chars()
+        .take(max_len.saturating_sub(1))
+        .collect::<String>();
+    out = out.trim().to_string();
+    out.push_str("...");
+    out
+}
+
+fn build_evidence_first_answer_prompt(
+    question: &str,
+    evidence: &[LlmAnswerEvidenceRef],
+    language: &str,
+) -> (String, String, Vec<String>) {
+    let safe_evidence = evidence
+        .iter()
+        .filter(|item| !item.id.trim().is_empty())
+        .take(10)
+        .map(|item| {
+            serde_json::json!({
+                "evidence_id": item.id.trim(),
+                "type": item.evidence_type,
+                "title": compact_provider_prompt_text(&item.title, 160),
+                "path": item.path,
+                "snippet": compact_provider_prompt_text(&item.snippet, 700),
+                "evidence": compact_provider_prompt_text(item.evidence.as_deref().unwrap_or(""), 700),
+                "status": item.status.as_deref().or(item.severity.as_deref()).unwrap_or("loaded"),
+                "relations": item.relations.iter().take(10).map(|entry| compact_provider_prompt_text(entry, 180)).collect::<Vec<_>>(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let evidence_ids = safe_evidence
+        .iter()
+        .filter_map(|item| item.get("evidence_id").and_then(|id| id.as_str()))
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    let response_language = if language == "zh" {
+        "Simplified Chinese"
+    } else {
+        "English"
+    };
+    let system = [
+        "You are an evidence-first answer generator for LLM Wiki.",
+        "Use only the supplied evidence map. Do not use outside knowledge or free-chat assumptions.",
+        "Every key conclusion must cite evidence_id values from the evidence map.",
+        "If no evidence is supplied, answer exactly: 当前 vault 证据不足",
+        "Do not invent sources, claim ids, concept ids, review ids, citations, or writeback approval.",
+        "Do not request or include raw documents. The prompt may contain only evidence snippets and ids.",
+        "Return JSON only with keys: answer, citations, unsupported_claims, follow_up_questions, warnings.",
+    ]
+    .join("\n");
+    let user = format!(
+        "Question: {}\nResponse language: {response_language}\n\nEvidence map JSON:\n{}\n\nRequired JSON shape:\n{}",
+        compact_provider_prompt_text(question, 1200),
+        serde_json::to_string_pretty(&safe_evidence).unwrap_or_else(|_| "[]".to_string()),
+        serde_json::json!({
+            "answer": "当前 vault 证据不足",
+            "citations": [{"evidence_id": evidence_ids.first().cloned().unwrap_or_else(|| "EVIDENCE_ID".to_string()), "note": "short reason"}],
+            "unsupported_claims": [],
+            "follow_up_questions": [],
+            "warnings": []
+        })
+    );
+    (system, user, evidence_ids)
+}
+
+fn provider_answer_insufficient(
+    question: String,
+    model: String,
+    evidence_ids: Vec<String>,
+    mut warnings: Vec<String>,
+    status: &str,
+    latency_ms: Option<u128>,
+    usage: Option<serde_json::Value>,
+) -> ProviderAnswerDraft {
+    if warnings.is_empty() && evidence_ids.is_empty() {
+        warnings.push("No evidence ids were supplied; ERNIE was not called.".to_string());
+    }
+    ProviderAnswerDraft {
+        question,
+        answer: "当前 vault 证据不足".to_string(),
+        provider: ERNIE_AI_STUDIO_PROVIDER_ID.to_string(),
+        model,
+        evidence_ids,
+        citations: Vec::new(),
+        unsupported_claims: vec!["当前 vault 证据不足".to_string()],
+        follow_up_questions: Vec::new(),
+        warnings,
+        generated_at: Local::now().to_rfc3339(),
+        latency_ms,
+        usage,
+        status: status.to_string(),
+    }
+}
+
+fn parse_json_object_from_answer(answer: &str) -> Result<serde_json::Value, String> {
+    let trimmed = answer.trim();
+    let candidate = if let Some(without_start) = trimmed.strip_prefix("```json") {
+        without_start.trim().trim_end_matches("```").trim()
+    } else if let Some(without_start) = trimmed.strip_prefix("```") {
+        without_start.trim().trim_end_matches("```").trim()
+    } else {
+        trimmed
+    };
+    serde_json::from_str(candidate).or_else(|_| {
+        let start = candidate
+            .find('{')
+            .ok_or_else(|| "provider answer did not include a JSON object".to_string())?;
+        let end = candidate
+            .rfind('}')
+            .ok_or_else(|| "provider answer did not include a complete JSON object".to_string())?;
+        serde_json::from_str(&candidate[start..=end])
+            .map_err(|e| format!("provider answer JSON could not be parsed: {e}"))
+    })
+}
+
+fn json_array_strings(value: Option<&serde_json::Value>) -> Vec<String> {
+    value
+        .and_then(|item| item.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::trim))
+                .filter(|item| !item.is_empty())
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn json_optional_string(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .filter_map(|key| value.get(*key).and_then(|item| item.as_str()))
+        .map(str::trim)
+        .find(|item| !item.is_empty())
+        .map(ToString::to_string)
+}
+
+fn parse_provider_answer_citations(
+    value: Option<&serde_json::Value>,
+    allowed_ids: &HashSet<String>,
+    warnings: &mut Vec<String>,
+) -> Vec<ProviderAnswerCitation> {
+    let Some(items) = value.and_then(|item| item.as_array()) else {
+        return Vec::new();
+    };
+    let mut citations = Vec::new();
+    for item in items {
+        let citation = if let Some(id) = item.as_str().map(str::trim).filter(|id| !id.is_empty()) {
+            ProviderAnswerCitation {
+                evidence_id: id.to_string(),
+                claim_id: None,
+                source_id: None,
+                concept_id: None,
+                review_id: None,
+                quote: None,
+                note: None,
+            }
+        } else if item.is_object() {
+            let evidence_id = json_optional_string(item, &["evidence_id", "evidenceId", "id"])
+                .unwrap_or_default();
+            ProviderAnswerCitation {
+                evidence_id,
+                claim_id: json_optional_string(item, &["claim_id", "claimId"]),
+                source_id: json_optional_string(item, &["source_id", "sourceId"]),
+                concept_id: json_optional_string(item, &["concept_id", "conceptId"]),
+                review_id: json_optional_string(item, &["review_id", "reviewId"]),
+                quote: json_optional_string(item, &["quote"]),
+                note: json_optional_string(item, &["note", "reason"]),
+            }
+        } else {
+            continue;
+        };
+        if allowed_ids.contains(&citation.evidence_id) {
+            citations.push(citation);
+        } else if !citation.evidence_id.is_empty() {
+            warnings.push(format!(
+                "Dropped citation for evidence id not present in the request: {}",
+                citation.evidence_id
+            ));
+        }
+    }
+    citations
+}
+
+#[tauri::command]
+async fn generate_ernie_evidence_answer(
+    vault_path: String,
+    request: ProviderAnswerRequest,
+) -> Result<ProviderAnswerDraft, String> {
+    let vault = PathBuf::from(vault_path);
+    require_existing_dir(&vault, "vault")?;
+    if request.question.trim().is_empty() {
+        return Err("question is required".to_string());
+    }
+    let model = if request.model.trim().is_empty() {
+        ERNIE_AI_STUDIO_DEFAULT_MODEL.to_string()
+    } else {
+        request.model.trim().to_string()
+    };
+    let (system_prompt, user_prompt, evidence_ids) =
+        build_evidence_first_answer_prompt(&request.question, &request.evidence, &request.language);
+    if evidence_ids.is_empty() {
+        return Ok(provider_answer_insufficient(
+            request.question,
+            model,
+            evidence_ids,
+            Vec::new(),
+            "unsupported",
+            None,
+            None,
+        ));
+    }
+    let Some(api_key) = read_llm_api_key(Some(ERNIE_AI_STUDIO_API_KEY_ENV))? else {
+        return Ok(provider_answer_insufficient(
+            request.question,
+            model,
+            evidence_ids,
+            vec![format!(
+                "{ERNIE_AI_STUDIO_API_KEY_ENV} is not visible to this desktop process"
+            )],
+            "missing_key",
+            None,
+            None,
+        ));
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|e| format!("failed to create HTTP client: {e}"))?;
+    let started = Instant::now();
+    let body = serde_json::json!({
+        "model": model.as_str(),
+        "messages": [
+            { "role": "system", "content": system_prompt },
+            { "role": "user", "content": user_prompt }
+        ],
+        "stream": false
+    });
+    let response = client
+        .post(openai_chat_completions_url(ERNIE_AI_STUDIO_BASE_URL))
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| {
+            redact_provider_error(&format!("ERNIE evidence answer request failed: {e}"))
+        })?;
+    let latency = started.elapsed().as_millis();
+    let status = response.status();
+    let text = response
+        .text()
+        .await
+        .map_err(|e| format!("failed to read ERNIE evidence answer response: {e}"))?;
+    if !status.is_success() {
+        let (code, message) = classify_provider_http_error(status, &text);
+        return Ok(provider_answer_insufficient(
+            request.question,
+            model,
+            evidence_ids,
+            vec![message],
+            code,
+            Some(latency),
+            None,
+        ));
+    }
+    let raw_value: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("ERNIE returned non-JSON response: {e}"))?;
+    let answer_text = parse_openai_answer(&raw_value).map_err(|e| redact_provider_error(&e))?;
+    let parsed = parse_json_object_from_answer(&answer_text)?;
+    let mut warnings = json_array_strings(parsed.get("warnings"));
+    let allowed_ids = evidence_ids.iter().cloned().collect::<HashSet<_>>();
+    let citations =
+        parse_provider_answer_citations(parsed.get("citations"), &allowed_ids, &mut warnings);
+    let answer = parsed
+        .get("answer")
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .unwrap_or("当前 vault 证据不足")
+        .to_string();
+    Ok(ProviderAnswerDraft {
+        question: request.question,
+        answer,
+        provider: ERNIE_AI_STUDIO_PROVIDER_ID.to_string(),
+        model,
+        evidence_ids,
+        citations,
+        unsupported_claims: json_array_strings(parsed.get("unsupported_claims")),
+        follow_up_questions: json_array_strings(parsed.get("follow_up_questions")),
+        warnings,
+        generated_at: Local::now().to_rfc3339(),
+        latency_ms: Some(latency),
+        usage: raw_value.get("usage").cloned(),
+        status: "ready".to_string(),
+    })
+}
+
 fn parse_anthropic_answer(value: &serde_json::Value) -> Result<String, String> {
     if let Some(error) = value.get("error") {
         return Err(format!(
@@ -13634,6 +13978,78 @@ mod tests {
         assert_eq!(result.answer, "Local model answer citing E1.");
         assert_eq!(result.provider_id, "ollama-local");
         let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn evidence_first_answer_prompt_contains_ids_without_full_raw_document() {
+        let raw_document = "raw document paragraph ".repeat(120);
+        let evidence = vec![LlmAnswerEvidenceRef {
+            id: "claim:ernie-1".to_string(),
+            evidence_type: "claim".to_string(),
+            title: "ERNIE claim".to_string(),
+            path: "claims/claims.jsonl".to_string(),
+            snippet: raw_document.clone(),
+            evidence: Some("short quote".to_string()),
+            status: Some("supported".to_string()),
+            severity: None,
+            relations: vec![
+                "claim: ernie-1".to_string(),
+                "source: LLM-0001".to_string(),
+                "concept: evidence-first".to_string(),
+            ],
+        }];
+        let (system, user, evidence_ids) =
+            build_evidence_first_answer_prompt("What is supported?", &evidence, "en");
+        assert!(system.contains("Use only the supplied evidence map"));
+        assert!(system.contains("Return JSON only"));
+        assert_eq!(evidence_ids, vec!["claim:ernie-1".to_string()]);
+        assert!(user.contains("\"evidence_id\": \"claim:ernie-1\""));
+        assert!(user.contains("source: LLM-0001"));
+        assert!(!user.contains(&raw_document));
+    }
+
+    #[test]
+    fn ernie_answer_without_evidence_returns_insufficient_without_key_check() {
+        let vault = test_vault("ernie-empty-evidence-answer");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        let request = ProviderAnswerRequest {
+            question: "What does the vault prove?".to_string(),
+            model: ERNIE_AI_STUDIO_DEFAULT_MODEL.to_string(),
+            language: "zh".to_string(),
+            evidence: Vec::new(),
+        };
+        let result = tauri::async_runtime::block_on(generate_ernie_evidence_answer(
+            to_display(&vault),
+            request,
+        ))
+        .expect("empty evidence answer");
+        assert_eq!(result.status, "unsupported");
+        assert_eq!(result.answer, "当前 vault 证据不足");
+        assert!(result.citations.is_empty());
+        assert!(result
+            .warnings
+            .iter()
+            .any(|item| item.contains("ERNIE was not called")));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn provider_answer_citations_only_keep_requested_evidence_ids() {
+        let mut allowed = HashSet::new();
+        allowed.insert("claim:ok".to_string());
+        let value = serde_json::json!([
+            {"evidence_id": "claim:ok", "claim_id": "ok", "note": "supported"},
+            {"evidence_id": "claim:not-sent", "note": "must drop"}
+        ]);
+        let mut warnings = Vec::new();
+        let citations = parse_provider_answer_citations(Some(&value), &allowed, &mut warnings);
+        assert_eq!(citations.len(), 1);
+        assert_eq!(citations[0].evidence_id, "claim:ok");
+        assert_eq!(citations[0].claim_id.as_deref(), Some("ok"));
+        assert!(warnings
+            .iter()
+            .any(|item| item.contains("not present in the request")));
     }
 
     #[test]
@@ -17898,6 +18314,7 @@ pub fn run() {
             check_ernie_provider,
             test_ernie_chat,
             generate_llm_answer,
+            generate_ernie_evidence_answer,
             plan_ingest,
             run_ingest_lint,
             set_dashboard_action_status,

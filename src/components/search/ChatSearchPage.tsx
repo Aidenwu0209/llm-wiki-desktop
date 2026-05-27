@@ -15,10 +15,9 @@ import type {
   ClaimLedgerItem,
   EvidencePathItem,
   LlmAnswerEvidenceRef,
-  LlmAnswerRequest,
-  LlmAnswerResult,
   LlmProviderCenterSettings,
   LlmProviderConfig,
+  ProviderAnswerDraft,
   ReviewQueueItem,
   TraceabilityWarning,
   VaultFile,
@@ -27,7 +26,9 @@ import type {
 } from "../../types";
 import { runtimeLabel, runtimeText, type UiLanguage } from "../../i18n";
 import { isLoopbackHttpEndpoint } from "../../lib/local-endpoints";
-import { generateLlmAnswer } from "../../tauri";
+import { ERNIE_AI_STUDIO_DEFAULT_MODEL } from "../../lib/providers/catalog";
+import { buildEvidenceFirstAnswerPrompt } from "../../lib/evidence/answerPrompt";
+import { generateErnieEvidenceAnswer } from "../../tauri";
 
 const DEFAULT_DEEPSEEK_QUESTIONS = [
   "DeepSeek 的研发思路是什么？",
@@ -104,6 +105,7 @@ type ChatSearchPageProps = {
   handoffKey?: number;
   busy: string | null;
   onCreateProposal: (question: string, targetPath: string) => void | Promise<void>;
+  onCreateAnswerProposal?: (question: string, targetPath: string, content: string) => void | Promise<void>;
   onOpenPath: (path: string) => void | Promise<void>;
   resolveVaultPath: (path?: string | null) => string;
   onOpenVaultItem?: (path?: string | null) => void | Promise<void>;
@@ -119,7 +121,17 @@ const chatCopy = {
     target: "写回目标",
     searchEvidence: "搜索证据",
     draftAnswer: "生成证据回答",
+    localDraftAnswer: "生成本地证据草稿",
+    generateWithErnie: "使用 ERNIE 生成",
     generatingAnswer: "正在调用模型",
+    ernieNotConfigured: "ERNIE 未配置：请到 Settings / LLM Models 配置 AI_STUDIO_API_KEY。",
+    createProposalFromAnswer: "从此回答创建写回提案",
+    evidenceCitations: "证据引用",
+    unsupportedClaims: "无证据结论",
+    followUpQuestions: "追问",
+    warnings: "警告",
+    usageLatency: "用量 / 延迟",
+    noStructuredItems: "无",
     createProposal: "创建提案",
     boundaryTitle: "先提案后写回边界",
     boundaryBody: "本页面先检索知识库证据；启用可用 API 提供方后，会把证据图随问题一起发给模型生成回答。未配置可用提供方时只生成本地证据草稿。任何写回仍先进入提案审批门。",
@@ -192,7 +204,17 @@ const chatCopy = {
     target: "Writeback target",
     searchEvidence: "search evidence",
     draftAnswer: "generate evidence answer",
+    localDraftAnswer: "Generate local evidence draft",
+    generateWithErnie: "Generate with ERNIE",
     generatingAnswer: "calling model",
+    ernieNotConfigured: "ERNIE is not configured. Open Settings / LLM Models and configure AI_STUDIO_API_KEY.",
+    createProposalFromAnswer: "Create writeback proposal from this answer",
+    evidenceCitations: "Evidence citations",
+    unsupportedClaims: "Unsupported claims",
+    followUpQuestions: "Follow-up questions",
+    warnings: "Warnings",
+    usageLatency: "Usage / latency",
+    noStructuredItems: "None",
     createProposal: "create proposal",
     boundaryTitle: "Proposal-first boundary",
     boundaryBody: "This page retrieves vault evidence first. When a usable API provider is enabled, the evidence map is sent with the question to generate an answer. Without a usable provider it creates a local evidence draft. Any writeback still goes through the proposal approval gate.",
@@ -1045,28 +1067,57 @@ function toLlmAnswerEvidence(items: SearchResult[]): LlmAnswerEvidenceRef[] {
   }));
 }
 
-function buildLlmAnswerRequest(
-  provider: ActiveProviderSummary,
-  question: string,
-  targetPath: string,
-  evidence: SearchResult[],
-  language: UiLanguage,
-): LlmAnswerRequest | null {
-  if (!provider.canGenerate || !provider.config) return null;
-  return {
-    providerId: provider.providerId,
-    providerName: provider.name,
-    apiProtocol: provider.config.apiProtocol || "openai-compatible",
-    apiBaseUrl: provider.config.apiBaseUrl || "",
-    apiKeyEnvVar: provider.config.apiKeyEnvVar || "",
-    model: provider.model,
-    contextWindow: provider.config.contextWindow,
-    reasoningMode: provider.config.reasoningMode || "balanced",
-    language,
-    question,
-    targetPath,
-    evidence: toLlmAnswerEvidence(evidence.filter((item) => !isBlockedEvidenceResult(item))),
-  };
+function ernieProviderStatus(center?: LlmProviderCenterSettings | null) {
+  const config = center?.providers?.["ernie-ai-studio"] ?? null;
+  const model = config?.customModel?.trim() || config?.selectedModel || ERNIE_AI_STUDIO_DEFAULT_MODEL;
+  const configured = Boolean(config?.apiKeyConfigured && (config.apiBaseUrl || "").trim());
+  return { config, model, configured };
+}
+
+function answerProposalTarget(value: string) {
+  const clean = value.trim().replace(/\\/g, "/");
+  if (clean.startsWith(WRITEBACK_QUEUE_PATH) && /\.(md|markdown|txt)$/i.test(clean)) {
+    return clean;
+  }
+  return `${WRITEBACK_QUEUE_PATH}ernie-evidence-answer.md`;
+}
+
+function providerAnswerProposalContent(result: ProviderAnswerDraft) {
+  return [
+    "# ERNIE Evidence-first Answer Proposal",
+    "",
+    "- provider: ernie-ai-studio",
+    `- model: ${result.model}`,
+    `- generated_at: ${result.generatedAt}`,
+    `- status: ${result.status}`,
+    "- writeback_applied: false",
+    "",
+    "## Question",
+    "",
+    result.question,
+    "",
+    "## Answer",
+    "",
+    result.answer,
+    "",
+    "## Evidence citations",
+    "",
+    result.citations.length
+      ? result.citations.map((item) => `- ${item.evidenceId}${item.note ? `: ${item.note}` : ""}`).join("\n")
+      : "- none",
+    "",
+    "## Unsupported claims",
+    "",
+    result.unsupportedClaims.length ? result.unsupportedClaims.map((item) => `- ${item}`).join("\n") : "- none",
+    "",
+    "## Evidence ids",
+    "",
+    result.evidenceIds.length ? result.evidenceIds.map((item) => `- ${item}`).join("\n") : "- none",
+    "",
+    "## Approval Gate",
+    "",
+    "This is a proposal only. Do not apply it to source or concept pages until a human explicitly approves the writeback.",
+  ].join("\n");
 }
 
 function AnswerMarkdown({
@@ -1130,6 +1181,7 @@ export function ChatSearchPage({
   handoffKey,
   busy,
   onCreateProposal,
+  onCreateAnswerProposal,
   onOpenPath,
   resolveVaultPath,
   onOpenVaultItem,
@@ -1146,13 +1198,13 @@ export function ChatSearchPage({
   const [question, setQuestion] = useState(defaultQuestions[0]);
   const [targetPath, setTargetPath] = useState("reviews/query-writeback/deepseek-research-insights.md");
   const [answerDraft, setAnswerDraft] = useState("");
-  const [answerProviderResult, setAnswerProviderResult] = useState<LlmAnswerResult | null>(null);
+  const [answerProviderResult, setAnswerProviderResult] = useState<ProviderAnswerDraft | null>(null);
   const [answerProviderError, setAnswerProviderError] = useState<string | null>(null);
   const [answerBusy, setAnswerBusy] = useState(false);
-  const [allowProviderCall, setAllowProviderCall] = useState(false);
   const [selectedResultId, setSelectedResultId] = useState<string | null>(null);
   const [history, setHistory] = useState<QueryHistoryItem[]>(() => loadHistory(vaultPath));
   const activeProvider = useMemo(() => providerSummary(providerCenter, language), [providerCenter, language]);
+  const ernieProvider = useMemo(() => ernieProviderStatus(providerCenter), [providerCenter]);
   const index = useMemo(
     () => buildSearchIndex({ status, claims, evidencePaths, reviewItems, writebacks, traceabilityWarnings, labels: relationCopy[language], language }),
     [claims, evidencePaths, language, reviewItems, status, traceabilityWarnings, writebacks],
@@ -1161,10 +1213,6 @@ export function ChatSearchPage({
   useEffect(() => {
     setHistory(loadHistory(vaultPath));
   }, [vaultPath]);
-
-  useEffect(() => {
-    setAllowProviderCall(false);
-  }, [activeProvider.providerId, activeProvider.model, activeProvider.config?.apiBaseUrl]);
 
   useEffect(() => {
     const nextQuestion = handoffQuestion?.trim();
@@ -1229,11 +1277,16 @@ export function ChatSearchPage({
     setSelectedResultId(item.evidence[0]?.id ?? null);
   };
 
-  const generateDraft = async () => {
+  const currentEvidenceSelection = () => {
     const draftSearchText = searchText.trim() || question;
     const draftResults = filterSearchResults(index, typeFilter, draftSearchText);
     const draftSelected = draftResults.find((item) => item.id === selectedResultId) ?? draftResults[0] ?? null;
     const draftEvidence = pickAnswerEvidence(draftResults, draftSelected);
+    return { draftSearchText, draftSelected, draftEvidence };
+  };
+
+  const generateDraft = () => {
+    const { draftSearchText, draftSelected, draftEvidence } = currentEvidenceSelection();
     const localDraft = buildAnswerDraft(question, targetPath, draftEvidence, language, typeLabel);
     setSearchText(draftSearchText);
     setSelectedResultId(draftSelected?.id ?? null);
@@ -1241,34 +1294,70 @@ export function ChatSearchPage({
     setAnswerProviderError(null);
     setAnswerDraft(localDraft);
     rememberQuery(question, { searchText: draftSearchText, evidence: draftEvidence });
+  };
 
-    if (activeProvider.canGenerate && !allowProviderCall) {
-      setAnswerProviderError(text.providerConsentRequired);
+  const generateWithErnie = async () => {
+    const { draftSearchText, draftSelected, draftEvidence } = currentEvidenceSelection();
+    const usableEvidence = draftEvidence.filter((item) => !isBlockedEvidenceResult(item));
+    const localDraft = buildAnswerDraft(question, targetPath, draftEvidence, language, typeLabel);
+    setSearchText(draftSearchText);
+    setSelectedResultId(draftSelected?.id ?? null);
+    setAnswerProviderResult(null);
+    setAnswerProviderError(null);
+    setAnswerDraft(localDraft);
+    rememberQuery(question, { searchText: draftSearchText, evidence: draftEvidence });
+    if (!usableEvidence.length) {
+      setAnswerProviderResult({
+        question,
+        answer: "当前 vault 证据不足",
+        provider: "ernie-ai-studio",
+        model: ernieProvider.model,
+        evidenceIds: [],
+        citations: [],
+        unsupportedClaims: ["当前 vault 证据不足"],
+        followUpQuestions: [],
+        warnings: ["No citable evidence was selected; ERNIE was not called."],
+        generatedAt: new Date().toISOString(),
+        latencyMs: null,
+        usage: null,
+        status: "unsupported",
+      });
+      setAnswerDraft("当前 vault 证据不足");
       return;
     }
-
-    const request = buildLlmAnswerRequest(activeProvider, question, targetPath, draftEvidence, language);
-    if (!request) {
-      if (activeProvider.unavailableReason) {
-        setAnswerProviderError(activeProvider.unavailableReason);
-      }
+    if (!ernieProvider.configured) {
+      setAnswerProviderError(text.ernieNotConfigured);
       return;
     }
-
     setAnswerBusy(true);
     try {
-      const result = await generateLlmAnswer(vaultPath, request);
-      const coverageBlock = renderAnswerCitationCoverage(answerCitationCoverage(draftEvidence), language);
+      const evidence = toLlmAnswerEvidence(usableEvidence);
+      const prompt = buildEvidenceFirstAnswerPrompt(question, evidence, { language });
+      const result = await generateErnieEvidenceAnswer(vaultPath, {
+        question,
+        model: ernieProvider.model,
+        language,
+        evidence: evidence.filter((item) => prompt.evidenceIds.includes(item.id)),
+      });
       setAnswerProviderResult(result);
-      setAnswerDraft(result.answer.includes("## Citation coverage")
-        ? result.answer
-        : `${coverageBlock}\n\n${result.answer}`);
+      setAnswerDraft(result.answer);
     } catch (err) {
       setAnswerProviderError(String(err));
       setAnswerDraft(localDraft);
     } finally {
       setAnswerBusy(false);
     }
+  };
+
+  const createAnswerProposal = () => {
+    if (!answerProviderResult || !onCreateAnswerProposal) return;
+    const proposalTarget = answerProposalTarget(targetPath);
+    setTargetPath(proposalTarget);
+    void onCreateAnswerProposal(
+      question,
+      proposalTarget,
+      providerAnswerProposalContent(answerProviderResult),
+    );
   };
 
   const createProposal = () => {
@@ -1345,7 +1434,15 @@ export function ChatSearchPage({
               <Search size={14} />{text.searchEvidence}
             </button>
             <button type="button" onClick={generateDraft} disabled={!vaultPath || !question.trim() || answerBusy}>
-              <Lightbulb size={14} />{answerBusy ? text.generatingAnswer : text.draftAnswer}
+              <Lightbulb size={14} />{text.localDraftAnswer}
+            </button>
+            <button
+              type="button"
+              onClick={generateWithErnie}
+              disabled={!vaultPath || !question.trim() || answerBusy || !ernieProvider.configured}
+              title={!ernieProvider.configured ? text.ernieNotConfigured : undefined}
+            >
+              <Lightbulb size={14} />{answerBusy ? text.generatingAnswer : text.generateWithErnie}
             </button>
             <button type="button" onClick={createProposal} disabled={!vaultPath || !question.trim() || busy === "query_writeback"}>
               <GitCompare size={14} />{text.createProposal}
@@ -1366,16 +1463,7 @@ export function ChatSearchPage({
             {text.providerLabel}: {activeProvider.name} · {activeProvider.detail}. {text.providerDraftOnly}
             {!activeProvider.canGenerate && activeProvider.unavailableReason ? ` ${text.providerNotCallable}: ${activeProvider.unavailableReason}` : ""}
           </code>
-          {activeProvider.canGenerate && (
-            <label className="switch-row">
-              <input
-                type="checkbox"
-                checked={allowProviderCall}
-                onChange={(event) => setAllowProviderCall(event.target.checked)}
-              />
-              <span>{text.providerConsent}</span>
-            </label>
-          )}
+          {!ernieProvider.configured && <span>{text.ernieNotConfigured}</span>}
         </div>
       </section>
 
@@ -1501,7 +1589,15 @@ export function ChatSearchPage({
 
         <div className="answer-action-row">
           <button type="button" onClick={generateDraft} disabled={!vaultPath || !question.trim() || answerBusy}>
-            <Lightbulb size={14} />{answerBusy ? text.generatingAnswer : text.draftAnswer}
+            <Lightbulb size={14} />{text.localDraftAnswer}
+          </button>
+          <button
+            type="button"
+            onClick={generateWithErnie}
+            disabled={!vaultPath || !question.trim() || answerBusy || !ernieProvider.configured}
+            title={!ernieProvider.configured ? text.ernieNotConfigured : undefined}
+          >
+            <Lightbulb size={14} />{answerBusy ? text.generatingAnswer : text.generateWithErnie}
           </button>
           <button type="button" onClick={createProposal} disabled={!vaultPath || !question.trim() || busy === "query_writeback"}>
             <GitCompare size={14} />{text.createProposal}
@@ -1515,11 +1611,69 @@ export function ChatSearchPage({
           <div className={classNames("model-answer-status", answerProviderError && "warning")}>
             {answerProviderResult ? (
               <span>
-                {text.providerGenerated}: {answerProviderResult.providerName} · {answerProviderResult.model} · {answerProviderResult.evidenceCount} {text.references}
+                {text.providerGenerated}: ERNIE · {answerProviderResult.model} · {answerProviderResult.evidenceIds.length} {text.references}
               </span>
             ) : (
               <span>{text.providerFallback}: {answerProviderError}</span>
             )}
+          </div>
+        )}
+
+        {answerProviderResult && (
+          <div className="composer-result">
+            <strong>{text.evidenceCitations}</strong>
+            <div className="impact-list compact">
+              {answerProviderResult.citations.length === 0 && <p className="empty">{text.noStructuredItems}</p>}
+              {answerProviderResult.citations.map((item, index) => (
+                <div className="work-item" key={`${item.evidenceId}-${index}`}>
+                  <span className="status-chip proposed">{item.evidenceId}</span>
+                  <strong>{item.note || item.quote || item.evidenceId}</strong>
+                  <em>{[item.claimId, item.sourceId, item.conceptId, item.reviewId].filter(Boolean).join(" · ")}</em>
+                </div>
+              ))}
+            </div>
+
+            <strong>{text.unsupportedClaims}</strong>
+            <div className="action-list">
+              {answerProviderResult.unsupportedClaims.length === 0 && <p className="empty">{text.noStructuredItems}</p>}
+              {answerProviderResult.unsupportedClaims.map((item) => (
+                <div className="work-item" key={item}><code>{item}</code></div>
+              ))}
+            </div>
+
+            <strong>{text.warnings}</strong>
+            <div className="action-list">
+              {answerProviderResult.warnings.length === 0 && <p className="empty">{text.noStructuredItems}</p>}
+              {answerProviderResult.warnings.map((item) => (
+                <div className="work-item" key={item}><code>{item}</code></div>
+              ))}
+            </div>
+
+            {answerProviderResult.followUpQuestions.length > 0 && (
+              <>
+                <strong>{text.followUpQuestions}</strong>
+                <div className="action-list">
+                  {answerProviderResult.followUpQuestions.map((item) => (
+                    <div className="work-item" key={item}><code>{item}</code></div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            <strong>{text.usageLatency}</strong>
+            <div className="work-item">
+              <span className={classNames("status-chip", answerProviderResult.status)}>{answerProviderResult.status}</span>
+              <code>
+                provider=ernie-ai-studio · model={answerProviderResult.model} · latency={answerProviderResult.latencyMs ?? "n/a"}ms · usage={answerProviderResult.usage ? JSON.stringify(answerProviderResult.usage) : "n/a"}
+              </code>
+            </div>
+            <button
+              type="button"
+              onClick={createAnswerProposal}
+              disabled={!onCreateAnswerProposal || !vaultPath || busy === "writeback_proposal"}
+            >
+              <GitCompare size={14} />{text.createProposalFromAnswer}
+            </button>
           </div>
         )}
 

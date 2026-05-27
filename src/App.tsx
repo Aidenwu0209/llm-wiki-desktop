@@ -2582,6 +2582,35 @@ function App() {
     }
   }
 
+  async function handleCreateAnswerWritebackFromChat(question: string, targetPath: string, content: string) {
+    if (!vaultPath || !question.trim() || !content.trim()) return;
+    const cleanTarget = targetPath.trim().replace(/\\/g, "/");
+    const target = cleanTarget.startsWith("reviews/query-writeback/")
+      ? cleanTarget
+      : "reviews/query-writeback/ernie-evidence-answer.md";
+    setActivePage("writeback");
+    setWritebackTarget(target);
+    setWritebackTitle(interfaceLanguage === "zh" ? "ERNIE 证据回答提案" : "ERNIE evidence answer proposal");
+    setWritebackContent(content);
+    setBusy("writeback_proposal");
+    setError(null);
+    try {
+      const proposal = await createWritebackProposal(
+        vaultPath,
+        target,
+        interfaceLanguage === "zh" ? "ERNIE 证据回答提案" : "ERNIE evidence answer proposal",
+        content,
+      );
+      setWritebacks((current) => [proposal, ...current.filter((item) => item.proposalId !== proposal.proposalId)]);
+      setWritebackApplyStatus(null);
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   function handleGraphResearchTopic(question: string, targetPath: string) {
     const target = targetPath.trim() || "reviews/query-writeback/graph-research-topic.md";
     setQueryText(question);
@@ -3959,6 +3988,7 @@ function App() {
           onOpenPath={openPath}
           resolveVaultPath={vaultFilePath}
           onCreateProposal={handleCreateQueryWritebackFromChat}
+          onCreateAnswerProposal={handleCreateAnswerWritebackFromChat}
           onOpenVaultItem={openVaultItem}
           onRevealPath={(path) => {
             void revealPath(path).catch((err) => setError(String(err)));
