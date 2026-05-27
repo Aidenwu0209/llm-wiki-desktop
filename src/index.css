@@ -83,13 +83,13 @@ textarea {
 }
 
 .app-shell.nashsu-aligned-shell {
-  grid-template-columns: 64px 286px minmax(0, 1fr) 382px;
+  grid-template-columns: 64px var(--knowledge-sidebar-width, 286px) minmax(0, 1fr) var(--preview-sidebar-width, 382px);
   grid-template-areas: "nav tree workspace preview";
   background: #f5f6f3;
 }
 
 .app-shell.nashsu-aligned-shell:not(.inspector-open) {
-  grid-template-columns: 64px 286px minmax(0, 1fr);
+  grid-template-columns: 64px var(--knowledge-sidebar-width, 286px) minmax(0, 1fr);
   grid-template-areas: "nav tree workspace";
 }
 
@@ -155,6 +155,7 @@ textarea {
 
 .knowledge-sidebar,
 .preview-sidebar {
+  position: relative;
   min-height: 0;
   overflow: hidden;
   border-color: #d5ddd8;
@@ -431,16 +432,69 @@ textarea {
   box-shadow: none;
 }
 
+.shell-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 6;
+  width: 10px;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  cursor: col-resize;
+  padding: 0;
+}
+
+.shell-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  left: 4px;
+  width: 2px;
+  border-radius: 999px;
+  background: #365f47;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.shell-resize-handle:hover,
+.shell-resize-handle:focus-visible {
+  background: rgba(54, 95, 71, 0.08);
+  outline: none;
+}
+
+.shell-resize-handle:hover::after,
+.shell-resize-handle:focus-visible::after,
+body[data-shell-panel-resizing="true"] .shell-resize-handle::after {
+  opacity: 0.75;
+}
+
+.knowledge-resize-handle {
+  right: 0;
+}
+
+.preview-resize-handle {
+  left: 0;
+}
+
+body[data-shell-panel-resizing="true"],
+body[data-shell-panel-resizing="true"] * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
 @media (max-width: 1440px) {
   .app-shell.nashsu-aligned-shell {
-    grid-template-columns: 64px 264px minmax(0, 1fr) 340px;
+    grid-template-columns: 64px var(--knowledge-sidebar-width, 264px) minmax(0, 1fr) var(--preview-sidebar-width, 340px);
   }
 }
 
 @media (max-width: 1100px) {
   .app-shell.nashsu-aligned-shell,
   .app-shell.nashsu-aligned-shell.inspector-open {
-    grid-template-columns: 64px 264px minmax(0, 1fr);
+    grid-template-columns: 64px var(--knowledge-sidebar-width, 264px) minmax(0, 1fr);
     grid-template-areas: "nav tree workspace";
   }
 
@@ -458,6 +512,10 @@ textarea {
   }
 
   .knowledge-sidebar {
+    display: none;
+  }
+
+  .shell-resize-handle {
     display: none;
   }
 }

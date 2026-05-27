@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type DragEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -150,6 +150,26 @@ const pipeline = [
 ];
 
 const actionSeverityRank: Record<string, number> = { p0: 0, p1: 1, p2: 2, p3: 3 };
+const NAV_RAIL_WIDTH = 64;
+const WORKSPACE_MIN_WIDTH = 360;
+const KNOWLEDGE_SIDEBAR_MIN_WIDTH = 180;
+const KNOWLEDGE_SIDEBAR_MAX_WIDTH = 400;
+const PREVIEW_SIDEBAR_MIN_WIDTH = 280;
+const PREVIEW_SIDEBAR_MAX_WIDTH = 560;
+
+function defaultKnowledgeSidebarWidth() {
+  if (typeof window !== "undefined" && window.innerWidth <= 1440) return 264;
+  return 286;
+}
+
+function defaultPreviewSidebarWidth() {
+  if (typeof window !== "undefined" && window.innerWidth <= 1440) return 340;
+  return 382;
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
 
 function compareDashboardActions(a: DashboardAction, b: DashboardAction) {
   const severityDelta = (actionSeverityRank[a.severity.toLowerCase()] ?? 9) - (actionSeverityRank[b.severity.toLowerCase()] ?? 9);
@@ -1350,6 +1370,7 @@ function fileTreeGroups(files: VaultFile[]) {
 }
 
 function App() {
+  const shellRef = useRef<HTMLElement | null>(null);
   const [interfaceLanguage, setInterfaceLanguage] = useState<UiLanguage>(() =>
     normalizeUiLanguage(typeof localStorage === "undefined" ? null : localStorage.getItem(INTERFACE_LANGUAGE_STORAGE_KEY)),
   );
@@ -1391,6 +1412,8 @@ function App() {
   const [activePage, setActivePage] = useState<ShellPage>("chat");
   const [detailDrawerOpen, setDetailDrawerOpen] = useState(true);
   const [sidebarTreeMode, setSidebarTreeMode] = useState<SidebarTreeMode>("knowledge");
+  const [knowledgeSidebarWidth, setKnowledgeSidebarWidth] = useState(defaultKnowledgeSidebarWidth);
+  const [previewSidebarWidth, setPreviewSidebarWidth] = useState(defaultPreviewSidebarWidth);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [actionFocusIndex, setActionFocusIndex] = useState(0);
   const [actionListExpanded, setActionListExpanded] = useState(false);
@@ -1438,6 +1461,58 @@ function App() {
   const progressDone = jobs.filter((job) => job.status === "succeeded").length;
   const activePageCopy = copy.pages[activePage];
   const pageVisible = (...pages: ShellPage[]) => pages.includes(activePage);
+  const shellLayoutStyle = activePage !== "settings"
+    ? ({
+      "--knowledge-sidebar-width": `${knowledgeSidebarWidth}px`,
+      "--preview-sidebar-width": `${previewSidebarWidth}px`,
+    } as CSSProperties)
+    : undefined;
+
+  const startShellResize = (side: "knowledge" | "preview") => (event: ReactMouseEvent<HTMLElement>) => {
+    event.preventDefault();
+    if (!shellRef.current) return;
+
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.body.dataset.shellPanelResizing = "true";
+
+    const handleMouseMove = (moveEvent: globalThis.MouseEvent) => {
+      const shell = shellRef.current;
+      if (!shell) return;
+      const rect = shell.getBoundingClientRect();
+      const shellWidth = rect.width;
+
+      if (side === "knowledge") {
+        const previewBudget = detailDrawerOpen ? PREVIEW_SIDEBAR_MIN_WIDTH : 0;
+        const dynamicMax = Math.max(
+          KNOWLEDGE_SIDEBAR_MIN_WIDTH,
+          Math.min(KNOWLEDGE_SIDEBAR_MAX_WIDTH, shellWidth - NAV_RAIL_WIDTH - previewBudget - WORKSPACE_MIN_WIDTH),
+        );
+        const nextWidth = moveEvent.clientX - rect.left - NAV_RAIL_WIDTH;
+        setKnowledgeSidebarWidth(clampNumber(nextWidth, KNOWLEDGE_SIDEBAR_MIN_WIDTH, dynamicMax));
+      } else {
+        const dynamicMax = Math.max(
+          PREVIEW_SIDEBAR_MIN_WIDTH,
+          Math.min(PREVIEW_SIDEBAR_MAX_WIDTH, shellWidth - NAV_RAIL_WIDTH - knowledgeSidebarWidth - WORKSPACE_MIN_WIDTH),
+        );
+        const nextWidth = rect.right - moveEvent.clientX;
+        setPreviewSidebarWidth(clampNumber(nextWidth, PREVIEW_SIDEBAR_MIN_WIDTH, dynamicMax));
+      }
+    };
+
+    const handleMouseUp = () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      delete document.body.dataset.shellPanelResizing;
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+  };
 
   useEffect(() => {
     if (detailSelection.kind !== "empty") {
@@ -2672,6 +2747,14 @@ function App() {
             onOpenActivity={() => setActivePage("activity")}
           />
         </div>
+        <button
+          type="button"
+          className="shell-resize-handle knowledge-resize-handle"
+          aria-label={interfaceLanguage === "zh" ? "调整知识树宽度" : "Resize knowledge sidebar"}
+          aria-orientation="vertical"
+          title={interfaceLanguage === "zh" ? "拖动调整知识树宽度" : "Drag to resize knowledge sidebar"}
+          onMouseDown={startShellResize("knowledge")}
+        />
       </aside>
     );
   };
@@ -2707,6 +2790,8 @@ function App() {
 
   return (
     <main
+      ref={shellRef}
+      style={shellLayoutStyle}
       className={classNames(
         "app-shell",
         activePage !== "settings" && "nashsu-aligned-shell",
@@ -3503,6 +3588,14 @@ function App() {
 
       {activePage !== "settings" && detailDrawerOpen && (
         <aside className="preview-sidebar" aria-label={interfaceLanguage === "zh" ? "预览和检查器" : "Preview and inspector"}>
+          <button
+            type="button"
+            className="shell-resize-handle preview-resize-handle"
+            aria-label={interfaceLanguage === "zh" ? "调整预览栏宽度" : "Resize preview sidebar"}
+            aria-orientation="vertical"
+            title={interfaceLanguage === "zh" ? "拖动调整预览栏宽度" : "Drag to resize preview sidebar"}
+            onMouseDown={startShellResize("preview")}
+          />
           <div className="preview-sidebar-header">
             <div>
               <strong>{interfaceLanguage === "zh" ? "Preview" : "Preview"}</strong>
