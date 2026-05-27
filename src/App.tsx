@@ -205,24 +205,30 @@ function WorkflowGuide({ title, body, steps }: { title: string; body: string; st
 function ShellResearchPanel({
   language,
   topic,
+  targetPath,
   sourceCount,
   conceptCount,
   reviewCount,
   proposalCount,
+  proposalBusy,
   onTopicChange,
   onSubmit,
+  onCreateProposal,
   onOpenWriteback,
   onOpenSettings,
   onClose,
 }: {
   language: UiLanguage;
   topic: string;
+  targetPath: string;
   sourceCount: number;
   conceptCount: number;
   reviewCount: number;
   proposalCount: number;
+  proposalBusy: boolean;
   onTopicChange: (value: string) => void;
   onSubmit: (topic: string) => void;
+  onCreateProposal: (topic: string) => void | Promise<void>;
   onOpenWriteback: () => void;
   onOpenSettings: () => void;
   onClose: () => void;
@@ -260,9 +266,22 @@ function ShellResearchPanel({
         placeholder={isZh ? "输入研究主题" : "Research topic"}
       />
 
+      <div className="shell-research-target">
+        <span>{isZh ? "提案目标" : "proposal target"}</span>
+        <code>{targetPath || "reviews/query-writeback/deep-research-topic.md"}</code>
+      </div>
+
       <div className="shell-research-actions">
         <button type="button" onClick={() => onSubmit(topic)} disabled={!trimmedTopic}>
           <Search size={14} />{isZh ? "开始研究" : "Start research"}
+        </button>
+        <button
+          type="button"
+          className="primary"
+          onClick={() => void onCreateProposal(topic)}
+          disabled={!trimmedTopic || proposalBusy}
+        >
+          <GitCompare size={14} />{proposalBusy ? (isZh ? "生成中" : "Creating") : (isZh ? "生成提案" : "Create proposal")}
         </button>
         <button type="button" onClick={onOpenWriteback}>
           <GitCompare size={14} />{isZh ? "写回" : "Writeback"}
@@ -1291,6 +1310,104 @@ function isShellDemoMode() {
     && new URLSearchParams(window.location.search).has("shellDemo");
 }
 
+function createShellDemoQueryWritebackDraft(question: string, targetPath: string, language: UiLanguage): QueryWritebackDraft {
+  const now = new Date().toISOString();
+  const proposalId = `proposal-demo-${Date.now()}`;
+  const summary = question.trim().split(/\n+/)[0]?.slice(0, 96) || (language === "zh" ? "Deep Research 提案" : "Deep Research proposal");
+  const answer = language === "zh"
+    ? [
+      "Evidence: demo vault already links DeepSeek V3 efficiency claims to sources/LLM-0001-deepseek-v3.md.",
+      "Inference: the research direction can be summarized only after the cited claims are reviewed.",
+      "Hypothesis/forecast: R1-style reasoning evolution remains review-gated and cannot be written as fact.",
+    ].join("\n")
+    : [
+      "Evidence: the demo vault links DeepSeek V3 efficiency claims to sources/LLM-0001-deepseek-v3.md.",
+      "Inference: research direction can be summarized only after cited claims are reviewed.",
+      "Hypothesis/forecast: R1-style reasoning evolution remains review-gated and cannot be written as fact.",
+    ].join("\n");
+  const writebackProposal = language === "zh"
+    ? `目标页面：${targetPath}\n写入内容：围绕「${summary}」生成 evidence / inference / hypothesis / forecast 分层草稿。\n证据链接：sources/LLM-0001-deepseek-v3.md, claims/deepseek-evolution-forecast.md。\n风险：预测结论必须等待 science review，不可静默写入 source/concept 页面。`
+    : `Target page: ${targetPath}\nWriteback content: create an evidence / inference / hypothesis / forecast draft for "${summary}".\nEvidence links: sources/LLM-0001-deepseek-v3.md, claims/deepseek-evolution-forecast.md.\nRisk: forecast conclusions require science review and must not be silently written to source/concept pages.`;
+  const diffPreview = [
+    `--- ${targetPath}`,
+    `+++ ${targetPath}`,
+    "+ ## Evidence",
+    "+ - DeepSeek efficiency claims are linked to [[sources/LLM-0001-deepseek-v3.md]].",
+    "+ ## Inference",
+    "+ - Research strategy should remain grounded in reviewed claims.",
+    "+ ## Hypothesis / Forecast",
+    "+ - Reasoning evolution remains a review-gated forecast.",
+  ].join("\n");
+  const proposal: WritebackProposal = {
+    proposalId,
+    targetPath,
+    title: language === "zh" ? "Deep Research 证据提案" : "Deep Research evidence proposal",
+    status: "proposed",
+    diff: diffPreview,
+    content: writebackProposal,
+    createdAt: now,
+    updatedAt: now,
+    appliedAt: null,
+    logPath: null,
+  };
+  return {
+    query: question,
+    answer,
+    citationCoverage: {
+      conclusions: 3,
+      cited: 2,
+      unsupported: 1,
+      staleOrRisky: 1,
+      needsEvidenceReview: true,
+      summary: language === "zh" ? "演示草稿保持 proposal-first；预测仍需人工复核。" : "Demo draft stays proposal-first; forecasts still need human review.",
+    },
+    evidenceMap: [
+      {
+        claimId: "claim-demo-001",
+        claimPath: "claims/deepseek-research-strategy.md",
+        claimText: shellDemoClaims[0].claimText,
+        sourceId: shellDemoClaims[0].sourceId,
+        sourcePath: shellDemoClaims[0].sourcePath,
+        evidenceHash: shellDemoClaims[0].evidenceHash,
+        quote: shellDemoClaims[0].evidenceQuote,
+        verdict: shellDemoClaims[0].verdict,
+        status: shellDemoClaims[0].status,
+        concepts: shellDemoClaims[0].concepts,
+        conclusionType: "evidence",
+        confidence: "medium",
+        freshnessStatus: "fresh",
+      },
+      {
+        claimId: "claim-demo-002",
+        claimPath: "claims/deepseek-evolution-forecast.md",
+        claimText: shellDemoClaims[1].claimText,
+        sourceId: shellDemoClaims[1].sourceId,
+        sourcePath: shellDemoClaims[1].sourcePath,
+        evidenceHash: shellDemoClaims[1].evidenceHash,
+        quote: shellDemoClaims[1].evidenceQuote,
+        verdict: shellDemoClaims[1].verdict,
+        status: shellDemoClaims[1].status,
+        concepts: shellDemoClaims[1].concepts,
+        conclusionType: "forecast",
+        confidence: "low",
+        freshnessStatus: "needs_review",
+        blockedReason: language === "zh" ? "需要 science review 后才能应用。" : "Requires science review before apply.",
+      },
+    ],
+    insightCandidates: [
+      language === "zh" ? "DeepSeek 研究策略应以已审核效率证据为主线。" : "DeepSeek strategy should be anchored in reviewed efficiency evidence.",
+      language === "zh" ? "预测类内容必须保留 hypothesis/forecast 标签。" : "Forecast content must keep hypothesis/forecast labels.",
+    ],
+    uncertaintyConflicts: [
+      language === "zh" ? "R1 演进方向仍是预测，不是已批准事实。" : "R1 evolution direction is still a forecast, not an approved fact.",
+    ],
+    writebackProposal,
+    diffPreview,
+    approvalStatus: "proposed",
+    proposal,
+  };
+}
+
 function importDialogExtensions(settings: DesktopSettings) {
   const raw = settings.sourceWatchEnabled
     ? settings.sourceWatchAllowedExtensions
@@ -2156,6 +2273,15 @@ function App() {
     setBusy("query_writeback");
     setError(null);
     try {
+      if (isShellDemoMode()) {
+        const target = queryTarget.trim() || "reviews/query-writeback/deepseek-research-insights.md";
+        const draft = createShellDemoQueryWritebackDraft(queryText, target, interfaceLanguage);
+        setQueryTarget(target);
+        setQueryDraft(draft);
+        setWritebacks((current) => [draft.proposal, ...current.filter((item) => item.proposalId !== draft.proposal.proposalId)]);
+        setWritebackApplyStatus(null);
+        return;
+      }
       const draft = await createQueryWritebackProposal(
         vaultPath,
         queryText,
@@ -2182,6 +2308,13 @@ function App() {
     setBusy("query_writeback");
     setError(null);
     try {
+      if (isShellDemoMode()) {
+        const draft = createShellDemoQueryWritebackDraft(question, target, interfaceLanguage);
+        setQueryDraft(draft);
+        setWritebacks((current) => [draft.proposal, ...current.filter((item) => item.proposalId !== draft.proposal.proposalId)]);
+        setWritebackApplyStatus(null);
+        return;
+      }
       const draft = await createQueryWritebackProposal(
         vaultPath,
         question,
@@ -2220,6 +2353,16 @@ function App() {
     setWritebackApplyStatus(null);
     setError(null);
     setActivePage("chat");
+    setResearchPanelOpen(true);
+  }
+
+  async function handleCreateResearchProposal(topic: string) {
+    const question = topic.trim();
+    if (!question) return;
+    const target = queryTarget.trim() || "reviews/query-writeback/deep-research-topic.md";
+    setResearchTopic(question);
+    setChatHandoff({ question, targetPath: target, key: Date.now() });
+    await handleCreateQueryWritebackFromChat(question, target);
     setResearchPanelOpen(true);
   }
 
@@ -3772,12 +3915,15 @@ function App() {
             <ShellResearchPanel
               language={interfaceLanguage}
               topic={researchTopic}
+              targetPath={queryTarget}
               sourceCount={status?.counts.sources ?? 0}
               conceptCount={status?.counts.concepts ?? 0}
               reviewCount={openReviewCount + (status?.counts.claimsNeedingReview ?? 0)}
               proposalCount={writebacks.length}
+              proposalBusy={busy === "query_writeback"}
               onTopicChange={setResearchTopic}
               onSubmit={handleShellResearchTopic}
+              onCreateProposal={handleCreateResearchProposal}
               onOpenWriteback={() => setActivePage("writeback")}
               onOpenSettings={() => setActivePage("settings")}
               onClose={() => setResearchPanelOpen(false)}
