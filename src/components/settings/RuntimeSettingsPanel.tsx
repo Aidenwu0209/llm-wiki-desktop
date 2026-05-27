@@ -37,6 +37,7 @@ type RuntimeSettingsPanelProps = {
   busy: string | null;
   onChooseRuntime: () => void;
   onSaveSettings: () => void;
+  onPlanIngest: () => void;
   onToggleLanguage?: () => void;
 };
 
@@ -319,6 +320,7 @@ export function RuntimeSettingsPanel({
   busy,
   onChooseRuntime,
   onSaveSettings,
+  onPlanIngest,
   onToggleLanguage,
 }: RuntimeSettingsPanelProps) {
   const text = settingsCopy[language];
@@ -976,12 +978,12 @@ export function RuntimeSettingsPanel({
                 <label>{isZh ? "监控目录" : "Monitor directory"}<input value={settings.scheduledImportPath} onChange={(event) => updateSettings({ scheduledImportPath: event.target.value })} placeholder="raw/inbox" /></label>
                 <label>{isZh ? "扫描间隔（分钟）" : "Scan interval minutes"}<input type="number" min={1} max={1440} value={settings.scheduledImportIntervalMinutes} onChange={(event) => updateNumberSetting("scheduledImportIntervalMinutes", event.target.value, 60)} /></label>
               </div>
-              <button type="button" disabled>
+              <button type="button" onClick={onPlanIngest} disabled={!vaultPath || busy === "plan_ingest"}>
                 <RefreshCw size={14} />
-                {isZh ? "立即扫描（后台执行器未接入）" : "Scan now (runner not wired)"}
+                {isZh ? "立即扫描并刷新 ingest plan" : "Scan now and refresh ingest plan"}
               </button>
               <div className="settings-notice">
-                {isZh ? "配置会被保存；自动后台调度仍需接入 vault-scoped 任务队列，因此这里不会假装已经创建系统级定时任务。" : "The config is saved. Automatic background scheduling still needs a vault-scoped job queue, so this does not pretend to create a system scheduler."}
+                {isZh ? "配置会被保存；立即扫描只刷新当前 vault 的 plan state。自动后台调度仍需接入 vault-scoped 任务队列，因此这里不会假装已经创建系统级定时任务。" : "The config is saved. Scan now only refreshes this vault's plan state. Automatic background scheduling still needs a vault-scoped job queue, so this does not pretend to create a system scheduler."}
               </div>
             </div>
           </div>
