@@ -19,6 +19,7 @@ const ZH_RUNTIME_LABELS: Record<string, string> = {
   approved: "已批准",
   approve_or_reject_claim: "批准或拒绝论断",
   artifact: "解析产物",
+  blocked: "已阻塞",
   broken: "断开",
   cancelled: "已取消",
   claim: "论断",
@@ -27,28 +28,49 @@ const ZH_RUNTIME_LABELS: Record<string, string> = {
   conflict: "冲突",
   contradicted: "冲突",
   details: "详情",
+  draft: "草稿",
+  entrypoint: "入口",
   failed: "失败",
+  hypothesis: "假设",
   ignored: "已忽略",
+  ingest_pipeline: "导入流程",
   invalid_artifact_hash: "解析产物哈希不一致",
+  lint: "检查",
   needs_review: "待审核",
   ok: "正常",
   open: "未处理",
+  pending: "待处理",
   proposed: "待审批",
+  published: "已发布",
+  qa_pending: "QA 待处理",
+  queued: "排队中",
+  ready: "就绪",
+  registered: "已登记",
   rejected: "已拒绝",
   resolved: "已解决",
+  retrying: "重试中",
+  review_only: "仅审核",
+  running: "运行中",
   run_ingest_lint: "运行导入检查",
+  runtime: "运行时",
+  science_review: "科学审核",
   source: "资料",
+  stageable: "可入库",
   stale: "已失效",
+  synthesis: "综合",
   succeeded: "成功",
   supported: "已支撑",
   timeout: "超时",
   timed_out: "超时",
+  wiki_lint: "Wiki 检查",
 };
 
 export function runtimeLabel(value: string | null | undefined, language: UiLanguage | string) {
   if (!value) return "";
   if (language !== "zh") return value;
   const key = value.trim();
+  const warningMatch = key.match(/^(\d+)\s+warnings?$/i);
+  if (warningMatch) return `${warningMatch[1]} 个警告`;
   return ZH_RUNTIME_LABELS[key] ?? ZH_RUNTIME_LABELS[key.toLowerCase()] ?? key;
 }
 

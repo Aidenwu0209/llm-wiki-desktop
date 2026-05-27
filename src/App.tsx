@@ -1672,6 +1672,10 @@ function runtimeCommandLabel(job: RuntimeJobEvent) {
   return job.command.length ? job.command.join(" ") : job.kind;
 }
 
+function fileStatusLabel(file: VaultFile, language: UiLanguage) {
+  return runtimeLabel(file.status || file.updated || file.kind, language);
+}
+
 function runtimeStatusTone(status: string) {
   if (["completed", "succeeded"].includes(status)) return "succeeded";
   if (["queued", "running", "retrying"].includes(status)) return "queued";
@@ -3197,6 +3201,7 @@ function App() {
                 icon={<Database size={14} />}
                 files={primaryConcepts}
                 empty={interfaceLanguage === "zh" ? "暂无概念页" : "No concept pages"}
+                language={interfaceLanguage}
                 selectedPath={selectedPath}
                 onSelect={selectFileForDetails}
               />
@@ -3206,6 +3211,7 @@ function App() {
                 icon={<FileInput size={14} />}
                 files={primarySources}
                 empty={interfaceLanguage === "zh" ? "暂无资料页" : "No source pages"}
+                language={interfaceLanguage}
                 selectedPath={selectedPath}
                 onSelect={selectFileForDetails}
               />
@@ -3215,6 +3221,7 @@ function App() {
                 icon={<SquareStack size={14} />}
                 files={primaryNotes}
                 empty={interfaceLanguage === "zh" ? "暂无笔记" : "No notes"}
+                language={interfaceLanguage}
                 selectedPath={selectedPath}
                 onSelect={selectFileForDetails}
               />
@@ -3224,6 +3231,7 @@ function App() {
                 icon={<ShieldCheck size={14} />}
                 files={primaryReports}
                 empty={interfaceLanguage === "zh" ? "暂无报告" : "No reports"}
+                language={interfaceLanguage}
                 selectedPath={selectedPath}
                 onSelect={selectFileForDetails}
               />
@@ -3254,6 +3262,7 @@ function App() {
           <ActivityMiniPanel
             activeJob={activeJob}
             history={runtimeHistory}
+            language={interfaceLanguage}
             runtimeRunning={runtimeRunning}
             getDurationSeconds={runtimeDurationSeconds}
             getLogPath={runtimeLogPath}
@@ -3573,11 +3582,11 @@ function App() {
         <section className={classNames("panel activity-panel view-section", pageVisible("activity", "dashboard") && "visible")}>
           <div className="section-head">
             <h2>{copy.activity.title}</h2>
-            <span>{activeJob ? `${activeJob.status} · ${runtimeDurationSeconds(activeJob)}s` : copy.activity.idle}</span>
+            <span>{activeJob ? `${runtimeLabel(activeJob.status, interfaceLanguage)} · ${runtimeDurationSeconds(activeJob)}s` : copy.activity.idle}</span>
           </div>
           <div className="activity-meta">
             <span>{interfaceLanguage === "zh" ? "任务" : "Job"}: {activeJob?.jobId || (interfaceLanguage === "zh" ? "无" : "none")}</span>
-            <span>{interfaceLanguage === "zh" ? "阶段" : "Stage"}: {activeJob?.stage || busy || copy.activity.idle}</span>
+            <span>{interfaceLanguage === "zh" ? "阶段" : "Stage"}: {runtimeLabel(activeJob?.stage || busy || copy.activity.idle, interfaceLanguage)}</span>
             <span>{interfaceLanguage === "zh" ? "开始时间" : "Started"}: {activeJob?.startedAt || (interfaceLanguage === "zh" ? "无" : "none")}</span>
             <span>{interfaceLanguage === "zh" ? "耗时" : "Duration"}: {activeJob ? `${runtimeDurationSeconds(activeJob)}s` : "0s"}</span>
             <span>{interfaceLanguage === "zh" ? "尝试" : "Attempt"}: {activeJob ? `${activeJob.attempt}/${activeJob.maxAttempts}` : `${desktopSettings.retryCount} ${interfaceLanguage === "zh" ? "已配置" : "configured"}`}</span>
@@ -3598,8 +3607,8 @@ function App() {
             {runtimeHistory.length === 0 && <p className="empty">{copy.activity.emptyHistory}</p>}
             {runtimeHistory.slice(0, 8).map((job) => (
               <div className="runtime-history-item" key={job.jobId}>
-                <span className={classNames("status-chip", runtimeStatusTone(job.status))}>{job.status}</span>
-                <strong>{job.kind}</strong>
+                <span className={classNames("status-chip", runtimeStatusTone(job.status))}>{runtimeLabel(job.status, interfaceLanguage)}</span>
+                <strong>{runtimeLabel(job.kind, interfaceLanguage)}</strong>
                 <em>
                   {job.startedAt} · {runtimeDurationSeconds(job)}s · {interfaceLanguage === "zh" ? "尝试" : "attempt"} {job.attempt}/{job.maxAttempts} · {interfaceLanguage === "zh" ? "重试" : "retry"} {runtimeRetryCount(job)} · {interfaceLanguage === "zh" ? "退出码" : "exit"} {job.exitCode ?? (interfaceLanguage === "zh" ? "运行中" : "running")}
                 </em>
@@ -3625,7 +3634,7 @@ function App() {
               {importResults.length === 0 && <p className="empty">暂无本轮导入结果。</p>}
               {importResults.map((item) => (
                 <button key={`${item.sourcePath}-${item.sha256}`} onClick={() => item.targetPath && openPath(item.targetPath)}>
-                  <span className={classNames("status-chip", item.status)}>{item.status}</span>
+                  <span className={classNames("status-chip", item.status)}>{runtimeLabel(item.status, interfaceLanguage)}</span>
                   <strong>{item.fileName}</strong>
                   <em>{item.mime} · {(item.sizeBytes / 1024).toFixed(1)} KB · {item.folderContext || (interfaceLanguage === "zh" ? "根目录" : "root")}</em>
                   <code>{item.sha256.slice(0, 16)} · {item.reason || item.doi || item.arxivId || item.titleHint || (interfaceLanguage === "zh" ? "无元数据" : "no metadata")} · {item.duplicateOf || item.approximateDuplicateOf || item.targetPath || item.sourcePath}</code>
@@ -3643,10 +3652,10 @@ function App() {
               {jobs.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无资料任务。" : "No source jobs yet."}</p>}
               {jobs.map((job) => (
                 <div className="work-item" key={job.jobId}>
-                  <span className={classNames("status-chip", job.status)}>{job.status}</span>
+                  <span className={classNames("status-chip", job.status)}>{runtimeLabel(job.status, interfaceLanguage)}</span>
                   <strong>{job.sourceId || job.fileName}</strong>
-                  <em>{job.currentStep} · {job.nextAction} · {interfaceLanguage === "zh" ? "尝试" : "attempt"} {job.attempt}/{job.maxAttempts}</em>
-                  <code>{job.lastError || job.reason}</code>
+                  <em>{runtimeLabel(job.currentStep, interfaceLanguage)} · {runtimeLabel(job.nextAction, interfaceLanguage)} · {interfaceLanguage === "zh" ? "尝试" : "attempt"} {job.attempt}/{job.maxAttempts}</em>
+                  <code>{runtimeText(job.lastError || job.reason, interfaceLanguage)}</code>
                   <div className="inline-actions">
                     <button title={interfaceLanguage === "zh" ? "打开当前解析产物或原始资料" : "Open current artifact or raw source"} onClick={() => openPath(vaultFilePath(job.artifactPath || job.sourcePath))}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "打开" : "Open"}</button>
                     <button title="重新排队" onClick={() => handleJobStatus(job.jobId, "queued")} disabled={job.status === "queued"}><RotateCcw size={14} />重试</button>
@@ -3910,10 +3919,10 @@ function App() {
               <span>{registry.length} {interfaceLanguage === "zh" ? "登记行" : "registry rows"}</span>
             </div>
             <div className="browser concept-browser">
-              <FileColumn title={interfaceLanguage === "zh" ? "知识库笔记" : "Wiki Notes"} files={grouped.note} onSelect={selectFileForDetails} />
-              <FileColumn title={interfaceLanguage === "zh" ? "资料" : "Sources"} files={[...grouped.source, ...grouped.draft]} onSelect={selectFileForDetails} />
-              <FileColumn title={interfaceLanguage === "zh" ? "报告" : "Reports"} files={grouped.report} onSelect={selectFileForDetails} />
-              <FileColumn title={interfaceLanguage === "zh" ? "收件箱" : "Inbox"} files={grouped.inbox} onSelect={selectFileForDetails} />
+              <FileColumn title={interfaceLanguage === "zh" ? "知识库笔记" : "Wiki Notes"} files={grouped.note} language={interfaceLanguage} onSelect={selectFileForDetails} />
+              <FileColumn title={interfaceLanguage === "zh" ? "资料" : "Sources"} files={[...grouped.source, ...grouped.draft]} language={interfaceLanguage} onSelect={selectFileForDetails} />
+              <FileColumn title={interfaceLanguage === "zh" ? "报告" : "Reports"} files={grouped.report} language={interfaceLanguage} onSelect={selectFileForDetails} />
+              <FileColumn title={interfaceLanguage === "zh" ? "收件箱" : "Inbox"} files={grouped.inbox} language={interfaceLanguage} onSelect={selectFileForDetails} />
             </div>
             <div className="section-head compact">
               <h3>{interfaceLanguage === "zh" ? "资料登记" : "Source registry"}</h3>
@@ -4209,6 +4218,7 @@ function ShellTreeSection({
   icon,
   files,
   empty,
+  language,
   selectedPath,
   onSelect,
 }: {
@@ -4217,6 +4227,7 @@ function ShellTreeSection({
   icon: ReactNode;
   files: VaultFile[];
   empty: string;
+  language: UiLanguage;
   selectedPath?: string;
   onSelect: (file: VaultFile) => void;
 }) {
@@ -4244,7 +4255,7 @@ function ShellTreeSection({
               title={file.path}
             >
               <strong>{file.title || file.name}</strong>
-              <span>{file.status || file.updated || file.kind}</span>
+              <span>{fileStatusLabel(file, language)}</span>
             </button>
           ))}
         </>
@@ -4316,15 +4327,16 @@ function ShellFileTreeGroup({
   );
 }
 
-function FileColumn({ title, files, onSelect }: { title: string; files: VaultFile[]; onSelect: (file: VaultFile) => void }) {
+function FileColumn({ title, files, language, onSelect }: { title: string; files: VaultFile[]; language?: UiLanguage; onSelect: (file: VaultFile) => void }) {
+  const resolvedLanguage = language || "en";
   return (
     <div className="file-column">
       <h3>{title}</h3>
-      {files.length === 0 && <p className="empty">None</p>}
+      {files.length === 0 && <p className="empty">{resolvedLanguage === "zh" ? "无" : "None"}</p>}
       {files.map((file) => (
         <button key={file.path} onClick={() => onSelect(file)}>
           <strong>{file.title || file.name}</strong>
-          <span>{file.status || file.updated || file.kind}</span>
+          <span>{fileStatusLabel(file, resolvedLanguage)}</span>
         </button>
       ))}
     </div>
