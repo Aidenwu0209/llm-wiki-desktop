@@ -625,6 +625,7 @@ const shellCopy: Record<UiLanguage, {
 
 const terminalRuntimeStatuses: RuntimeJobStatus[] = ["completed", "succeeded", "failed", "timeout", "timed_out", "cancelled"];
 const retryableRuntimeStatuses: RuntimeJobStatus[] = ["failed", "timeout", "timed_out", "cancelled"];
+const DEFAULT_IMPORT_DIALOG_EXTENSIONS = ["pdf", "md", "markdown", "txt", "zip", "docx", "pptx", "xlsx", "csv"];
 
 const initialDesktopSettings: DesktopSettings = {
   runtimePath: "",
@@ -687,6 +688,33 @@ const initialDesktopSettings: DesktopSettings = {
     providers: {},
   },
 };
+
+function importDialogExtensions(settings: DesktopSettings) {
+  const raw = settings.sourceWatchEnabled
+    ? settings.sourceWatchAllowedExtensions
+    : DEFAULT_IMPORT_DIALOG_EXTENSIONS.join(",");
+  const parsedExtensions = raw
+    .split(/[,;\n]/)
+    .map((item) => item.trim().replace(/^\./, "").toLowerCase())
+    .filter(Boolean);
+  const extensions = parsedExtensions.length ? parsedExtensions : DEFAULT_IMPORT_DIALOG_EXTENSIONS;
+  const unique = new Set([...extensions, "zip"]);
+  if (unique.has("md")) unique.add("markdown");
+  if (unique.has("markdown")) unique.add("md");
+  const excluded = settings.sourceWatchEnabled
+    ? settings.sourceWatchExcludeExtensions
+        .split(/[,;\n]/)
+        .map((item) => item.trim().replace(/^\./, "").toLowerCase())
+        .filter(Boolean)
+    : [];
+  for (const extension of excluded) {
+    unique.delete(extension);
+    if (extension === "md") unique.delete("markdown");
+    if (extension === "markdown") unique.delete("md");
+  }
+  unique.add("zip");
+  return DEFAULT_IMPORT_DIALOG_EXTENSIONS.filter((extension) => unique.has(extension));
+}
 
 function classNames(...items: Array<string | false | null | undefined>) {
   return items.filter(Boolean).join(" ");
@@ -1206,7 +1234,7 @@ function App() {
       directory: false,
       multiple: true,
       title: copy.dialogs.importFiles,
-      filters: [{ name: "Documents", extensions: ["pdf", "md", "markdown", "txt", "zip"] }],
+      filters: [{ name: "Documents", extensions: importDialogExtensions(desktopSettings) }],
     });
     const paths = Array.isArray(picked) ? picked.filter((item): item is string => typeof item === "string") : [];
     await handleImportPaths(paths);
