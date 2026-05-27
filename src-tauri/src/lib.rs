@@ -5672,6 +5672,193 @@ fn collect_ingest_inputs(vault: &Path) -> Vec<PathBuf> {
     files
 }
 
+#[derive(Debug, Clone)]
+struct SourceWatchRules {
+    allowed_extensions: HashSet<String>,
+    exclude_dirs: HashSet<String>,
+    exclude_extensions: HashSet<String>,
+    exclude_globs: Vec<String>,
+    max_file_size_bytes: Option<u64>,
+}
+
+fn split_source_watch_list(value: &str) -> Vec<String> {
+    value
+        .split(|ch| matches!(ch, ',' | ';' | '\n'))
+        .map(|item| item.trim().trim_start_matches('.').to_ascii_lowercase())
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+fn source_watch_extension_set(value: &str) -> HashSet<String> {
+    let mut extensions = HashSet::new();
+    for extension in split_source_watch_list(value) {
+        if extension == "md" {
+            extensions.insert("markdown".to_string());
+        } else if extension == "markdown" {
+            extensions.insert("md".to_string());
+        }
+        extensions.insert(extension);
+    }
+    extensions
+}
+
+fn source_watch_extension(path: &Path) -> String {
+    path.extension()
+        .and_then(OsStr::to_str)
+        .unwrap_or_default()
+        .trim_start_matches('.')
+        .to_ascii_lowercase()
+}
+
+fn wildcard_matches(pattern: &str, text: &str) -> bool {
+    let pattern = pattern.as_bytes();
+    let text = text.as_bytes();
+    let (mut pattern_index, mut text_index) = (0usize, 0usize);
+    let mut star_index = None;
+    let mut match_index = 0usize;
+
+    while text_index < text.len() {
+        if pattern_index < pattern.len()
+            && (pattern[pattern_index] == b'?' || pattern[pattern_index] == text[text_index])
+        {
+            pattern_index += 1;
+            text_index += 1;
+        } else if pattern_index < pattern.len() && pattern[pattern_index] == b'*' {
+            star_index = Some(pattern_index);
+            match_index = text_index;
+            pattern_index += 1;
+        } else if let Some(star) = star_index {
+            pattern_index = star + 1;
+            match_index += 1;
+            text_index = match_index;
+        } else {
+            return false;
+        }
+    }
+
+    while pattern_index < pattern.len() && pattern[pattern_index] == b'*' {
+        pattern_index += 1;
+    }
+
+    pattern_index == pattern.len()
+}
+
+fn source_watch_list_label(values: &HashSet<String>) -> String {
+    let mut values = values.iter().cloned().collect::<Vec<_>>();
+    values.sort();
+    values
+        .into_iter()
+        .map(|value| format!(".{value}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn source_watch_file_size_mb(bytes: u64) -> u64 {
+    bytes.div_ceil(1024 * 1024)
+}
+
+impl SourceWatchRules {
+    fn from_settings(settings: &DesktopSettings) -> Option<Self> {
+        if !settings.source_watch_enabled {
+            return None;
+        }
+        let max_file_size_bytes = (settings.source_watch_max_file_size_mb > 0)
+            .then(|| (settings.source_watch_max_file_size_mb as u64).saturating_mul(1024 * 1024));
+        Some(Self {
+            allowed_extensions: source_watch_extension_set(
+                &settings.source_watch_allowed_extensions,
+            ),
+            exclude_dirs: split_source_watch_list(&settings.source_watch_exclude_dirs)
+                .into_iter()
+                .collect(),
+            exclude_extensions: source_watch_extension_set(
+                &settings.source_watch_exclude_extensions,
+            ),
+            exclude_globs: settings
+                .source_watch_exclude_globs
+                .split(|ch| matches!(ch, ',' | ';' | '\n'))
+                .map(|item| item.trim().to_ascii_lowercase())
+                .filter(|item| !item.is_empty())
+                .collect(),
+            max_file_size_bytes,
+        })
+    }
+
+    fn exclusion_reason(&self, vault: &Path, path: &Path) -> Option<String> {
+        let raw = vault.join("raw");
+        let relative = path
+            .strip_prefix(&raw)
+            .or_else(|_| path.strip_prefix(vault))
+            .unwrap_or(path);
+
+        for component in relative.components() {
+            if let Component::Normal(part) = component {
+                let name = part.to_string_lossy().to_ascii_lowercase();
+                if self.exclude_dirs.contains(&name) {
+                    return Some(format!(
+                        "Source Watch excludes directory `{name}`; update Source Watch settings if this source should enter ingest."
+                    ));
+                }
+            }
+        }
+
+        let extension = source_watch_extension(path);
+        if !extension.is_empty() && self.exclude_extensions.contains(&extension) {
+            return Some(format!(
+                "Source Watch excludes extension `.{extension}`; update Source Watch settings if this source should enter ingest."
+            ));
+        }
+
+        if !self.allowed_extensions.is_empty() && !self.allowed_extensions.contains(&extension) {
+            let label = if extension.is_empty() {
+                "no extension".to_string()
+            } else {
+                format!(".{extension}")
+            };
+            return Some(format!(
+                "Source Watch allows only {}; this source has {label}.",
+                source_watch_list_label(&self.allowed_extensions)
+            ));
+        }
+
+        let file_name = path
+            .file_name()
+            .and_then(OsStr::to_str)
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let relative_text = relative
+            .to_string_lossy()
+            .replace('\\', "/")
+            .to_ascii_lowercase();
+        if let Some(pattern) = self.exclude_globs.iter().find(|pattern| {
+            wildcard_matches(pattern, &file_name) || wildcard_matches(pattern, &relative_text)
+        }) {
+            return Some(format!(
+                "Source Watch excludes glob `{pattern}`; update Source Watch settings if this source should enter ingest."
+            ));
+        }
+
+        if let Some(max_bytes) = self.max_file_size_bytes {
+            if fs::metadata(path)
+                .map(|metadata| metadata.len() > max_bytes)
+                .unwrap_or(false)
+            {
+                return Some(format!(
+                    "Source Watch max file size is {} MB; this source is {} MB.",
+                    source_watch_file_size_mb(max_bytes),
+                    source_watch_file_size_mb(
+                        fs::metadata(path)
+                            .map(|metadata| metadata.len())
+                            .unwrap_or(0)
+                    )
+                ));
+            }
+        }
+
+        None
+    }
+}
+
 fn collect_parsed_artifact_dirs(dir: &Path, out: &mut Vec<PathBuf>) {
     if let Ok(read_dir) = fs::read_dir(dir) {
         for entry in read_dir.flatten() {
@@ -6175,6 +6362,40 @@ fn acquire_ingest_lock(vault: &Path) -> Result<IngestPipelineLock, String> {
     writeln!(file, "started_at: {}", Local::now().to_rfc3339())
         .map_err(|e| format!("failed to write {}: {e}", lock_path.display()))?;
     Ok(IngestPipelineLock { path: lock_path })
+}
+
+fn plan_entry_for_source_watch_excluded(
+    vault: &Path,
+    source: &Path,
+    hash: &str,
+    reason: String,
+) -> IngestPlanEntry {
+    let file_name = source
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    IngestPlanEntry {
+        source_path: to_display(source),
+        file_name,
+        sha256: hash.to_string(),
+        artifact_sha256: None,
+        artifact_path: None,
+        status: "blocked".to_string(),
+        action: "source_watch_excluded".to_string(),
+        reason,
+        parser_hint: None,
+        current_state: "source_watch_excluded".to_string(),
+        next_action_label:
+            "This source is excluded by Source Watch rules; adjust Settings before ingesting it."
+                .to_string(),
+        command: Vec::new(),
+        inputs: vec![rel_path(vault, source)],
+        outputs: Vec::new(),
+        last_log_path: None,
+        requires_human_approval: false,
+        uses_network: false,
+    }
 }
 
 fn plan_entry_for_source(
@@ -8224,12 +8445,25 @@ fn write_ingest_plan(
 fn plan_ingest(vault_path: String) -> Result<IngestPlan, String> {
     let vault = PathBuf::from(vault_path);
     require_existing_dir(&vault, "vault")?;
+    let source_watch_rules =
+        SourceWatchRules::from_settings(&load_desktop_settings(to_display(&vault))?);
     let cached_hashes = load_cached_ingest_hashes(&vault);
     let published_keys = load_published_ingest_keys(&vault);
     let mut entries = Vec::new();
     let mut artifact_paths = HashSet::new();
 
     for source in collect_ingest_inputs(&vault) {
+        if let Some(reason) = source_watch_rules
+            .as_ref()
+            .and_then(|rules| rules.exclusion_reason(&vault, &source))
+        {
+            let hash = sha256_file(&source)?;
+            artifact_paths.insert(artifact_for_source(&vault, &source, &hash));
+            entries.push(plan_entry_for_source_watch_excluded(
+                &vault, &source, &hash, reason,
+            ));
+            continue;
+        }
         let entry = plan_entry_for_source(&vault, &source, &cached_hashes, &published_keys)?;
         if let Some(path) = &entry.artifact_path {
             artifact_paths.insert(PathBuf::from(path));
@@ -12705,6 +12939,89 @@ mod tests {
             .any(|item| item.ends_with("manifest.json")));
         assert!(!entry.requires_human_approval);
         assert!(!entry.uses_network);
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn ingest_plan_applies_source_watch_rules_as_explicit_plan_state() {
+        let vault = test_vault("source-watch-plan-rules");
+        let keep = vault.join("raw").join("inbox").join("keep.md");
+        let excluded_dir = vault
+            .join("raw")
+            .join("inbox")
+            .join("skipdir")
+            .join("ignored.md");
+        let excluded_extension = vault.join("raw").join("inbox").join("scratch.tmp");
+        let excluded_glob = vault.join("raw").join("inbox").join("paper.draft.pdf");
+        let disallowed_extension = vault.join("raw").join("inbox").join("metrics.csv");
+        let too_large = vault.join("raw").join("inbox").join("too-large.pdf");
+        write_text(&keep, "# Keep\n").expect("write kept source");
+        write_text(&excluded_dir, "# Ignored\n").expect("write skipped dir source");
+        write_text(
+            &excluded_dir
+                .parent()
+                .expect("excluded source parent")
+                .join("ignored_markdown")
+                .join("combined.md"),
+            "# Ignored parsed artifact\n",
+        )
+        .expect("write skipped parsed artifact");
+        fs::write(&excluded_extension, b"tmp").expect("write tmp source");
+        fs::write(&excluded_glob, b"pdf bytes").expect("write draft source");
+        fs::write(&disallowed_extension, b"model,score\n").expect("write csv source");
+        fs::write(&too_large, vec![0_u8; 1024 * 1024 + 1]).expect("write large source");
+
+        let mut settings = DesktopSettings::default();
+        settings.source_watch_enabled = true;
+        settings.source_watch_allowed_extensions = "md,pdf".to_string();
+        settings.source_watch_exclude_dirs = "skipdir".to_string();
+        settings.source_watch_exclude_extensions = "tmp".to_string();
+        settings.source_watch_exclude_globs = "*.draft.*".to_string();
+        settings.source_watch_max_file_size_mb = 1;
+        save_desktop_settings(to_display(&vault), settings).expect("save source watch settings");
+
+        let plan = plan_ingest(to_display(&vault)).expect("plan with source watch rules");
+
+        assert_eq!(plan.entries.len(), 6);
+        assert_eq!(plan.summary.stageable, 1);
+        assert_eq!(plan.summary.blocked, 5);
+        let kept = plan
+            .entries
+            .iter()
+            .find(|entry| entry.file_name == "keep.md")
+            .expect("kept source entry");
+        assert_eq!(kept.action, "stage_text_artifact");
+        assert_eq!(kept.current_state, "imported");
+
+        for (file_name, expected_reason) in [
+            ("ignored.md", "excludes directory `skipdir`"),
+            ("scratch.tmp", "excludes extension `.tmp`"),
+            ("paper.draft.pdf", "excludes glob `*.draft.*`"),
+            ("metrics.csv", "allows only"),
+            ("too-large.pdf", "max file size is 1 MB"),
+        ] {
+            let entry = plan
+                .entries
+                .iter()
+                .find(|entry| entry.file_name == file_name)
+                .unwrap_or_else(|| panic!("missing source watch entry for {file_name}"));
+            assert_eq!(entry.status, "blocked");
+            assert_eq!(entry.action, "source_watch_excluded");
+            assert_eq!(entry.current_state, "source_watch_excluded");
+            assert!(entry.reason.contains(expected_reason), "{}", entry.reason);
+            assert!(entry.command.is_empty());
+            assert!(entry.outputs.is_empty());
+            assert!(!entry.requires_human_approval);
+            assert!(!plan_entry_is_pipeline_runnable(entry));
+        }
+        assert!(plan.actions.iter().any(
+            |action| action.kind == "ingest_blocked" && action.reason.contains("Source Watch")
+        ));
+        assert!(!plan
+            .entries
+            .iter()
+            .any(|entry| entry.file_name == "ignored_markdown"));
 
         let _ = fs::remove_dir_all(vault);
     }
