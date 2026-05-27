@@ -1277,6 +1277,15 @@ function App() {
     }
   }
 
+  async function handleObsidianSetup() {
+    if (!vaultPath) return;
+    if (status?.runtimeInstalled) {
+      await handleRuntime("obsidian_setup");
+      return;
+    }
+    await handleRepairTemplates();
+  }
+
   async function handleIngestLint() {
     if (!vaultPath) return;
     setBusy("ingest_lint");
@@ -2261,7 +2270,7 @@ function App() {
           onRunPipeline={handleIngestPipeline}
           onOpenObsidian={handleOpenObsidian}
           onOpenReadingQualityReport={handleOpenReadingQualityReport}
-          onRunObsidianSetup={() => handleRuntime("obsidian_setup")}
+          onRunObsidianSetup={handleObsidianSetup}
         />
 
         <RawSourcesWorkspace
