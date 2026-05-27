@@ -195,6 +195,7 @@ const copyLabelZh: Record<string, string> = {
 };
 
 const navigationItems = [
+  { id: "chat", label: "Wiki Chat", icon: MessageSquare },
   { id: "dashboard", label: "Dashboard", icon: SquareStack },
   { id: "sources", label: "Sources", icon: FileInput },
   { id: "claims", label: "Claims", icon: ClipboardList },
@@ -202,7 +203,6 @@ const navigationItems = [
   { id: "reviews", label: "Reviews", icon: AlertTriangle },
   { id: "traceability", label: "Traceability", icon: ShieldCheck },
   { id: "writeback", label: "Query / Writeback", icon: GitCompare },
-  { id: "chat", label: "Evidence Draft", icon: MessageSquare },
   { id: "graph", label: "Evidence Graph", icon: Network },
   { id: "activity", label: "Activity", icon: TerminalSquare },
   { id: "settings", label: "Settings", icon: Settings },
@@ -246,8 +246,8 @@ const pageTitles: Record<ShellPage, { title: string; subtitle: string }> = {
     subtitle: "Evidence-backed insight generation with proposal-first writeback.",
   },
   chat: {
-    title: "Evidence Search / Answer Draft",
-    subtitle: "Search the vault, inspect evidence, draft local answers, and promote grounded questions into proposals.",
+    title: "Wiki Chat",
+    subtitle: "Ask the vault first: search evidence, draft grounded answers, and promote useful insight into proposals.",
   },
   graph: {
     title: "Evidence Graph",
@@ -336,6 +336,7 @@ const shellCopy: Record<UiLanguage, {
 }> = {
   zh: {
     nav: {
+      chat: "Wiki 问答",
       dashboard: "仪表盘",
       sources: "原始资料",
       claims: "论断",
@@ -343,7 +344,6 @@ const shellCopy: Record<UiLanguage, {
       reviews: "审核",
       traceability: "可追踪性",
       writeback: "问答 / 写回",
-      chat: "证据草稿",
       graph: "证据图谱",
       activity: "活动",
       settings: "设置",
@@ -356,7 +356,7 @@ const shellCopy: Record<UiLanguage, {
       reviews: { title: "审核", subtitle: "科学审核队列、后续动作和审批边界。" },
       traceability: { title: "可追踪性", subtitle: "断裂证据链、缺失锚点、合约发现和影响图。" },
       writeback: { title: "问答 / 写回", subtitle: "基于证据生成洞察，并先生成提案再写回。" },
-      chat: { title: "证据搜索 / 本地草稿", subtitle: "搜索知识库、检查证据、生成本地证据草稿，并把可信问题转成提案。" },
+      chat: { title: "Wiki 问答", subtitle: "先问知识库：搜索证据、生成可信回答，并把高价值洞察转成可审核提案。" },
       graph: { title: "证据图谱", subtitle: "展示资料、论断、概念、审核、警告和提案之间的可信证据关系。" },
       activity: { title: "活动", subtitle: "运行任务、持久历史、日志、取消、超时和重试。" },
       settings: { title: "设置", subtitle: "运行时、解析器、Obsidian 和发布相关桌面设置。" },
@@ -1388,7 +1388,7 @@ function App() {
   const [activeJob, setActiveJob] = useState<RuntimeJobEvent | null>(null);
   const [runtimeHistory, setRuntimeHistory] = useState<RuntimeJobEvent[]>([]);
   const [liveLogLines, setLiveLogLines] = useState<string[]>([]);
-  const [activePage, setActivePage] = useState<ShellPage>("dashboard");
+  const [activePage, setActivePage] = useState<ShellPage>("chat");
   const [detailDrawerOpen, setDetailDrawerOpen] = useState(true);
   const [sidebarTreeMode, setSidebarTreeMode] = useState<SidebarTreeMode>("knowledge");
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
