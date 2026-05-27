@@ -183,6 +183,104 @@ type WorkflowStep = {
   body: string;
 };
 
+type ShellResearchReadiness = {
+  llmReady: boolean;
+  llmLabel: string;
+  llmDetail: string;
+  searchReady: boolean;
+  searchLabel: string;
+  searchDetail: string;
+};
+
+const shellLlmProviderNames: Record<string, string> = {
+  anthropic: "Anthropic",
+  "claude-code": "Claude Code CLI",
+  "codex-cli": "Codex CLI",
+  openai: "OpenAI",
+  google: "Google Gemini",
+  deepseek: "DeepSeek",
+  kimi: "Kimi",
+  "kimi-cn": "Kimi CN",
+  "qwen-dashscope": "Qwen DashScope",
+  "bailian-coding": "Bailian Coding",
+  zhipu: "Zhipu GLM",
+  "ollama-local": "Ollama Local",
+  "custom-openai": "Custom OpenAI",
+};
+
+const shellSearchProviderNames: Record<string, string> = {
+  none: "None",
+  tavily: "Tavily",
+  serpapi: "SerpApi",
+  searxng: "SearXNG",
+};
+
+const shellLocalLlmProviderIds = new Set(["claude-code", "codex-cli"]);
+
+function prettyProviderName(providerId: string, names: Record<string, string>) {
+  if (!providerId) return "";
+  return names[providerId] || providerId.split(/[-_]/).filter(Boolean).map((part) => part[0]?.toUpperCase() + part.slice(1)).join(" ");
+}
+
+function isLoopbackEndpoint(endpoint?: string) {
+  return Boolean(endpoint && /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(?::\d+)?(?:\/|$)/i.test(endpoint.trim()));
+}
+
+function shellResearchReadiness(settings: DesktopSettings, language: UiLanguage): ShellResearchReadiness {
+  const isZh = language === "zh";
+  const activeProviderId = settings.llmProviderCenter?.activeProviderId?.trim() || "";
+  const activeProvider = activeProviderId ? settings.llmProviderCenter?.providers?.[activeProviderId] : null;
+  const providerName = activeProviderId
+    ? prettyProviderName(activeProviderId, shellLlmProviderNames)
+    : isZh ? "未选择提供方" : "No provider selected";
+  const providerEnabled = Boolean(activeProvider?.enabled);
+  const model = activeProvider?.customModel?.trim() || activeProvider?.selectedModel || "default";
+  const localProvider = shellLocalLlmProviderIds.has(activeProviderId);
+  const apiEndpoint = activeProvider?.apiBaseUrl?.trim() || "";
+  const apiReady = Boolean(apiEndpoint && (activeProvider?.apiKeyConfigured || isLoopbackEndpoint(apiEndpoint)));
+  const localReady = Boolean(providerEnabled && (activeProvider?.cliAvailable ?? true));
+  const llmReady = Boolean(activeProviderId && providerEnabled && (localProvider ? localReady : apiReady));
+  let llmDetail = "";
+  if (!activeProviderId || !activeProvider) {
+    llmDetail = isZh ? "去 Settings / 大语言模型启用一个 provider" : "Enable a provider in Settings / LLM Models";
+  } else if (!providerEnabled) {
+    llmDetail = isZh ? "当前 provider 尚未启用或检测未通过" : "The selected provider is not enabled or not ready";
+  } else if (localProvider && !localReady) {
+    llmDetail = isZh ? "本地 CLI 未检测到；可在设置中重新检查" : "Local CLI was not detected; recheck it in Settings";
+  } else if (!localProvider && !apiReady) {
+    llmDetail = activeProvider.apiKeyEnvVar
+      ? isZh
+        ? `${activeProvider.apiKeyEnvVar} 未被桌面进程检测到`
+        : `${activeProvider.apiKeyEnvVar} is not visible to the desktop process`
+      : isZh ? "缺少 API endpoint 或凭证" : "Missing API endpoint or credential";
+  } else {
+    llmDetail = `${model} · ${localProvider ? "local CLI" : activeProvider.apiProtocol || "api"}`;
+  }
+
+  const searchProviderId = settings.webSearchProvider?.trim() || "none";
+  const searchProvider = prettyProviderName(searchProviderId, shellSearchProviderNames) || "None";
+  const searchReady = Boolean(settings.webSearchEnabled && searchProviderId !== "none");
+  let searchDetail = "";
+  if (!settings.webSearchEnabled) {
+    searchDetail = isZh ? "外部搜索关闭；仍只使用 vault evidence" : "External search is off; vault evidence remains available";
+  } else if (searchProviderId === "none") {
+    searchDetail = isZh ? "选择 Tavily、SerpApi 或 SearXNG 后再运行 Deep Research" : "Choose Tavily, SerpApi, or SearXNG before running Deep Research";
+  } else {
+    searchDetail = settings.webSearchEndpoint?.trim()
+      || settings.webSearchApiKeyEnvVar?.trim()
+      || (isZh ? "需要 endpoint 或 API key 环境变量" : "Endpoint or API key environment variable required");
+  }
+
+  return {
+    llmReady,
+    llmLabel: providerName,
+    llmDetail,
+    searchReady,
+    searchLabel: searchReady ? searchProvider : isZh ? "搜索未配置" : "Search not configured",
+    searchDetail,
+  };
+}
+
 function WorkflowGuide({ title, body, steps }: { title: string; body: string; steps: WorkflowStep[] }) {
   return (
     <section className="panel workflow-guide">
@@ -207,6 +305,7 @@ function ShellResearchPanel({
   language,
   topic,
   targetPath,
+  readiness,
   sourceCount,
   conceptCount,
   reviewCount,
@@ -224,6 +323,7 @@ function ShellResearchPanel({
   language: UiLanguage;
   topic: string;
   targetPath: string;
+  readiness: ShellResearchReadiness;
   sourceCount: number;
   conceptCount: number;
   reviewCount: number;
@@ -275,6 +375,19 @@ function ShellResearchPanel({
         <span>{isZh ? "本地证据" : "local evidence"}</span>
         <span>{isZh ? "外部检索需配置" : "search gated"}</span>
         <span>{isZh ? "先生成提案" : "proposal first"}</span>
+      </div>
+
+      <div className="shell-research-readiness" aria-label={isZh ? "研究能力状态" : "Research capability status"}>
+        <div className={classNames("shell-research-readiness-card", readiness.llmReady ? "ready" : "warning")}>
+          <div><TerminalSquare size={14} /><span>{isZh ? "大模型" : "LLM provider"}</span></div>
+          <strong>{readiness.llmLabel}</strong>
+          <em>{readiness.llmDetail}</em>
+        </div>
+        <div className={classNames("shell-research-readiness-card", readiness.searchReady ? "ready" : "warning")}>
+          <div><Search size={14} /><span>{isZh ? "搜索源" : "Search source"}</span></div>
+          <strong>{readiness.searchLabel}</strong>
+          <em>{readiness.searchDetail}</em>
+        </div>
       </div>
 
       <textarea
@@ -1658,6 +1771,10 @@ function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const copy = shellCopy[interfaceLanguage];
+  const researchReadiness = useMemo(
+    () => shellResearchReadiness(desktopSettings, interfaceLanguage),
+    [desktopSettings, interfaceLanguage],
+  );
 
   const grouped = useMemo(() => {
     const groups: Record<string, VaultFile[]> = { note: [], source: [], draft: [], concept: [], report: [], inbox: [] };
@@ -3144,7 +3261,14 @@ function App() {
             className={classNames("nav-button", researchPanelOpen && "active")}
             title="Deep Research"
             aria-label="Deep Research"
-            onClick={() => setResearchPanelOpen((open) => !open)}
+            onClick={() => {
+              if (activePage === "settings") {
+                setActivePage("chat");
+                setResearchPanelOpen(true);
+                return;
+              }
+              setResearchPanelOpen((open) => !open);
+            }}
           >
             <Search size={19} />
             <span className="nav-label">Deep Research</span>
@@ -3961,6 +4085,7 @@ function App() {
               language={interfaceLanguage}
               topic={researchTopic}
               targetPath={queryTarget}
+              readiness={researchReadiness}
               sourceCount={status?.counts.sources ?? 0}
               conceptCount={status?.counts.concepts ?? 0}
               reviewCount={openReviewCount + (status?.counts.claimsNeedingReview ?? 0)}
