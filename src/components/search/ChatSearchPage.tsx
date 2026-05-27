@@ -99,6 +99,9 @@ type ChatSearchPageProps = {
   writebacks: WritebackProposal[];
   traceabilityWarnings: TraceabilityWarning[];
   providerCenter?: LlmProviderCenterSettings | null;
+  handoffQuestion?: string;
+  handoffTargetPath?: string;
+  handoffKey?: number;
   busy: string | null;
   onCreateProposal: (question: string, targetPath: string) => void | Promise<void>;
   onOpenPath: (path: string) => void | Promise<void>;
@@ -1094,6 +1097,9 @@ export function ChatSearchPage({
   writebacks,
   traceabilityWarnings,
   providerCenter,
+  handoffQuestion,
+  handoffTargetPath,
+  handoffKey,
   busy,
   onCreateProposal,
   onOpenPath,
@@ -1129,6 +1135,18 @@ export function ChatSearchPage({
   useEffect(() => {
     setAllowProviderCall(false);
   }, [activeProvider.providerId, activeProvider.model, activeProvider.config?.apiBaseUrl]);
+
+  useEffect(() => {
+    const nextQuestion = handoffQuestion?.trim();
+    if (!nextQuestion) return;
+    setQuestion(nextQuestion);
+    setSearchText(nextQuestion);
+    setTargetPath(handoffTargetPath?.trim() || "reviews/query-writeback/deepseek-research-insights.md");
+    setSelectedResultId(null);
+    setAnswerProviderResult(null);
+    setAnswerProviderError(null);
+    setAnswerDraft("");
+  }, [handoffKey, handoffQuestion, handoffTargetPath]);
 
   const filteredResults = useMemo(() => filterSearchResults(index, typeFilter, searchText), [index, searchText, typeFilter]);
   const selectedResult = useMemo(

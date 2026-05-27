@@ -202,6 +202,79 @@ function WorkflowGuide({ title, body, steps }: { title: string; body: string; st
   );
 }
 
+function ShellResearchPanel({
+  language,
+  topic,
+  sourceCount,
+  conceptCount,
+  reviewCount,
+  proposalCount,
+  onTopicChange,
+  onSubmit,
+  onOpenWriteback,
+  onOpenSettings,
+  onClose,
+}: {
+  language: UiLanguage;
+  topic: string;
+  sourceCount: number;
+  conceptCount: number;
+  reviewCount: number;
+  proposalCount: number;
+  onTopicChange: (value: string) => void;
+  onSubmit: (topic: string) => void;
+  onOpenWriteback: () => void;
+  onOpenSettings: () => void;
+  onClose: () => void;
+}) {
+  const isZh = language === "zh";
+  const trimmedTopic = topic.trim();
+  return (
+    <section className="shell-research-panel" aria-label={isZh ? "Deep Research" : "Deep Research"}>
+      <div className="shell-research-header">
+        <div>
+          <strong>Deep Research</strong>
+          <span>{isZh ? "Wiki 证据优先" : "Vault evidence first"}</span>
+        </div>
+        <button type="button" onClick={onClose} title={isZh ? "关闭 Deep Research" : "Close Deep Research"}>
+          <XCircle size={15} />
+        </button>
+      </div>
+
+      <div className="shell-research-metrics">
+        <span><strong>{sourceCount}</strong>{isZh ? "资料" : "sources"}</span>
+        <span><strong>{conceptCount}</strong>{isZh ? "概念" : "concepts"}</span>
+        <span><strong>{reviewCount}</strong>{isZh ? "审核" : "reviews"}</span>
+        <span><strong>{proposalCount}</strong>{isZh ? "提案" : "proposals"}</span>
+      </div>
+
+      <div className="shell-research-boundary">
+        <span>{isZh ? "本地证据" : "local evidence"}</span>
+        <span>{isZh ? "外部检索需配置" : "search gated"}</span>
+        <span>{isZh ? "先生成提案" : "proposal first"}</span>
+      </div>
+
+      <textarea
+        value={topic}
+        onChange={(event) => onTopicChange(event.target.value)}
+        placeholder={isZh ? "输入研究主题" : "Research topic"}
+      />
+
+      <div className="shell-research-actions">
+        <button type="button" onClick={() => onSubmit(topic)} disabled={!trimmedTopic}>
+          <Search size={14} />{isZh ? "开始研究" : "Start research"}
+        </button>
+        <button type="button" onClick={onOpenWriteback}>
+          <GitCompare size={14} />{isZh ? "写回" : "Writeback"}
+        </button>
+        <button type="button" onClick={onOpenSettings}>
+          <Settings size={14} />{isZh ? "设置" : "Settings"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 const copyLabelZh: Record<string, string> = {
   "entry path": "入口路径",
   "Obsidian URI": "Obsidian 链接",
@@ -1412,6 +1485,9 @@ function App() {
   const [activePage, setActivePage] = useState<ShellPage>("chat");
   const [detailDrawerOpen, setDetailDrawerOpen] = useState(true);
   const [sidebarTreeMode, setSidebarTreeMode] = useState<SidebarTreeMode>("knowledge");
+  const [researchPanelOpen, setResearchPanelOpen] = useState(false);
+  const [researchTopic, setResearchTopic] = useState(DEFAULT_DEEPSEEK_RESEARCH_STRATEGY_QUERY_EN);
+  const [chatHandoff, setChatHandoff] = useState<{ question: string; targetPath: string; key: number } | null>(null);
   const [knowledgeSidebarWidth, setKnowledgeSidebarWidth] = useState(defaultKnowledgeSidebarWidth);
   const [previewSidebarWidth, setPreviewSidebarWidth] = useState(defaultPreviewSidebarWidth);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
@@ -1485,7 +1561,7 @@ function App() {
       const shellWidth = rect.width;
 
       if (side === "knowledge") {
-        const previewBudget = detailDrawerOpen ? PREVIEW_SIDEBAR_MIN_WIDTH : 0;
+        const previewBudget = (detailDrawerOpen || researchPanelOpen) ? PREVIEW_SIDEBAR_MIN_WIDTH : 0;
         const dynamicMax = Math.max(
           KNOWLEDGE_SIDEBAR_MIN_WIDTH,
           Math.min(KNOWLEDGE_SIDEBAR_MAX_WIDTH, shellWidth - NAV_RAIL_WIDTH - previewBudget - WORKSPACE_MIN_WIDTH),
@@ -1523,6 +1599,7 @@ function App() {
   useEffect(() => {
     if (activePage === "settings") {
       setDetailDrawerOpen(false);
+      setResearchPanelOpen(false);
     }
   }, [activePage]);
 
@@ -2130,6 +2207,20 @@ function App() {
     setWritebackApplyStatus(null);
     setError(null);
     setActivePage("writeback");
+  }
+
+  function handleShellResearchTopic(topic: string) {
+    const question = topic.trim() || DEFAULT_DEEPSEEK_RESEARCH_STRATEGY_QUERY_EN;
+    const target = "reviews/query-writeback/deep-research-topic.md";
+    setResearchTopic(question);
+    setQueryText(question);
+    setQueryTarget(target);
+    setChatHandoff({ question, targetPath: target, key: Date.now() });
+    setQueryDraft(null);
+    setWritebackApplyStatus(null);
+    setError(null);
+    setActivePage("chat");
+    setResearchPanelOpen(true);
   }
 
   async function handleOpenObsidian() {
@@ -2797,7 +2888,7 @@ function App() {
         activePage !== "settings" && "nashsu-aligned-shell",
         `interface-${interfaceLanguage}`,
         activePage === "settings" && "settings-mode",
-        activePage !== "settings" && detailDrawerOpen && "inspector-open",
+        activePage !== "settings" && (detailDrawerOpen || researchPanelOpen) && "inspector-open",
         dragActive && "drag-active",
       )}
       onDragOver={(event) => {
@@ -2830,6 +2921,17 @@ function App() {
               </button>
             );
           })}
+          <button
+            type="button"
+            className={classNames("nav-button", researchPanelOpen && "active")}
+            title="Deep Research"
+            aria-label="Deep Research"
+            onClick={() => setResearchPanelOpen((open) => !open)}
+          >
+            <Search size={19} />
+            <span className="nav-label">Deep Research</span>
+            {busy === "query_writeback" && <span className="nav-badge live">1</span>}
+          </button>
         </nav>
         <div className={classNames("rail-status", tone)} title={vaultPath || "No vault selected"} />
       </aside>
@@ -3237,6 +3339,9 @@ function App() {
           writebacks={writebacks}
           traceabilityWarnings={traceabilityWarnings}
           providerCenter={desktopSettings.llmProviderCenter}
+          handoffQuestion={chatHandoff?.question}
+          handoffTargetPath={chatHandoff?.targetPath}
+          handoffKey={chatHandoff?.key}
           busy={busy}
           onOpenPath={openPath}
           resolveVaultPath={vaultFilePath}
@@ -3586,8 +3691,11 @@ function App() {
         )}
       </section>
 
-      {activePage !== "settings" && detailDrawerOpen && (
-        <aside className="preview-sidebar" aria-label={interfaceLanguage === "zh" ? "预览和检查器" : "Preview and inspector"}>
+      {activePage !== "settings" && (detailDrawerOpen || researchPanelOpen) && (
+        <aside
+          className={classNames("preview-sidebar", researchPanelOpen && "research-open", detailDrawerOpen && researchPanelOpen && "split-panels")}
+          aria-label={interfaceLanguage === "zh" ? "预览、检查器和 Deep Research" : "Preview, inspector, and Deep Research"}
+        >
           <button
             type="button"
             className="shell-resize-handle preview-resize-handle"
@@ -3598,25 +3706,53 @@ function App() {
           />
           <div className="preview-sidebar-header">
             <div>
-              <strong>{interfaceLanguage === "zh" ? "Preview" : "Preview"}</strong>
-              <span>{interfaceLanguage === "zh" ? "文件预览 / 证据上下文" : "File preview / evidence context"}</span>
+              <strong>{detailDrawerOpen ? "Preview" : "Deep Research"}</strong>
+              <span>{detailDrawerOpen
+                ? (interfaceLanguage === "zh" ? "文件预览 / 证据上下文" : "File preview / evidence context")
+                : (interfaceLanguage === "zh" ? "Wiki 证据优先 / 提案写回" : "Vault evidence / proposal writeback")}</span>
             </div>
-            <button type="button" onClick={() => setDetailDrawerOpen(false)} title={interfaceLanguage === "zh" ? "关闭预览栏" : "Close preview"}>
+            <button
+              type="button"
+              onClick={() => {
+                if (detailDrawerOpen) setDetailDrawerOpen(false);
+                else setResearchPanelOpen(false);
+              }}
+              title={detailDrawerOpen
+                ? (interfaceLanguage === "zh" ? "关闭预览栏" : "Close preview")
+                : (interfaceLanguage === "zh" ? "关闭 Deep Research" : "Close Deep Research")}
+            >
               <XCircle size={15} />
             </button>
           </div>
-          <DetailsPanel
-            language={interfaceLanguage}
-            selection={detailSelection}
-            vaultPath={vaultPath}
-            obsidianUri={entryNote?.obsidianUri}
-            resolveVaultPath={vaultFilePath}
-            onOpenPath={openPath}
-            onRevealPath={revealResolvedPath}
-            onOpenVaultPath={openVaultItem}
-            onCopy={copyText}
-            onOpenObsidian={handleOpenObsidian}
-          />
+          {detailDrawerOpen && (
+            <DetailsPanel
+              language={interfaceLanguage}
+              selection={detailSelection}
+              vaultPath={vaultPath}
+              obsidianUri={entryNote?.obsidianUri}
+              resolveVaultPath={vaultFilePath}
+              onOpenPath={openPath}
+              onRevealPath={revealResolvedPath}
+              onOpenVaultPath={openVaultItem}
+              onCopy={copyText}
+              onOpenObsidian={handleOpenObsidian}
+            />
+          )}
+          {researchPanelOpen && (
+            <ShellResearchPanel
+              language={interfaceLanguage}
+              topic={researchTopic}
+              sourceCount={status?.counts.sources ?? 0}
+              conceptCount={status?.counts.concepts ?? 0}
+              reviewCount={openReviewCount + (status?.counts.claimsNeedingReview ?? 0)}
+              proposalCount={writebacks.length}
+              onTopicChange={setResearchTopic}
+              onSubmit={handleShellResearchTopic}
+              onOpenWriteback={() => setActivePage("writeback")}
+              onOpenSettings={() => setActivePage("settings")}
+              onClose={() => setResearchPanelOpen(false)}
+            />
+          )}
         </aside>
       )}
     </main>
