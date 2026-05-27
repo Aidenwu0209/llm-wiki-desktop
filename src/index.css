@@ -590,6 +590,70 @@ textarea {
   white-space: nowrap;
 }
 
+.shell-research-stage-rail {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+  min-width: 0;
+}
+
+.shell-research-stage {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border: 1px solid #e0e6e2;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 6px;
+}
+
+.shell-research-stage span {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #edf1ed;
+  color: #64706a;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.shell-research-stage strong,
+.shell-research-stage em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shell-research-stage strong {
+  color: #17201d;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.shell-research-stage em {
+  color: #64706a;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.shell-research-stage.ready span,
+.shell-research-stage.done span {
+  background: #dceade;
+  color: #315f46;
+}
+
+.shell-research-stage.running span {
+  background: #dbeafe;
+  color: #245083;
+}
+
+.shell-research-stage.warning span {
+  background: #f7e8cf;
+  color: #8a5517;
+}
+
 .shell-research-panel textarea {
   min-height: 112px;
   resize: vertical;
