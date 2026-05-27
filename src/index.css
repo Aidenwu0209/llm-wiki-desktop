@@ -552,6 +552,79 @@ textarea {
   white-space: nowrap;
 }
 
+.shell-research-tasks {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.shell-research-tasks-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #64706a;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.shell-research-tasks-head strong {
+  color: #17201d;
+  font-size: 12px;
+}
+
+.shell-research-task-card {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid #e0e6e2;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 8px;
+  text-align: left;
+}
+
+.shell-research-task-card.active {
+  background: #fbfcfa;
+}
+
+.shell-research-task-card:hover:not(:disabled) {
+  border-color: #9eb0a5;
+  background: #f4f8f2;
+}
+
+.shell-research-task-card strong,
+.shell-research-task-card em {
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+}
+
+.shell-research-task-card strong {
+  color: #17201d;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.shell-research-task-card em {
+  color: #64706a;
+  font-size: 11px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.shell-research-empty {
+  margin: 0;
+  border: 1px dashed #d6ded9;
+  border-radius: 6px;
+  padding: 8px;
+  color: #64706a;
+  font-size: 11px;
+}
+
 .shell-research-actions {
   display: grid;
   grid-template-columns: 1fr;

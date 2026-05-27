@@ -211,9 +211,11 @@ function ShellResearchPanel({
   reviewCount,
   proposalCount,
   proposalBusy,
+  proposals,
   onTopicChange,
   onSubmit,
   onCreateProposal,
+  onSelectProposal,
   onOpenWriteback,
   onOpenSettings,
   onClose,
@@ -226,15 +228,29 @@ function ShellResearchPanel({
   reviewCount: number;
   proposalCount: number;
   proposalBusy: boolean;
+  proposals: WritebackProposal[];
   onTopicChange: (value: string) => void;
   onSubmit: (topic: string) => void;
   onCreateProposal: (topic: string) => void | Promise<void>;
+  onSelectProposal: (proposal: WritebackProposal) => void;
   onOpenWriteback: () => void;
   onOpenSettings: () => void;
   onClose: () => void;
 }) {
   const isZh = language === "zh";
   const trimmedTopic = topic.trim();
+  const visibleProposals = proposals.slice(0, 4);
+  const statusLabel = (status: WritebackProposal["status"]) => {
+    if (!isZh) return status === "review_only" ? "review artifact" : status;
+    const labels: Record<string, string> = {
+      proposed: "待审核",
+      approved: "已批准",
+      rejected: "已拒绝",
+      applied: "已应用",
+      review_only: "仅审核",
+    };
+    return labels[status] ?? status;
+  };
   return (
     <section className="shell-research-panel" aria-label={isZh ? "Deep Research" : "Deep Research"}>
       <div className="shell-research-header">
@@ -269,6 +285,34 @@ function ShellResearchPanel({
       <div className="shell-research-target">
         <span>{isZh ? "提案目标" : "proposal target"}</span>
         <code>{targetPath || "reviews/query-writeback/deep-research-topic.md"}</code>
+      </div>
+
+      <div className="shell-research-tasks">
+        <div className="shell-research-tasks-head">
+          <strong>{isZh ? "研究任务" : "Research tasks"}</strong>
+          <span>{visibleProposals.length}/{proposalCount}</span>
+        </div>
+        <div className="shell-research-task-card active">
+          <span className="status-chip proposed">{proposalBusy ? (isZh ? "生成中" : "creating") : (isZh ? "待生成" : "ready")}</span>
+          <strong>{trimmedTopic || (isZh ? "输入研究主题" : "Enter a research topic")}</strong>
+          <em>{targetPath || "reviews/query-writeback/deep-research-topic.md"}</em>
+        </div>
+        {visibleProposals.length === 0 ? (
+          <p className="shell-research-empty">{isZh ? "生成提案后，最近的研究结果会固定在这里。" : "Generated proposals appear here as saved research results."}</p>
+        ) : (
+          visibleProposals.map((proposal) => (
+            <button
+              key={proposal.proposalId}
+              type="button"
+              className="shell-research-task-card"
+              onClick={() => onSelectProposal(proposal)}
+            >
+              <span className={classNames("status-chip", proposal.status)}>{statusLabel(proposal.status)}</span>
+              <strong>{proposal.title}</strong>
+              <em>{proposal.targetPath}</em>
+            </button>
+          ))
+        )}
       </div>
 
       <div className="shell-research-actions">
@@ -3921,9 +3965,14 @@ function App() {
               reviewCount={openReviewCount + (status?.counts.claimsNeedingReview ?? 0)}
               proposalCount={writebacks.length}
               proposalBusy={busy === "query_writeback"}
+              proposals={writebacks}
               onTopicChange={setResearchTopic}
               onSubmit={handleShellResearchTopic}
               onCreateProposal={handleCreateResearchProposal}
+              onSelectProposal={(proposal) => {
+                setDetailDrawerOpen(true);
+                setDetailSelection({ kind: "proposal", proposal });
+              }}
               onOpenWriteback={() => setActivePage("writeback")}
               onOpenSettings={() => setActivePage("settings")}
               onClose={() => setResearchPanelOpen(false)}
