@@ -6367,6 +6367,11 @@ button.primary:hover:not(:disabled),
   align-items: stretch;
 }
 
+.nashsu-aligned-shell .chat-search-top-grid,
+.nashsu-aligned-shell .chat-search-columns {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .top-question-input {
   position: relative;
   display: block;

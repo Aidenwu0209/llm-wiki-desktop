@@ -110,7 +110,7 @@ type ChatSearchPageProps = {
 
 const chatCopy = {
   zh: {
-    title: "证据搜索 / 模型回答",
+    title: "Wiki 问答",
     loaded: (shown: number, total: number) => `${shown}/${total} 个已加载对象`,
     inputPlaceholder: "提问或搜索 DeepSeek 研究证据",
     target: "写回目标",
@@ -183,7 +183,7 @@ const chatCopy = {
     actions: { open: "打开", reveal: "显示", path: "路径", evidence: "证据", copy: "复制", obsidian: "Obsidian" },
   },
   en: {
-    title: "Evidence Search / Answer Draft",
+    title: "Wiki Chat",
     loaded: (shown: number, total: number) => `${shown}/${total} loaded objects`,
     inputPlaceholder: "Ask or search DeepSeek research evidence",
     target: "Writeback target",
