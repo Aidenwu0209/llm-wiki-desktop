@@ -19,6 +19,11 @@ use zip::ZipArchive;
 const MAX_VAULT_TEXT_PREVIEW_BYTES: u64 = 64 * 1024;
 const MAX_VAULT_IMAGE_PREVIEW_BYTES: u64 = 5 * 1024 * 1024;
 const GENERATED_PURPOSE_MARKER: &str = "<!-- llm-wiki-desktop:generated-purpose -->";
+const ERNIE_PROVIDER_ID: &str = "ernie-ai-studio";
+const ERNIE_BASE_URL: &str = "https://aistudio.baidu.com/llm/lmapi/v3";
+const ERNIE_API_KEY_ENV: &str = "AI_STUDIO_API_KEY";
+const ERNIE_DEFAULT_MODEL: &str = "ernie-5.1";
+const ERNIE_FALLBACK_MODELS: [&str; 2] = ["ernie-4.0-turbo-128k", "ernie-3.5-8k"];
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -615,6 +620,30 @@ struct LlmApiKeyCheckResult {
     env_var: String,
     available: bool,
     message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ErnieProviderCheckResult {
+    provider: String,
+    status: String,
+    base_url: String,
+    api_key_env: String,
+    default_model: String,
+    fallback_models: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ErnieChatTestResult {
+    provider: String,
+    model: String,
+    status: String,
+    latency_ms: u128,
+    usage: Option<serde_json::Value>,
+    error: Option<String>,
+    model_list_checked: bool,
+    available_models: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -9381,6 +9410,29 @@ fn check_llm_api_key(
     })
 }
 
+fn ernie_fallback_models() -> Vec<String> {
+    ERNIE_FALLBACK_MODELS
+        .iter()
+        .map(|model| model.to_string())
+        .collect()
+}
+
+#[tauri::command]
+fn check_ernie_provider() -> Result<ErnieProviderCheckResult, String> {
+    let configured = env::var(ERNIE_API_KEY_ENV)
+        .ok()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    Ok(ErnieProviderCheckResult {
+        provider: ERNIE_PROVIDER_ID.to_string(),
+        status: if configured { "configured" } else { "missing_key" }.to_string(),
+        base_url: ERNIE_BASE_URL.to_string(),
+        api_key_env: ERNIE_API_KEY_ENV.to_string(),
+        default_model: ERNIE_DEFAULT_MODEL.to_string(),
+        fallback_models: ernie_fallback_models(),
+    })
+}
+
 fn sanitize_optional_env_var_name(value: &str) -> Result<Option<String>, String> {
     let name = value.trim();
     if name.is_empty() {
@@ -9510,6 +9562,14 @@ fn openai_chat_completions_url(base: &str) -> String {
     }
 }
 
+fn openai_models_url(base: &str) -> String {
+    if base.to_ascii_lowercase().ends_with("/models") {
+        base.to_string()
+    } else {
+        format!("{base}/models")
+    }
+}
+
 fn anthropic_messages_url(base: &str) -> String {
     let lower = base.to_ascii_lowercase();
     if lower.ends_with("/v1/messages") || lower.ends_with("/messages") {
@@ -9550,6 +9610,19 @@ fn read_llm_api_key(env_var: Option<&str>) -> Result<Option<String>, String> {
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
     Ok(value)
+}
+
+fn redact_secret(value: &str, secret: Option<&str>) -> String {
+    let mut redacted = value.replace('\n', " ");
+    if let Some(secret) = secret.filter(|secret| !secret.is_empty()) {
+        redacted = redacted.replace(secret, "[redacted]");
+    }
+    for marker in ["Authorization", "authorization", "Bearer ", "bearer "] {
+        if redacted.contains(marker) {
+            redacted = redacted.replace(marker, "[redacted]");
+        }
+    }
+    redacted
 }
 
 fn short_error_body(value: &str) -> String {
@@ -9669,6 +9742,231 @@ fn parse_openai_answer(value: &serde_json::Value) -> Result<String, String> {
         }
     }
     Err("provider returned an empty assistant message".to_string())
+}
+
+fn parse_openai_models(value: &serde_json::Value) -> Vec<String> {
+    value
+        .get("data")
+        .and_then(|data| data.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("id").and_then(|id| id.as_str()))
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn select_ernie_test_models(selected_model: &str, available_models: &[String]) -> Vec<String> {
+    let selected = selected_model.trim();
+    let primary = if selected.is_empty() {
+        ERNIE_DEFAULT_MODEL
+    } else {
+        selected
+    };
+    let mut models = vec![primary.to_string()];
+    models.extend(ERNIE_FALLBACK_MODELS.iter().map(|model| model.to_string()));
+    let mut seen = HashSet::new();
+    let mut ordered = models
+        .into_iter()
+        .filter(|model| seen.insert(model.clone()))
+        .collect::<Vec<_>>();
+    if !available_models.is_empty() {
+        ordered.retain(|model| available_models.iter().any(|available| available == model));
+    }
+    ordered
+}
+
+fn ernie_minimal_chat_body(model: &str) -> serde_json::Value {
+    serde_json::json!({
+        "model": model,
+        "messages": [
+            { "role": "system", "content": "You are a concise assistant." },
+            { "role": "user", "content": "Reply with \"ok\"." }
+        ],
+        "stream": false,
+        "max_tokens": 8
+    })
+}
+
+fn classify_provider_http_error(status: reqwest::StatusCode, body: &str) -> String {
+    match status.as_u16() {
+        401 | 403 => "auth_error".to_string(),
+        404 => "model_not_found".to_string(),
+        429 => "rate_limited".to_string(),
+        _ => {
+            let lower = body.to_ascii_lowercase();
+            if lower.contains("model") && lower.contains("not") && lower.contains("found") {
+                "model_not_found".to_string()
+            } else {
+                "unknown".to_string()
+            }
+        }
+    }
+}
+
+async fn fetch_ernie_models(
+    client: &reqwest::Client,
+    api_key: &str,
+    base_url: &str,
+) -> Result<Vec<String>, (String, String)> {
+    let response = client
+        .get(openai_models_url(base_url))
+        .header("Authorization", format!("Bearer {api_key}"))
+        .send()
+        .await
+        .map_err(|e| ("network_error".to_string(), format!("model list request failed: {e}")))?;
+    let status = response.status();
+    let text = response
+        .text()
+        .await
+        .map_err(|e| ("network_error".to_string(), format!("failed to read model list response: {e}")))?;
+    if !status.is_success() {
+        let safe = short_error_body(&redact_secret(&text, Some(api_key)));
+        return Err((classify_provider_http_error(status, &safe), safe));
+    }
+    let value: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| ("unknown".to_string(), format!("model list returned non-JSON response: {e}")))?;
+    Ok(parse_openai_models(&value))
+}
+
+async fn run_ernie_chat_completion(
+    client: &reqwest::Client,
+    api_key: &str,
+    base_url: &str,
+    model: &str,
+) -> Result<Option<serde_json::Value>, (String, String)> {
+    let body = ernie_minimal_chat_body(model);
+    let response = client
+        .post(openai_chat_completions_url(base_url))
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {api_key}"))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| ("network_error".to_string(), format!("chat completion request failed: {e}")))?;
+    let status = response.status();
+    let text = response
+        .text()
+        .await
+        .map_err(|e| ("network_error".to_string(), format!("failed to read chat completion response: {e}")))?;
+    if !status.is_success() {
+        let safe = short_error_body(&redact_secret(&text, Some(api_key)));
+        return Err((classify_provider_http_error(status, &safe), safe));
+    }
+    let value: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| ("unknown".to_string(), format!("chat completion returned non-JSON response: {e}")))?;
+    parse_openai_answer(&value).map_err(|e| ("unknown".to_string(), e))?;
+    Ok(value.get("usage").cloned())
+}
+
+#[tauri::command]
+async fn test_ernie_chat(model: String) -> Result<ErnieChatTestResult, String> {
+    let started = Instant::now();
+    let api_key = match read_llm_api_key(Some(ERNIE_API_KEY_ENV))? {
+        Some(value) => value,
+        None => {
+            return Ok(ErnieChatTestResult {
+                provider: ERNIE_PROVIDER_ID.to_string(),
+                model: model.trim().to_string(),
+                status: "missing_key".to_string(),
+                latency_ms: started.elapsed().as_millis(),
+                usage: None,
+                error: Some(format!("{ERNIE_API_KEY_ENV} is not visible to this desktop process")),
+                model_list_checked: false,
+                available_models: Vec::new(),
+            })
+        }
+    };
+    let base_url = validate_llm_base_url(ERNIE_BASE_URL)?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .build()
+        .map_err(|e| format!("failed to create HTTP client: {e}"))?;
+
+    let mut model_list_checked = false;
+    let available_models = match fetch_ernie_models(&client, &api_key, &base_url).await {
+        Ok(models) => {
+            model_list_checked = true;
+            models
+        }
+        Err((status, message)) => {
+            return Ok(ErnieChatTestResult {
+                provider: ERNIE_PROVIDER_ID.to_string(),
+                model: model.trim().to_string(),
+                status,
+                latency_ms: started.elapsed().as_millis(),
+                usage: None,
+                error: Some(message),
+                model_list_checked,
+                available_models: Vec::new(),
+            });
+        }
+    };
+    let candidate_models = select_ernie_test_models(&model, &available_models);
+    if candidate_models.is_empty() {
+        return Ok(ErnieChatTestResult {
+            provider: ERNIE_PROVIDER_ID.to_string(),
+            model: model.trim().to_string(),
+            status: "model_not_found".to_string(),
+            latency_ms: started.elapsed().as_millis(),
+            usage: None,
+            error: Some("selected model and fallback models were not present in the provider model list".to_string()),
+            model_list_checked,
+            available_models,
+        });
+    }
+
+    let mut last_error: Option<(String, String, String)> = None;
+    for candidate in candidate_models {
+        match run_ernie_chat_completion(&client, &api_key, &base_url, &candidate).await {
+            Ok(usage) => {
+                return Ok(ErnieChatTestResult {
+                    provider: ERNIE_PROVIDER_ID.to_string(),
+                    model: candidate,
+                    status: "ready".to_string(),
+                    latency_ms: started.elapsed().as_millis(),
+                    usage,
+                    error: None,
+                    model_list_checked,
+                    available_models,
+                });
+            }
+            Err((status, message)) => {
+                if status != "model_not_found" {
+                    return Ok(ErnieChatTestResult {
+                        provider: ERNIE_PROVIDER_ID.to_string(),
+                        model: candidate,
+                        status,
+                        latency_ms: started.elapsed().as_millis(),
+                        usage: None,
+                        error: Some(message),
+                        model_list_checked,
+                        available_models,
+                    });
+                }
+                last_error = Some((candidate, status, message));
+            }
+        }
+    }
+    let (model, status, error) = last_error.unwrap_or_else(|| {
+        (
+            model.trim().to_string(),
+            "model_not_found".to_string(),
+            "selected model and fallback models were not available".to_string(),
+        )
+    });
+    Ok(ErnieChatTestResult {
+        provider: ERNIE_PROVIDER_ID.to_string(),
+        model,
+        status,
+        latency_ms: started.elapsed().as_millis(),
+        usage: None,
+        error: Some(error),
+        model_list_checked,
+        available_models,
+    })
 }
 
 fn parse_anthropic_answer(value: &serde_json::Value) -> Result<String, String> {
@@ -12718,8 +13016,11 @@ fn start_ingest_pipeline_job(
 mod tests {
     use super::*;
     use std::net::TcpListener;
+    use std::sync::Mutex as StdMutex;
     use std::time::{SystemTime, UNIX_EPOCH};
     use zip::{write::SimpleFileOptions, ZipWriter};
+
+    static ENV_LOCK: StdMutex<()> = StdMutex::new(());
 
     fn test_vault(name: &str) -> PathBuf {
         let stamp = SystemTime::now()
@@ -12777,6 +13078,51 @@ mod tests {
             }
         }
         String::from_utf8_lossy(&response).to_string()
+    }
+
+    fn read_http_request_body(stream: &mut TcpStream) -> String {
+        stream
+            .set_read_timeout(Some(Duration::from_millis(500)))
+            .expect("set read timeout");
+        let mut buffer = Vec::new();
+        let mut chunk = [0_u8; 1024];
+        loop {
+            match stream.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(read) => {
+                    buffer.extend_from_slice(&chunk[..read]);
+                    let text = String::from_utf8_lossy(&buffer);
+                    if let Some(header_end) = text.find("\r\n\r\n") {
+                        let headers = &text[..header_end];
+                        let content_length = headers
+                            .lines()
+                            .find_map(|line| {
+                                line.to_ascii_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .and_then(|value| value.trim().parse::<usize>().ok())
+                            })
+                            .unwrap_or(0);
+                        let body_start = header_end + 4;
+                        if buffer.len() >= body_start + content_length {
+                            return String::from_utf8_lossy(
+                                &buffer[body_start..body_start + content_length],
+                            )
+                            .to_string();
+                        }
+                    }
+                }
+                Err(err)
+                    if matches!(
+                        err.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    break
+                }
+                Err(err) => panic!("read request body: {err}"),
+            }
+        }
+        String::new()
     }
 
     #[test]
@@ -12996,6 +13342,10 @@ mod tests {
             "https://api.deepseek.com/v1/chat/completions"
         );
         assert_eq!(
+            openai_models_url("https://aistudio.baidu.com/llm/lmapi/v3"),
+            "https://aistudio.baidu.com/llm/lmapi/v3/models"
+        );
+        assert_eq!(
             openai_chat_completions_url("https://api.openai.com/v1/chat/completions"),
             "https://api.openai.com/v1/chat/completions"
         );
@@ -13024,6 +13374,132 @@ mod tests {
         assert!(validate_llm_base_url("http://127.0.0.1.evil.com/v1").is_err());
         assert!(validate_llm_base_url("http://[::1].evil.com/v1").is_err());
         assert!(validate_llm_base_url("http://localhost@api.example.com/v1").is_err());
+    }
+
+    #[test]
+    fn ernie_provider_reports_missing_key_without_live_call() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let old_key = env::var(ERNIE_API_KEY_ENV).ok();
+        env::remove_var(ERNIE_API_KEY_ENV);
+        let check = check_ernie_provider().expect("check ernie provider");
+        assert_eq!(check.provider, ERNIE_PROVIDER_ID);
+        assert_eq!(check.status, "missing_key");
+        assert_eq!(check.api_key_env, ERNIE_API_KEY_ENV);
+        let result = tauri::async_runtime::block_on(test_ernie_chat(ERNIE_DEFAULT_MODEL.to_string()))
+            .expect("test ernie chat missing key");
+        assert_eq!(result.status, "missing_key");
+        assert!(!result.model_list_checked);
+        if let Some(value) = old_key {
+            env::set_var(ERNIE_API_KEY_ENV, value);
+        }
+    }
+
+    #[test]
+    fn ernie_redacts_key_and_authorization_from_errors() {
+        let secret = ["aistudio", "secret", "value"].join("-");
+        let body = format!("Authorization: Bearer {secret} failed");
+        let redacted = redact_secret(&body, Some(&secret));
+        assert!(!redacted.contains(&secret));
+        assert!(!redacted.contains("Authorization"));
+        assert!(!redacted.contains("Bearer"));
+    }
+
+    #[test]
+    fn ernie_default_and_fallback_models_are_present() {
+        assert_eq!(ERNIE_DEFAULT_MODEL, "ernie-5.1");
+        let fallbacks = ernie_fallback_models();
+        assert!(fallbacks.contains(&"ernie-4.0-turbo-128k".to_string()));
+        assert!(fallbacks.contains(&"ernie-3.5-8k".to_string()));
+        let selected = select_ernie_test_models("unknown-model", &fallbacks);
+        assert_eq!(
+            selected,
+            vec![
+                "ernie-4.0-turbo-128k".to_string(),
+                "ernie-3.5-8k".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn ernie_test_body_does_not_send_raw_documents() {
+        let body = ernie_minimal_chat_body(ERNIE_DEFAULT_MODEL);
+        let rendered = body.to_string();
+        assert!(rendered.contains("Reply with"));
+        assert!(!rendered.contains("raw/"));
+        assert!(!rendered.contains("sources/"));
+        assert!(!rendered.contains("concepts/"));
+        assert!(!rendered.contains("document"));
+    }
+
+    #[test]
+    fn ernie_live_test_uses_model_list_fallback_and_minimal_chat_body() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let old_key = env::var(ERNIE_API_KEY_ENV).ok();
+        let test_key = ["test", "ernie", "key"].join("-");
+        env::set_var(ERNIE_API_KEY_ENV, &test_key);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind ernie mock server");
+        let addr = listener.local_addr().expect("local addr");
+        let server = thread::spawn(move || {
+            let (mut models_stream, _) = listener.accept().expect("accept models request");
+            let _ = read_http_request_body(&mut models_stream);
+            let models_body = r#"{"data":[{"id":"ernie-4.0-turbo-128k"}]}"#;
+            let models_response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                models_body.len(),
+                models_body
+            );
+            models_stream
+                .write_all(models_response.as_bytes())
+                .expect("write models response");
+
+            let (mut chat_stream, _) = listener.accept().expect("accept chat request");
+            let chat_body = read_http_request_body(&mut chat_stream);
+            let response_body = r#"{"choices":[{"message":{"content":"ok"}}],"usage":{"total_tokens":3}}"#;
+            let chat_response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response_body.len(),
+                response_body
+            );
+            chat_stream
+                .write_all(chat_response.as_bytes())
+                .expect("write chat response");
+            chat_body
+        });
+
+        let result = tauri::async_runtime::block_on(async {
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .build()
+                .expect("client");
+            let base = format!("http://{addr}/v1");
+            let models = fetch_ernie_models(&client, &test_key, &base)
+                .await
+                .expect("fetch models");
+            let selected = select_ernie_test_models("missing-model", &models);
+            let usage = run_ernie_chat_completion(
+                &client,
+                &test_key,
+                &base,
+                selected.first().expect("fallback model"),
+            )
+            .await
+            .expect("chat completion");
+            (models, selected, usage)
+        });
+        let chat_body = server.join().expect("server join");
+        assert_eq!(result.0, vec!["ernie-4.0-turbo-128k".to_string()]);
+        assert_eq!(result.1, vec!["ernie-4.0-turbo-128k".to_string()]);
+        assert!(result.2.is_some());
+        assert!(chat_body.contains("Reply with \\\"ok\\\"."));
+        assert!(!chat_body.contains("raw/"));
+        assert!(!chat_body.contains("sources/"));
+        assert!(!chat_body.contains("concepts/"));
+        assert!(!chat_body.contains(&test_key));
+        if let Some(value) = old_key {
+            env::set_var(ERNIE_API_KEY_ENV, value);
+        } else {
+            env::remove_var(ERNIE_API_KEY_ENV);
+        }
     }
 
     #[test]
@@ -17508,6 +17984,8 @@ pub fn run() {
             save_desktop_settings,
             check_local_llm_cli,
             check_llm_api_key,
+            check_ernie_provider,
+            test_ernie_chat,
             generate_llm_answer,
             plan_ingest,
             run_ingest_lint,

@@ -17,6 +17,8 @@
 
 Agent / API 集成必须先通过只读 readiness gate；当前契约见 [`docs/agent-skill.md`](docs/agent-skill.md)。通过 gate 后可在 Settings -> Agent API 启动 `127.0.0.1` token-protected read API；在 gate 未通过前，不应启动 localhost API，也不应向 Codex/Claude Code 暴露写入、删除、apply 或后台 ingest 能力。
 
+Provider adapter contract 见 [`docs/provider-adapter-contract.md`](docs/provider-adapter-contract.md)。Settings -> LLM Models 的第一个 provider 是 `文心一言 / ERNIE`；配置 `AI_STUDIO_API_KEY` 后可运行真实 Test connection，详见 [`docs/ernie-provider-setup.md`](docs/ernie-provider-setup.md)。没有 key 时显示 Not configured，不影响本地 vault、导入、检索或 proposal-first writeback 流程。
+
 ## 软件使用教程
 
 ### 1. 启动桌面端

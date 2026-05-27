@@ -27,6 +27,7 @@ import type {
 } from "../../types";
 import type { UiLanguage } from "../../i18n";
 import { isLoopbackHttpEndpoint } from "../../lib/local-endpoints";
+import { localProviderIds, providerNames } from "../../lib/providers/catalog";
 import { generateLlmAnswer } from "../../tauri";
 
 const DEFAULT_DEEPSEEK_QUESTIONS = [
@@ -259,36 +260,6 @@ const chatCopy = {
     actions: { open: "open", reveal: "reveal", path: "path", evidence: "evidence", copy: "copy", obsidian: "Obsidian" },
   },
 } as const;
-
-const providerNames: Record<string, string> = {
-  anthropic: "Anthropic Claude",
-  "claude-code": "Claude Code CLI",
-  "codex-cli": "Codex CLI",
-  openai: "OpenAI GPT",
-  google: "Google Gemini",
-  deepseek: "DeepSeek",
-  groq: "Groq",
-  xai: "xAI Grok",
-  nvidia: "NVIDIA NIM",
-  kimi: "Kimi",
-  "kimi-cn": "Kimi China",
-  "qwen-dashscope": "通义千问 / DashScope",
-  "bailian-coding": "阿里百炼 Coding Plan",
-  zhipu: "智谱 GLM",
-  "minimax-global": "MiniMax Global",
-  "minimax-cn": "MiniMax China",
-  "volcengine-ark": "火山引擎 Ark",
-  "baidu-qianfan": "百度千帆",
-  "tencent-hunyuan": "腾讯混元",
-  siliconflow: "硅基流动",
-  baichuan: "百川智能",
-  yi: "零一万物 Yi",
-  "iflytek-spark": "讯飞星火",
-  "ollama-local": "Ollama Local",
-  "custom-openai": "Custom OpenAI-Compatible",
-};
-
-const localProviderIds = new Set(["codex-cli", "claude-code"]);
 
 function classNames(...items: Array<string | false | null | undefined>) {
   return items.filter(Boolean).join(" ");

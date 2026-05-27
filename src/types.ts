@@ -313,6 +313,11 @@ export type LlmProviderConfig = {
   apiProtocol?: "openai-compatible" | "anthropic-compatible" | "native" | string;
   apiKeyConfigured?: boolean;
   apiKeyCheckedAt?: string | null;
+  providerStatus?: ProviderConnectionStatus;
+  lastCheckedAt?: string | null;
+  lastError?: string | null;
+  lastLatencyMs?: number | null;
+  lastTestedModel?: string | null;
   cliAvailable?: boolean;
   cliVersion?: string | null;
   cliPath?: string | null;
@@ -322,6 +327,57 @@ export type LlmProviderConfig = {
 export type LlmProviderCenterSettings = {
   activeProviderId?: string | null;
   providers: Record<string, LlmProviderConfig>;
+};
+
+export type ProviderAdapterId =
+  | "ernie-ai-studio"
+  | "openai-compatible"
+  | "deepseek"
+  | "local-codex"
+  | "local-claude"
+  | "custom";
+
+export type ProviderConnectionStatus = "configured" | "missing_key" | "connection_failed" | "ready";
+
+export type ProviderAdapter = {
+  id: ProviderAdapterId;
+  displayName: string;
+  providerType: "hosted" | "local" | "custom";
+  baseUrl: string;
+  apiKeyEnv: string;
+  defaultModel: string;
+  fallbackModels: string[];
+  supportsStructuredOutput: boolean;
+  supportsStreaming?: boolean;
+  status: ProviderConnectionStatus;
+};
+
+export type ProviderTestFailureReason =
+  | "missing_key"
+  | "network_error"
+  | "auth_error"
+  | "model_not_found"
+  | "rate_limited"
+  | "unknown";
+
+export type ErnieProviderCheckResult = {
+  provider: "ernie-ai-studio";
+  status: "missing_key" | "configured";
+  baseUrl: string;
+  apiKeyEnv: "AI_STUDIO_API_KEY";
+  defaultModel: "ernie-5.1";
+  fallbackModels: string[];
+};
+
+export type ErnieChatTestResult = {
+  provider: "ernie-ai-studio";
+  model: string;
+  status: "ready" | ProviderTestFailureReason;
+  latencyMs: number;
+  usage?: Record<string, unknown> | null;
+  error?: string | null;
+  modelListChecked: boolean;
+  availableModels: string[];
 };
 
 export type LlmAnswerEvidenceRef = {

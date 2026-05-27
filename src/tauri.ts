@@ -7,6 +7,8 @@ import type {
   DesktopAppState,
   DesktopSettings,
   EvidencePathItem,
+  ErnieChatTestResult,
+  ErnieProviderCheckResult,
   ImportBatchResult,
   ImportResult,
   IngestPipelineResult,
@@ -105,6 +107,14 @@ export function checkLocalLlmCli(command: "codex" | "claude"): Promise<LlmCliChe
 
 export function checkLlmApiKey(providerId: string, apiKeyEnvVar: string): Promise<LlmApiKeyCheckResult> {
   return invoke("check_llm_api_key", { providerId, apiKeyEnvVar });
+}
+
+export function checkErnieProvider(): Promise<ErnieProviderCheckResult> {
+  return invoke("check_ernie_provider");
+}
+
+export function testErnieChat(model: string): Promise<ErnieChatTestResult> {
+  return invoke("test_ernie_chat", { model });
 }
 
 export function generateLlmAnswer(vaultPath: string, request: LlmAnswerRequest): Promise<LlmAnswerResult> {
