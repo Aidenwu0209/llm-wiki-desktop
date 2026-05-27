@@ -432,6 +432,113 @@ textarea {
   box-shadow: none;
 }
 
+.preview-sidebar.split-panels .details-panel {
+  flex: 1 1 0;
+}
+
+.shell-research-panel {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow: auto;
+  border-top: 1px solid #e1e7e2;
+  padding-top: 10px;
+}
+
+.preview-sidebar.research-open:not(.split-panels) .shell-research-panel {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.shell-research-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.shell-research-header strong,
+.shell-research-header span {
+  display: block;
+}
+
+.shell-research-header strong {
+  color: #17201d;
+  font-size: 13px;
+}
+
+.shell-research-header span {
+  margin-top: 2px;
+  color: #64706a;
+  font-size: 11px;
+}
+
+.shell-research-header button {
+  width: 30px;
+  min-height: 30px;
+  padding: 0;
+}
+
+.shell-research-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.shell-research-metrics span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  border: 1px solid #e0e6e2;
+  border-radius: 6px;
+  background: #fbfcfa;
+  padding: 6px;
+  color: #64706a;
+  font-size: 10px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.shell-research-metrics strong {
+  color: #17201d;
+  font-size: 15px;
+}
+
+.shell-research-boundary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.shell-research-boundary span {
+  border: 1px solid #d7e4db;
+  border-radius: 999px;
+  background: #f1f7f1;
+  padding: 4px 8px;
+  color: #315841;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.shell-research-panel textarea {
+  min-height: 112px;
+  resize: vertical;
+}
+
+.shell-research-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.shell-research-actions button {
+  justify-content: flex-start;
+  min-height: 34px;
+  padding: 0 10px;
+}
+
 .shell-resize-handle {
   position: absolute;
   top: 0;
