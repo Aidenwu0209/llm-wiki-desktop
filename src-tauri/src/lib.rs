@@ -2915,6 +2915,84 @@ fn registry_identity_issue_details(vault: &Path) -> Vec<String> {
     details
 }
 
+fn registry_path_issue_details(vault: &Path) -> Vec<String> {
+    let mut seen_rows = HashSet::new();
+    let mut missing_raw_sources = HashSet::new();
+    let mut missing_source_pages = HashSet::new();
+
+    for state_file in ["source-registry.jsonl", "desktop-source-registry.jsonl"] {
+        for row in read_jsonl_values(&vault.join("_state").join(state_file)) {
+            let source_uuid = registry_row_source_uuid(&row);
+            let source_id = registry_row_source_id(&row);
+            let source_path = preferred_registry_row_path(&row).unwrap_or_default();
+            let status = json_string(&row, "status").unwrap_or_default();
+            if source_uuid.is_none() && source_id.is_none() && source_path.is_empty() {
+                continue;
+            }
+            let row_key = format!(
+                "{}|{}|{}|{}",
+                source_uuid.as_deref().unwrap_or_default(),
+                source_id.as_deref().unwrap_or_default(),
+                source_path,
+                status
+            );
+            if !seen_rows.insert(row_key) {
+                continue;
+            }
+
+            if !source_path.is_empty() {
+                let source = PathBuf::from(&source_path);
+                let candidate = if source.is_absolute() {
+                    source
+                } else {
+                    vault.join(&source)
+                };
+                if ensure_inside(
+                    &candidate,
+                    vault,
+                    "registry source path must stay inside the vault",
+                )
+                .is_err()
+                    || !candidate.is_file()
+                {
+                    missing_raw_sources.insert(
+                        source_id
+                            .clone()
+                            .or_else(|| source_uuid.clone())
+                            .unwrap_or(source_path.clone()),
+                    );
+                }
+            }
+
+            if status == "published" {
+                let page = json_string(&row, "source_page")
+                    .or_else(|| json_string(&row, "sourcePage"))
+                    .unwrap_or_default();
+                if page.is_empty() || !vault.join(&page).is_file() {
+                    missing_source_pages.insert(
+                        source_id
+                            .clone()
+                            .or_else(|| source_uuid.clone())
+                            .unwrap_or(source_path),
+                    );
+                }
+            }
+        }
+    }
+
+    let mut details = Vec::new();
+    if !missing_raw_sources.is_empty() {
+        details.push(format!("missing_raw_source: {}", missing_raw_sources.len()));
+    }
+    if !missing_source_pages.is_empty() {
+        details.push(format!(
+            "missing_source_page: {}",
+            missing_source_pages.len()
+        ));
+    }
+    details
+}
+
 fn build_product_scorecard_report(vault: &Path) -> ProductScorecardReport {
     let mut metrics = Vec::new();
     let plan_path = vault.join("_state").join("desktop-ingest-plan.json");
@@ -2973,6 +3051,7 @@ fn build_product_scorecard_report(vault: &Path) -> ProductScorecardReport {
         })
         .count();
     let registry_identity_issues = registry_identity_issue_details(vault);
+    let registry_path_issues = registry_path_issue_details(vault);
     metrics.push(if registry_count == 0 && artifacts_count == 0 {
         scorecard_metric(
             "registry_manifest",
@@ -2985,7 +3064,10 @@ fn build_product_scorecard_report(vault: &Path) -> ProductScorecardReport {
             vec!["registry: 0".to_string(), "artifacts: 0".to_string()],
             "Run ingest or artifact staging before scoring registry completeness.",
         )
-    } else if stale_artifacts > 0 || !registry_identity_issues.is_empty() {
+    } else if stale_artifacts > 0
+        || !registry_identity_issues.is_empty()
+        || !registry_path_issues.is_empty()
+    {
         let mut counts = vec![
             format!("registry: {registry_count}"),
             format!("artifacts: {artifacts_count}"),
@@ -3005,6 +3087,18 @@ fn build_product_scorecard_report(vault: &Path) -> ProductScorecardReport {
                     .map(|issue| format!("identity: {issue}")),
             );
         }
+        if !registry_path_issues.is_empty() {
+            counts.push(format!(
+                "registry_path_issues: {}",
+                registry_path_issues.len()
+            ));
+            counts.extend(
+                registry_path_issues
+                    .iter()
+                    .take(5)
+                    .map(|issue| format!("path: {issue}")),
+            );
+        }
         scorecard_metric(
             "registry_manifest",
             "Registry and artifact manifest",
@@ -3016,7 +3110,7 @@ fn build_product_scorecard_report(vault: &Path) -> ProductScorecardReport {
                 "_state/desktop-artifacts.jsonl".to_string(),
             ],
             counts,
-            "Repair registry identity drift or stale artifacts before trusting downstream synthesis.",
+            "Repair registry identity drift, broken paths, or stale artifacts before trusting downstream synthesis.",
         )
     } else {
         scorecard_metric(
@@ -15119,6 +15213,43 @@ mod tests {
             .counts
             .iter()
             .any(|detail| detail.contains("source_hash_identity_drift")));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn product_scorecard_fails_on_broken_registry_paths() {
+        let vault = test_vault("product-scorecard-registry-paths");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        write_text(
+            &vault.join("_state").join("source-registry.jsonl"),
+            "{\"source_uuid\":\"sha256:missing\",\"source_id\":\"LLM-0001\",\"source_path\":\"raw/inbox/missing.md\",\"source_sha256\":\"missing-hash\",\"status\":\"published\",\"source_page\":\"sources/LLM-0001.md\"}\n\
+{\"source_uuid\":\"sha256:nopage\",\"source_id\":\"LLM-0002\",\"source_path\":\"raw/inbox/nopage.md\",\"source_sha256\":\"nopage-hash\",\"status\":\"published\"}\n",
+        )
+        .expect("registry");
+        fs::create_dir_all(vault.join("raw").join("inbox")).expect("raw inbox");
+        write_text(
+            &vault.join("raw").join("inbox").join("nopage.md"),
+            "# Existing raw source\n",
+        )
+        .expect("raw source");
+
+        let report = build_product_scorecard_report(&vault);
+        let registry_manifest = report
+            .metrics
+            .iter()
+            .find(|metric| metric.metric_id == "registry_manifest")
+            .expect("registry manifest metric");
+        assert_eq!(registry_manifest.status, "fail");
+        assert!(registry_manifest
+            .counts
+            .contains(&"registry_path_issues: 2".to_string()));
+        assert!(registry_manifest
+            .counts
+            .contains(&"path: missing_raw_source: 1".to_string()));
+        assert!(registry_manifest
+            .counts
+            .contains(&"path: missing_source_page: 2".to_string()));
 
         let _ = fs::remove_dir_all(vault);
     }
