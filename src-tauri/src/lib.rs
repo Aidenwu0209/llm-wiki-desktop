@@ -2993,6 +2993,73 @@ fn registry_path_issue_details(vault: &Path) -> Vec<String> {
     details
 }
 
+fn registry_source_hash_issue_details(vault: &Path) -> Vec<String> {
+    let mut seen_rows = HashSet::new();
+    let mut source_hash_mismatches = HashSet::new();
+
+    for state_file in ["source-registry.jsonl", "desktop-source-registry.jsonl"] {
+        for row in read_jsonl_values(&vault.join("_state").join(state_file)) {
+            let source_uuid = registry_row_source_uuid(&row);
+            let source_id = registry_row_source_id(&row);
+            let Some(expected_hash) = registry_row_source_hash(&row) else {
+                continue;
+            };
+            let Some(source_path) = preferred_registry_row_path(&row) else {
+                continue;
+            };
+            let row_key = format!(
+                "{}|{}|{}|{}",
+                source_uuid.as_deref().unwrap_or_default(),
+                source_id.as_deref().unwrap_or_default(),
+                expected_hash,
+                source_path
+            );
+            if !seen_rows.insert(row_key) {
+                continue;
+            }
+
+            let source = PathBuf::from(&source_path);
+            let candidate = if source.is_absolute() {
+                source
+            } else {
+                vault.join(&source)
+            };
+            if ensure_inside(
+                &candidate,
+                vault,
+                "registry source path must stay inside the vault",
+            )
+            .is_err()
+                || !candidate.is_file()
+            {
+                continue;
+            }
+
+            if sha256_file(&candidate)
+                .ok()
+                .as_deref()
+                .is_some_and(|actual_hash| actual_hash != expected_hash)
+            {
+                source_hash_mismatches.insert(
+                    source_id
+                        .clone()
+                        .or_else(|| source_uuid.clone())
+                        .unwrap_or(source_path),
+                );
+            }
+        }
+    }
+
+    let mut details = Vec::new();
+    if !source_hash_mismatches.is_empty() {
+        details.push(format!(
+            "source_hash_mismatch: {}",
+            source_hash_mismatches.len()
+        ));
+    }
+    details
+}
+
 fn registry_status_requires_artifact(status: &str) -> bool {
     matches!(
         status,
@@ -3160,6 +3227,7 @@ fn build_product_scorecard_report(vault: &Path) -> ProductScorecardReport {
         .count();
     let registry_identity_issues = registry_identity_issue_details(vault);
     let registry_path_issues = registry_path_issue_details(vault);
+    let registry_hash_issues = registry_source_hash_issue_details(vault);
     let registry_artifact_issues = registry_artifact_issue_details(vault);
     metrics.push(if registry_count == 0 && artifacts_count == 0 {
         scorecard_metric(
@@ -3176,6 +3244,7 @@ fn build_product_scorecard_report(vault: &Path) -> ProductScorecardReport {
     } else if stale_artifacts > 0
         || !registry_identity_issues.is_empty()
         || !registry_path_issues.is_empty()
+        || !registry_hash_issues.is_empty()
         || !registry_artifact_issues.is_empty()
     {
         let mut counts = vec![
@@ -3207,6 +3276,18 @@ fn build_product_scorecard_report(vault: &Path) -> ProductScorecardReport {
                     .iter()
                     .take(5)
                     .map(|issue| format!("path: {issue}")),
+            );
+        }
+        if !registry_hash_issues.is_empty() {
+            counts.push(format!(
+                "registry_hash_issues: {}",
+                registry_hash_issues.len()
+            ));
+            counts.extend(
+                registry_hash_issues
+                    .iter()
+                    .take(5)
+                    .map(|issue| format!("hash: {issue}")),
             );
         }
         if !registry_artifact_issues.is_empty() {
@@ -7167,6 +7248,8 @@ fn registry_row_source_id(value: &serde_json::Value) -> Option<String> {
 fn registry_row_source_hash(value: &serde_json::Value) -> Option<String> {
     json_string(value, "source_sha256")
         .or_else(|| json_string(value, "sourceSha256"))
+        .or_else(|| json_string(value, "raw_hash"))
+        .or_else(|| json_string(value, "rawHash"))
         .or_else(|| json_string(value, "sha256"))
 }
 
@@ -15422,6 +15505,58 @@ mod tests {
         assert!(registry_manifest
             .counts
             .contains(&"path: missing_source_page: 2".to_string()));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn product_scorecard_fails_on_registry_source_hash_drift() {
+        let vault = test_vault("product-scorecard-registry-hash-drift");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        fs::create_dir_all(vault.join("raw").join("inbox")).expect("raw inbox");
+        fs::create_dir_all(vault.join("sources")).expect("sources");
+        fs::create_dir_all(vault.join("parsed").join("hash-drift")).expect("artifact dir");
+        let raw = vault.join("raw").join("inbox").join("paper.md");
+        write_text(&raw, "# Original raw evidence\n").expect("original raw");
+        let original_hash = sha256_file(&raw).expect("original hash");
+        write_text(&raw, "# Mutated raw evidence\n").expect("mutated raw");
+        write_text(&vault.join("sources").join("LLM-0001.md"), "# Source 1\n").expect("source 1");
+        write_text(
+            &vault.join("parsed").join("hash-drift").join("combined.md"),
+            "# Parsed artifact\n",
+        )
+        .expect("artifact");
+        write_text(
+            &vault.join("_state").join("source-registry.jsonl"),
+            &format!(
+                "{{\"source_uuid\":\"{}\",\"source_id\":\"LLM-0001\",\"source_path\":\"raw/inbox/paper.md\",\"source_sha256\":\"{}\",\"status\":\"published\",\"source_page\":\"sources/LLM-0001.md\",\"artifact_path\":\"parsed/hash-drift/combined.md\"}}\n",
+                source_uuid(&original_hash),
+                original_hash
+            ),
+        )
+        .expect("registry");
+        write_text(
+            &vault.join("_state").join("artifacts.jsonl"),
+            &format!(
+                "{{\"source_uuid\":\"{}\",\"source_id\":\"LLM-0001\",\"artifact_path\":\"parsed/hash-drift/combined.md\",\"status\":\"ready\",\"contract_valid\":true}}\n",
+                source_uuid(&original_hash)
+            ),
+        )
+        .expect("artifacts");
+
+        let report = build_product_scorecard_report(&vault);
+        let registry_manifest = report
+            .metrics
+            .iter()
+            .find(|metric| metric.metric_id == "registry_manifest")
+            .expect("registry manifest metric");
+        assert_eq!(registry_manifest.status, "fail");
+        assert!(registry_manifest
+            .counts
+            .contains(&"registry_hash_issues: 1".to_string()));
+        assert!(registry_manifest
+            .counts
+            .contains(&"hash: source_hash_mismatch: 1".to_string()));
 
         let _ = fs::remove_dir_all(vault);
     }
