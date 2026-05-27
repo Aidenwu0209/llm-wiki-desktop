@@ -2308,6 +2308,7 @@ function App() {
           busy={busy}
           onChooseRuntime={chooseRuntime}
           onSaveSettings={handleSaveSettings}
+          onPlanIngest={handlePlanIngest}
           onToggleLanguage={toggleInterfaceLanguage}
         />
 
