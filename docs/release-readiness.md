@@ -41,6 +41,8 @@ npm run build:app
 
 ## Clean macOS Profile Smoke
 
+For the scripted clean workspace build/test/package path and result template, see [`docs/smoke-test-macos-clean-profile.md`](smoke-test-macos-clean-profile.md).
+
 Run this after the automated checks on a fresh macOS user profile or a profile that has not previously opened LLM Wiki Desktop.
 
 1. Copy the local `.app` bundle into the profile and launch it from Finder.
