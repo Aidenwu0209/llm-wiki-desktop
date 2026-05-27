@@ -158,6 +158,11 @@ const KNOWLEDGE_SIDEBAR_MAX_WIDTH = 400;
 const PREVIEW_SIDEBAR_MIN_WIDTH = 280;
 const PREVIEW_SIDEBAR_MAX_WIDTH = 560;
 
+const localizedBoolean = (value: boolean, language: UiLanguage) => {
+  if (language === "zh") return value ? "是" : "否";
+  return value ? "yes" : "no";
+};
+
 function defaultKnowledgeSidebarWidth() {
   if (typeof window !== "undefined" && window.innerWidth <= 1440) return 264;
   return 286;
@@ -3881,7 +3886,7 @@ function App() {
             {sourceAliases.length > 0 && (
               <>
                 <div className="section-head compact">
-                  <h3>{interfaceLanguage === "zh" ? "ID alias / migration" : "ID aliases / migrations"}</h3>
+                  <h3>{interfaceLanguage === "zh" ? "ID 别名 / 迁移" : "ID aliases / migrations"}</h3>
                   <span>{sourceAliases.length}</span>
                 </div>
                 <div className="registry-list compact">
@@ -3935,9 +3940,9 @@ function App() {
                     {interfaceLanguage === "zh" ? "输出" : "outputs"} {entry.outputs.join(", ") || entry.artifactPath || "-"}
                   </code>
                   <code>
-                    {interfaceLanguage === "zh" ? "人工确认" : "human approval"}: {entry.requiresHumanApproval ? "yes" : "no"}
+                    {interfaceLanguage === "zh" ? "人工确认" : "human approval"}: {localizedBoolean(entry.requiresHumanApproval, interfaceLanguage)}
                     {" · "}
-                    {interfaceLanguage === "zh" ? "网络/API" : "network/API"}: {entry.usesNetwork ? "yes" : "no"}
+                    {interfaceLanguage === "zh" ? "网络/API" : "network/API"}: {localizedBoolean(entry.usesNetwork, interfaceLanguage)}
                     {entry.lastLogPath ? ` · ${entry.lastLogPath}` : ""}
                   </code>
                 </button>
