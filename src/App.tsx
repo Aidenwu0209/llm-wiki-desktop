@@ -532,6 +532,15 @@ type NavBadge = {
   tone?: "neutral" | "warning" | "danger" | "live";
   title: string;
 };
+type CommandPaletteItem = {
+  id: string;
+  label: string;
+  section: string;
+  detail: string;
+  keywords: string[];
+  disabled?: boolean;
+  run: () => void | Promise<void>;
+};
 
 const pageTitles: Record<ShellPage, { title: string; subtitle: string }> = {
   dashboard: {
@@ -1811,6 +1820,9 @@ function App() {
   const [activePage, setActivePage] = useState<ShellPage>("chat");
   const [detailDrawerOpen, setDetailDrawerOpen] = useState(true);
   const [sidebarTreeMode, setSidebarTreeMode] = useState<SidebarTreeMode>("knowledge");
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState("");
+  const [commandActiveIndex, setCommandActiveIndex] = useState(0);
   const [researchPanelOpen, setResearchPanelOpen] = useState(false);
   const [researchTopic, setResearchTopic] = useState(DEFAULT_DEEPSEEK_RESEARCH_STRATEGY_QUERY_EN);
   const [chatHandoff, setChatHandoff] = useState<{ question: string; targetPath: string; key: number } | null>(null);
@@ -1945,6 +1957,19 @@ function App() {
   useEffect(() => {
     setActionFocusIndex((current) => Math.min(current, Math.max(prioritizedActions.length - 1, 0)));
   }, [prioritizedActions.length]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandQuery("");
+        setCommandActiveIndex(0);
+        setCommandPaletteOpen((open) => !open);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   const vaultFilePath = (path?: string | null) => {
     if (!path) return vaultPath;
@@ -2873,6 +2898,126 @@ function App() {
       { label: copy.labels.reviews, value: openReviewCount, tone: openReviewCount > 0 ? "warning" : "success" },
     ];
   })();
+
+  const commandPaletteItems = useMemo<CommandPaletteItem[]>(() => {
+    const isZh = interfaceLanguage === "zh";
+    const openFile = (file: VaultFile) => {
+      selectFileForDetails(file);
+      setDetailDrawerOpen(true);
+      if (file.kind === "source" || file.kind === "draft" || file.kind === "inbox") {
+        setActivePage("sources");
+      } else if (file.kind === "concept") {
+        setActivePage("concepts");
+      } else if (file.kind === "report") {
+        setActivePage("dashboard");
+      }
+    };
+    const navItems: CommandPaletteItem[] = navigationItems.map((item) => ({
+      id: `nav:${item.id}`,
+      label: copy.nav[item.id],
+      section: isZh ? "切换视图" : "Switch view",
+      detail: copy.pages[item.id].subtitle,
+      keywords: [item.id, item.label, copy.pages[item.id].title, copy.pages[item.id].subtitle],
+      run: () => setActivePage(item.id),
+    }));
+    const fileItems: CommandPaletteItem[] = (status?.files ?? []).slice(0, 80).map((file) => ({
+      id: `file:${file.path}`,
+      label: file.title || file.name,
+      section: isZh ? "打开页面" : "Open page",
+      detail: `${file.kind} · ${file.path}`,
+      keywords: [file.kind, file.path, file.name, file.title || "", file.status || "", file.sourceId || ""],
+      run: () => openFile(file),
+    }));
+    const actionItems: CommandPaletteItem[] = [
+      {
+        id: "action:obsidian",
+        label: copy.obsidian,
+        section: isZh ? "常用动作" : "Common action",
+        detail: isZh ? "在 Obsidian 中打开当前 vault 入口。" : "Open the current vault entry in Obsidian.",
+        keywords: ["obsidian", "vault", "open"],
+        disabled: !vaultPath || busy === "obsidian_open",
+        run: handleOpenObsidian,
+      },
+      {
+        id: "action:refresh",
+        label: copy.refresh,
+        section: isZh ? "常用动作" : "Common action",
+        detail: isZh ? "重新检查 vault、ingest plan、审核队列和图谱状态。" : "Refresh vault, ingest plan, review queue, and graph state.",
+        keywords: ["refresh", "inspect", "dashboard", "status"],
+        disabled: !vaultPath || busy === "inspect",
+        run: () => refresh(),
+      },
+      {
+        id: "action:ingest",
+        label: isZh ? "运行处理流程" : "Run ingest pipeline",
+        section: isZh ? "常用动作" : "Common action",
+        detail: isZh ? `${runnableIngest} 个资料可运行。` : `${runnableIngest} runnable source item${runnableIngest === 1 ? "" : "s"}.`,
+        keywords: ["ingest", "pipeline", "parse", "runtime"],
+        disabled: !vaultPath || runtimeRunning || busy === "start:ingest_pipeline" || runnableIngest === 0,
+        run: handleIngestPipeline,
+      },
+      {
+        id: "action:lint",
+        label: copy.pageActions.contractLint,
+        section: isZh ? "常用动作" : "Common action",
+        detail: isZh ? "运行合约检查，确认 schema、证据链和写回边界。" : "Run contract lint for schema, evidence, and writeback boundaries.",
+        keywords: ["lint", "contract", "schema", "traceability"],
+        disabled: !vaultPath || runtimeRunning || busy === "ingest_lint",
+        run: handleIngestLint,
+      },
+      {
+        id: "action:import-files",
+        label: copy.importFiles,
+        section: isZh ? "导入" : "Import",
+        detail: isZh ? "导入 PDF / Markdown / TXT / ZIP 到当前 vault。" : "Import PDF / Markdown / TXT / ZIP into the current vault.",
+        keywords: ["import", "files", "pdf", "markdown", "zip"],
+        disabled: !vaultPath || busy === "import",
+        run: handleImportFiles,
+      },
+      {
+        id: "action:deep-research",
+        label: isZh ? "打开深度研究" : "Open Deep Research",
+        section: isZh ? "研究" : "Research",
+        detail: isZh ? "打开右侧研究面板，生成 evidence-first 写回提案。" : "Open the right research panel for evidence-first proposals.",
+        keywords: ["deep research", "query", "writeback", "proposal"],
+        disabled: !vaultPath,
+        run: () => setResearchPanelOpen(true),
+      },
+    ];
+    return [...actionItems, ...navItems, ...fileItems];
+  }, [busy, copy, interfaceLanguage, runnableIngest, runtimeRunning, status?.files, vaultPath]);
+
+  const commandPaletteResults = useMemo(() => {
+    const query = commandQuery.trim().toLowerCase();
+    if (!query) return commandPaletteItems.slice(0, 18);
+    const tokens = query.split(/\s+/).filter(Boolean);
+    return commandPaletteItems
+      .map((item) => {
+        const haystack = [item.label, item.section, item.detail, ...item.keywords].join(" ").toLowerCase();
+        if (!tokens.every((token) => haystack.includes(token))) return null;
+        const label = item.label.toLowerCase();
+        const section = item.section.toLowerCase();
+        const score = label.startsWith(query) ? 0 : label.includes(query) ? 1 : section.includes(query) ? 2 : 3;
+        return { item, score };
+      })
+      .filter((entry): entry is { item: CommandPaletteItem; score: number } => Boolean(entry))
+      .sort((a, b) => a.score - b.score || a.item.label.localeCompare(b.item.label))
+      .map((entry) => entry.item)
+      .slice(0, 24);
+  }, [commandPaletteItems, commandQuery]);
+
+  useEffect(() => {
+    setCommandActiveIndex((current) => Math.min(current, Math.max(commandPaletteResults.length - 1, 0)));
+  }, [commandPaletteResults.length]);
+
+  const runCommandPaletteItem = (item: CommandPaletteItem) => {
+    if (item.disabled) return;
+    setCommandPaletteOpen(false);
+    setCommandQuery("");
+    setCommandActiveIndex(0);
+    void item.run();
+  };
+
   const pagePrimaryActions: PagePrimaryAction[] = (() => {
     if (!vaultPath) {
       return [
@@ -3409,6 +3554,20 @@ function App() {
               <BarChart3 size={15} />
               <span>{status?.dashboardAvailable ? copy.labels.dashboardReady : copy.labels.dashboardMissing}</span>
             </div>
+            <button
+              className="command-palette-trigger"
+              type="button"
+              onClick={() => {
+                setCommandQuery("");
+                setCommandActiveIndex(0);
+                setCommandPaletteOpen(true);
+              }}
+              title={interfaceLanguage === "zh" ? "快速切换页面和动作" : "Quickly switch pages and actions"}
+            >
+              <Search size={15} />
+              <span>{interfaceLanguage === "zh" ? "快速切换" : "Quick Switch"}</span>
+              <kbd>{typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘K" : "Ctrl K"}</kbd>
+            </button>
             <button className="language-toggle" type="button" onClick={toggleInterfaceLanguage} title={`Switch to ${copy.languageToggle}`}>
               <Languages size={15} />
               <span>{copy.languageToggle}</span>
@@ -4208,7 +4367,127 @@ function App() {
           )}
         </aside>
       )}
+      <CommandPalette
+        open={commandPaletteOpen}
+        language={interfaceLanguage}
+        query={commandQuery}
+        items={commandPaletteResults}
+        activeIndex={commandActiveIndex}
+        onQueryChange={(value) => {
+          setCommandQuery(value);
+          setCommandActiveIndex(0);
+        }}
+        onActiveIndexChange={setCommandActiveIndex}
+        onSelect={runCommandPaletteItem}
+        onClose={() => setCommandPaletteOpen(false)}
+      />
     </main>
+  );
+}
+
+function CommandPalette({
+  open,
+  language,
+  query,
+  items,
+  activeIndex,
+  onQueryChange,
+  onActiveIndexChange,
+  onSelect,
+  onClose,
+}: {
+  open: boolean;
+  language: UiLanguage;
+  query: string;
+  items: CommandPaletteItem[];
+  activeIndex: number;
+  onQueryChange: (value: string) => void;
+  onActiveIndexChange: (value: number) => void;
+  onSelect: (item: CommandPaletteItem) => void;
+  onClose: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const activeItem = items[activeIndex];
+
+  useEffect(() => {
+    if (!open) return;
+    const frame = window.requestAnimationFrame(() => inputRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [open]);
+
+  if (!open) return null;
+
+  const isZh = language === "zh";
+  return (
+    <div className="command-palette-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className="command-palette"
+        role="dialog"
+        aria-modal="true"
+        aria-label={isZh ? "快速切换" : "Quick switcher"}
+        onMouseDown={(event) => event.stopPropagation()}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            onClose();
+            return;
+          }
+          if (event.key === "ArrowDown") {
+            event.preventDefault();
+            onActiveIndexChange(Math.min(activeIndex + 1, Math.max(items.length - 1, 0)));
+            return;
+          }
+          if (event.key === "ArrowUp") {
+            event.preventDefault();
+            onActiveIndexChange(Math.max(activeIndex - 1, 0));
+            return;
+          }
+          if (event.key === "Enter" && activeItem) {
+            event.preventDefault();
+            onSelect(activeItem);
+          }
+        }}
+      >
+        <div className="command-palette-search">
+          <Search size={17} />
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder={isZh ? "搜索页面、视图或动作..." : "Search pages, views, or actions..."}
+          />
+          <kbd>{isZh ? "Esc 关闭" : "Esc closes"}</kbd>
+        </div>
+        <div className="command-palette-results" role="listbox" aria-label={isZh ? "快速切换结果" : "Quick switch results"}>
+          {items.length === 0 && (
+            <p className="command-palette-empty">{isZh ? "没有匹配结果。" : "No matching results."}</p>
+          )}
+          {items.map((item, index) => (
+            <button
+              key={item.id}
+              type="button"
+              role="option"
+              aria-selected={index === activeIndex}
+              className={classNames("command-palette-item", index === activeIndex && "active", item.disabled && "disabled")}
+              disabled={item.disabled}
+              onMouseEnter={() => onActiveIndexChange(index)}
+              onClick={() => onSelect(item)}
+            >
+              <span className="command-palette-item-main">
+                <strong>{item.label}</strong>
+                <em>{item.detail}</em>
+              </span>
+              <span className="command-palette-section">{item.section}</span>
+            </button>
+          ))}
+        </div>
+        <footer className="command-palette-footer">
+          <span>{isZh ? "↑↓ 选择" : "↑↓ select"}</span>
+          <span>{isZh ? "Enter 执行" : "Enter run"}</span>
+          <span>{isZh ? "⌘K / Ctrl K 再次打开" : "⌘K / Ctrl K opens again"}</span>
+        </footer>
+      </section>
+    </div>
   );
 }
 

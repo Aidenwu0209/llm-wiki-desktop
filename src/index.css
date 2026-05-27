@@ -1166,6 +1166,7 @@ body[data-shell-panel-resizing="true"] * {
 
 .nashsu-aligned-shell .status-pill,
 .nashsu-aligned-shell .health,
+.nashsu-aligned-shell .command-palette-trigger,
 .nashsu-aligned-shell .language-toggle,
 .nashsu-aligned-shell .sidebar-toggle {
   min-height: 30px;
@@ -1212,6 +1213,7 @@ body[data-shell-panel-resizing="true"] * {
 }
 
 .language-toggle,
+.command-palette-trigger,
 .sidebar-toggle {
   min-height: 34px;
   border-color: #b9c7c0;
@@ -1223,9 +1225,26 @@ body[data-shell-panel-resizing="true"] * {
 }
 
 .language-toggle:hover:not(:disabled),
+.command-palette-trigger:hover:not(:disabled),
 .sidebar-toggle:hover:not(:disabled) {
   border-color: #245b93;
   background: #eef5fb;
+}
+
+.command-palette-trigger {
+  gap: 6px;
+  color: #1f5637;
+}
+
+.command-palette-trigger kbd {
+  border: 1px solid #cbd4cf;
+  border-radius: 6px;
+  background: #f7faf7;
+  padding: 1px 5px;
+  color: #53645d;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.4;
 }
 
 .status-pill {
@@ -1248,6 +1267,167 @@ body[data-shell-panel-resizing="true"] * {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.command-palette-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  align-items: start;
+  justify-items: center;
+  background: rgba(23, 32, 29, 0.32);
+  padding: 9vh 18px 18px;
+}
+
+.command-palette {
+  width: min(720px, 100%);
+  overflow: hidden;
+  border: 1px solid #b9c7c0;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 24px 80px rgba(23, 32, 29, 0.26);
+}
+
+.command-palette-search {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid #d8ded9;
+  padding: 12px 14px;
+}
+
+.command-palette-search input {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #17201d;
+  font-size: 16px;
+  font-weight: 750;
+}
+
+.command-palette-search input::placeholder {
+  color: #8a9a92;
+}
+
+.command-palette-search kbd,
+.command-palette-footer span {
+  border: 1px solid #d8ded9;
+  border-radius: 6px;
+  background: #f7faf7;
+  padding: 2px 6px;
+  color: #627168;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.command-palette-results {
+  display: grid;
+  gap: 2px;
+  max-height: min(58vh, 520px);
+  overflow: auto;
+  padding: 7px;
+}
+
+.command-palette-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 58px;
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  padding: 9px 10px;
+  color: #1d2a25;
+  text-align: left;
+}
+
+.command-palette-item:hover:not(:disabled),
+.command-palette-item.active:not(:disabled) {
+  border-color: #bbd0c3;
+  background: #eef6f1;
+}
+
+.command-palette-item.disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.command-palette-item-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.command-palette-item-main strong,
+.command-palette-item-main em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-palette-item-main strong {
+  color: #17201d;
+  font-size: 14px;
+}
+
+.command-palette-item-main em {
+  color: #53645d;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.command-palette-section {
+  border: 1px solid #d8ded9;
+  border-radius: 999px;
+  background: #ffffff;
+  padding: 3px 8px;
+  color: #40514a;
+  font-size: 11px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.command-palette-empty {
+  margin: 0;
+  padding: 24px 12px;
+  color: #6b7a72;
+  text-align: center;
+}
+
+.command-palette-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  border-top: 1px solid #d8ded9;
+  padding: 9px 12px;
+}
+
+@media (max-width: 680px) {
+  .command-palette-backdrop {
+    padding-top: 5vh;
+  }
+
+  .command-palette-search {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .command-palette-search kbd {
+    display: none;
+  }
+
+  .command-palette-item {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .command-palette-section {
+    width: fit-content;
+  }
 }
 
 .status-pill.ok {
