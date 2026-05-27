@@ -261,6 +261,11 @@ const chatCopy = {
 } as const;
 
 const providerNames: Record<string, string> = {
+  "ernie-ai-studio": "文心一言 / ERNIE",
+  "openai-compatible": "OpenAI-compatible",
+  "local-claude": "Claude Code CLI",
+  "local-codex": "Codex CLI",
+  custom: "Custom",
   anthropic: "Anthropic Claude",
   "claude-code": "Claude Code CLI",
   "codex-cli": "Codex CLI",
@@ -288,7 +293,7 @@ const providerNames: Record<string, string> = {
   "custom-openai": "Custom OpenAI-Compatible",
 };
 
-const localProviderIds = new Set(["codex-cli", "claude-code"]);
+const localProviderIds = new Set(["local-codex", "local-claude", "codex-cli", "claude-code"]);
 
 function classNames(...items: Array<string | false | null | undefined>) {
   return items.filter(Boolean).join(" ");

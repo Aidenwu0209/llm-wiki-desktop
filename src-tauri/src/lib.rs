@@ -19,6 +19,11 @@ use zip::ZipArchive;
 const MAX_VAULT_TEXT_PREVIEW_BYTES: u64 = 64 * 1024;
 const MAX_VAULT_IMAGE_PREVIEW_BYTES: u64 = 5 * 1024 * 1024;
 const GENERATED_PURPOSE_MARKER: &str = "<!-- llm-wiki-desktop:generated-purpose -->";
+const ERNIE_AI_STUDIO_PROVIDER_ID: &str = "ernie-ai-studio";
+const ERNIE_AI_STUDIO_BASE_URL: &str = "https://aistudio.baidu.com/llm/lmapi/v3";
+const ERNIE_AI_STUDIO_API_KEY_ENV: &str = "AI_STUDIO_API_KEY";
+const ERNIE_AI_STUDIO_DEFAULT_MODEL: &str = "ernie-5.1";
+const ERNIE_AI_STUDIO_FALLBACK_MODELS: [&str; 2] = ["ernie-4.0-turbo-128k", "ernie-3.5-8k"];
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -615,6 +620,22 @@ struct LlmApiKeyCheckResult {
     env_var: String,
     available: bool,
     message: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct LlmProviderTestResult {
+    provider: String,
+    model: Option<String>,
+    status: String,
+    latency_ms: Option<u128>,
+    usage: Option<serde_json::Value>,
+    checked_at: String,
+    message: String,
+    error_code: Option<String>,
+    api_key_env: String,
+    base_url: String,
+    models: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -9381,6 +9402,326 @@ fn check_llm_api_key(
     })
 }
 
+fn ernie_result(
+    model: Option<String>,
+    status: &str,
+    latency_ms: Option<u128>,
+    usage: Option<serde_json::Value>,
+    message: impl Into<String>,
+    error_code: Option<&str>,
+    models: Vec<String>,
+) -> LlmProviderTestResult {
+    LlmProviderTestResult {
+        provider: ERNIE_AI_STUDIO_PROVIDER_ID.to_string(),
+        model,
+        status: status.to_string(),
+        latency_ms,
+        usage,
+        checked_at: Local::now().to_rfc3339(),
+        message: redact_provider_error(&message.into()),
+        error_code: error_code.map(ToString::to_string),
+        api_key_env: ERNIE_AI_STUDIO_API_KEY_ENV.to_string(),
+        base_url: ERNIE_AI_STUDIO_BASE_URL.to_string(),
+        models,
+    }
+}
+
+fn redact_provider_error(value: &str) -> String {
+    let mut text = value.replace('\n', " ");
+    let mut search_from = 0;
+    while let Some(relative_index) = text[search_from..].to_ascii_lowercase().find("bearer ") {
+        let index = search_from + relative_index;
+        let token_start = index + "bearer ".len();
+        let token_len = text[token_start..]
+            .find(char::is_whitespace)
+            .unwrap_or_else(|| text[token_start..].len());
+        if &text[token_start..token_start + token_len] != "[redacted]" {
+            text.replace_range(token_start..token_start + token_len, "[redacted]");
+        }
+        search_from = token_start + "[redacted]".len();
+    }
+    for marker in ["Authorization", "authorization", "Bearer", "bearer"] {
+        if text.contains(marker) {
+            text = text.replace(marker, "[redacted]");
+        }
+    }
+    short_error_body(&text)
+}
+
+fn ernie_models_url() -> String {
+    format!("{ERNIE_AI_STUDIO_BASE_URL}/models")
+}
+
+fn parse_openai_model_ids(value: &serde_json::Value) -> Vec<String> {
+    let arrays = [
+        value.get("data").and_then(|item| item.as_array()),
+        value.get("models").and_then(|item| item.as_array()),
+    ];
+    arrays
+        .into_iter()
+        .flatten()
+        .flat_map(|items| items.iter())
+        .filter_map(|item| {
+            item.get("id")
+                .or_else(|| item.get("model"))
+                .or_else(|| item.get("name"))
+                .and_then(|id| id.as_str())
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(ToString::to_string)
+        })
+        .collect()
+}
+
+fn classify_provider_http_error(status: reqwest::StatusCode, body: &str) -> (&'static str, String) {
+    let body = redact_provider_error(body);
+    match status.as_u16() {
+        401 | 403 => (
+            "auth_error",
+            format!("provider rejected the configured credential: {body}"),
+        ),
+        404 => (
+            "model_not_found",
+            format!("provider endpoint or model was not found: {body}"),
+        ),
+        429 => (
+            "rate_limited",
+            format!("provider rate limit reached: {body}"),
+        ),
+        code if (500..=599).contains(&code) => (
+            "network_error",
+            format!("provider returned HTTP {code}: {body}"),
+        ),
+        code => ("unknown", format!("provider returned HTTP {code}: {body}")),
+    }
+}
+
+async fn fetch_ernie_models(
+    client: &reqwest::Client,
+    api_key: &str,
+) -> Result<(Vec<String>, u128), (&'static str, String, u128)> {
+    let started = Instant::now();
+    let response = client
+        .get(ernie_models_url())
+        .header("Authorization", format!("Bearer {api_key}"))
+        .send()
+        .await
+        .map_err(|e| {
+            (
+                "network_error",
+                format!("model list request failed: {e}"),
+                started.elapsed().as_millis(),
+            )
+        })?;
+    let elapsed = started.elapsed().as_millis();
+    let status = response.status();
+    let text = response.text().await.map_err(|e| {
+        (
+            "network_error",
+            format!("failed to read model list response: {e}"),
+            elapsed,
+        )
+    })?;
+    if !status.is_success() {
+        let (code, message) = classify_provider_http_error(status, &text);
+        return Err((code, message, elapsed));
+    }
+    let value: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+        (
+            "unknown",
+            format!("model list returned non-JSON response: {e}"),
+            elapsed,
+        )
+    })?;
+    let models = parse_openai_model_ids(&value);
+    if models.is_empty() {
+        return Err((
+            "unknown",
+            "model list response did not include model ids".to_string(),
+            elapsed,
+        ));
+    }
+    Ok((models, elapsed))
+}
+
+async fn send_ernie_minimal_chat(
+    client: &reqwest::Client,
+    api_key: &str,
+    model: &str,
+) -> Result<(serde_json::Value, u128), (&'static str, String, u128)> {
+    let started = Instant::now();
+    let body = serde_json::json!({
+        "model": model,
+        "messages": [
+            { "role": "system", "content": "You are a concise assistant." },
+            { "role": "user", "content": "Reply with \"ok\"." }
+        ],
+        "stream": false
+    });
+    let response = client
+        .post(openai_chat_completions_url(ERNIE_AI_STUDIO_BASE_URL))
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| {
+            (
+                "network_error",
+                format!("chat completion request failed: {e}"),
+                started.elapsed().as_millis(),
+            )
+        })?;
+    let elapsed = started.elapsed().as_millis();
+    let status = response.status();
+    let text = response.text().await.map_err(|e| {
+        (
+            "network_error",
+            format!("failed to read chat completion response: {e}"),
+            elapsed,
+        )
+    })?;
+    if !status.is_success() {
+        let (code, message) = classify_provider_http_error(status, &text);
+        return Err((code, message, elapsed));
+    }
+    let value: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+        (
+            "unknown",
+            format!("chat completion returned non-JSON response: {e}"),
+            elapsed,
+        )
+    })?;
+    parse_openai_answer(&value).map_err(|e| {
+        (
+            "unknown",
+            format!("chat completion did not return assistant text: {e}"),
+            elapsed,
+        )
+    })?;
+    Ok((value, elapsed))
+}
+
+#[tauri::command]
+async fn check_ernie_provider() -> Result<LlmProviderTestResult, String> {
+    let Some(api_key) = read_llm_api_key(Some(ERNIE_AI_STUDIO_API_KEY_ENV))? else {
+        return Ok(ernie_result(
+            None,
+            "missing_key",
+            None,
+            None,
+            format!("{ERNIE_AI_STUDIO_API_KEY_ENV} is not visible to this desktop process"),
+            Some("missing_key"),
+            Vec::new(),
+        ));
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("failed to create HTTP client: {e}"))?;
+    match fetch_ernie_models(&client, &api_key).await {
+        Ok((models, latency)) => Ok(ernie_result(
+            None,
+            "ready",
+            Some(latency),
+            None,
+            "model list request succeeded",
+            None,
+            models,
+        )),
+        Err((status, message, latency)) => Ok(ernie_result(
+            None,
+            status,
+            Some(latency),
+            None,
+            message,
+            Some(status),
+            Vec::new(),
+        )),
+    }
+}
+
+#[tauri::command]
+async fn test_ernie_chat(model: String) -> Result<LlmProviderTestResult, String> {
+    let Some(api_key) = read_llm_api_key(Some(ERNIE_AI_STUDIO_API_KEY_ENV))? else {
+        return Ok(ernie_result(
+            None,
+            "missing_key",
+            None,
+            None,
+            format!("{ERNIE_AI_STUDIO_API_KEY_ENV} is not visible to this desktop process"),
+            Some("missing_key"),
+            Vec::new(),
+        ));
+    };
+    let requested = model.trim();
+    let requested = if requested.is_empty() {
+        ERNIE_AI_STUDIO_DEFAULT_MODEL
+    } else {
+        requested
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(45))
+        .build()
+        .map_err(|e| format!("failed to create HTTP client: {e}"))?;
+    let (models, model_latency) = match fetch_ernie_models(&client, &api_key).await {
+        Ok(value) => value,
+        Err((status, message, latency)) => {
+            return Ok(ernie_result(
+                Some(requested.to_string()),
+                status,
+                Some(latency),
+                None,
+                message,
+                Some(status),
+                Vec::new(),
+            ))
+        }
+    };
+    let mut candidates = vec![requested.to_string()];
+    candidates.extend(
+        ERNIE_AI_STUDIO_FALLBACK_MODELS
+            .iter()
+            .map(|item| item.to_string()),
+    );
+    let selected = candidates
+        .into_iter()
+        .find(|candidate| models.iter().any(|item| item == candidate));
+    let Some(selected) = selected else {
+        return Ok(ernie_result(
+            Some(requested.to_string()),
+            "model_not_found",
+            Some(model_latency),
+            None,
+            format!(
+                "selected model and fallback models were not present in the provider model list"
+            ),
+            Some("model_not_found"),
+            models,
+        ));
+    };
+    match send_ernie_minimal_chat(&client, &api_key, &selected).await {
+        Ok((value, chat_latency)) => Ok(ernie_result(
+            Some(selected),
+            "ready",
+            Some(model_latency + chat_latency),
+            value.get("usage").cloned(),
+            "model list and minimal chat completion succeeded",
+            None,
+            models,
+        )),
+        Err((status, message, chat_latency)) => Ok(ernie_result(
+            Some(selected),
+            status,
+            Some(model_latency + chat_latency),
+            None,
+            message,
+            Some(status),
+            models,
+        )),
+    }
+}
+
 fn sanitize_optional_env_var_name(value: &str) -> Result<Option<String>, String> {
     let name = value.trim();
     if name.is_empty() {
@@ -12996,6 +13337,14 @@ mod tests {
             "https://api.deepseek.com/v1/chat/completions"
         );
         assert_eq!(
+            ernie_models_url(),
+            "https://aistudio.baidu.com/llm/lmapi/v3/models"
+        );
+        assert_eq!(
+            openai_chat_completions_url(ERNIE_AI_STUDIO_BASE_URL),
+            "https://aistudio.baidu.com/llm/lmapi/v3/chat/completions"
+        );
+        assert_eq!(
             openai_chat_completions_url("https://api.openai.com/v1/chat/completions"),
             "https://api.openai.com/v1/chat/completions"
         );
@@ -13007,6 +13356,44 @@ mod tests {
             anthropic_messages_url("https://api.minimax.io/anthropic"),
             "https://api.minimax.io/anthropic/v1/messages"
         );
+    }
+
+    #[test]
+    fn ernie_provider_contract_defaults_are_stable() {
+        assert_eq!(ERNIE_AI_STUDIO_PROVIDER_ID, "ernie-ai-studio");
+        assert_eq!(ERNIE_AI_STUDIO_API_KEY_ENV, "AI_STUDIO_API_KEY");
+        assert_eq!(ERNIE_AI_STUDIO_DEFAULT_MODEL, "ernie-5.1");
+        assert_eq!(
+            ERNIE_AI_STUDIO_FALLBACK_MODELS,
+            ["ernie-4.0-turbo-128k", "ernie-3.5-8k"]
+        );
+    }
+
+    #[test]
+    fn ernie_model_list_parser_accepts_openai_shape() {
+        let value = serde_json::json!({
+            "object": "list",
+            "data": [
+                { "id": "ernie-5.1" },
+                { "model": "ernie-4.0-turbo-128k" },
+                { "name": "ernie-3.5-8k" }
+            ]
+        });
+        assert_eq!(
+            parse_openai_model_ids(&value),
+            vec![
+                "ernie-5.1".to_string(),
+                "ernie-4.0-turbo-128k".to_string(),
+                "ernie-3.5-8k".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn provider_errors_redact_auth_markers() {
+        let redacted = redact_provider_error("Authorization: Bearer secret-token-value");
+        assert!(!redacted.contains("secret-token-value"));
+        assert!(redacted.contains("[redacted]"));
     }
 
     #[test]
@@ -17508,6 +17895,8 @@ pub fn run() {
             save_desktop_settings,
             check_local_llm_cli,
             check_llm_api_key,
+            check_ernie_provider,
+            test_ernie_chat,
             generate_llm_answer,
             plan_ingest,
             run_ingest_lint,

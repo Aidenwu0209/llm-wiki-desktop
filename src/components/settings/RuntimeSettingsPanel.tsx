@@ -22,10 +22,11 @@ import {
   Sparkles,
   TerminalSquare,
 } from "lucide-react";
-import type { AgentReadApiReadiness, AgentReadApiServerInfo, DesktopSettings, LlmApiKeyCheckResult, LlmCliCheckResult, LlmProviderConfig } from "../../types";
+import type { AgentReadApiReadiness, AgentReadApiServerInfo, DesktopSettings, LlmApiKeyCheckResult, LlmCliCheckResult, LlmProviderCenterSettings, LlmProviderConfig, LlmProviderTestResult } from "../../types";
 import { languageName, type UiLanguage } from "../../i18n";
 import { isLoopbackHttpEndpoint } from "../../lib/local-endpoints";
-import { agentReadApiReadiness, checkLlmApiKey, checkLocalLlmCli, startAgentReadApi, stopAgentReadApi } from "../../tauri";
+import { providerAdapters, providerIdAliases } from "../../lib/providers/catalog";
+import { agentReadApiReadiness, checkLlmApiKey, checkLocalLlmCli, startAgentReadApi, stopAgentReadApi, testErnieChat } from "../../tauri";
 import { BrandMark } from "../brand/BrandMark";
 
 type RuntimeSettingsPanelProps = {
@@ -114,6 +115,11 @@ const settingsCopy = {
     nativeProtocol: "原生协议",
     protocolHint: "协议信息会保存到桌面设置，供后续 Chat/Search 调用模型时选择正确 wire format。",
     checkKeyAndEnable: "检查并启用",
+    testConnection: "测试连接",
+    notConfigured: "未配置",
+    lastChecked: "上次检查",
+    errorDetails: "错误详情",
+    apiKeySource: "API key 来源",
     apiKeyHint: "请把密钥放在系统环境变量、本地运行时或启动脚本中；桌面设置只保存变量名。",
     local: "本地",
     activeKeyHidden: "已选择，未保存密钥",
@@ -178,6 +184,11 @@ const settingsCopy = {
     nativeProtocol: "Native",
     protocolHint: "The protocol is saved so later Chat/Search model calls can use the correct wire format.",
     checkKeyAndEnable: "Check and enable",
+    testConnection: "Test connection",
+    notConfigured: "Not configured",
+    lastChecked: "Last checked",
+    errorDetails: "Error details",
+    apiKeySource: "API key source",
     apiKeyHint: "Put the secret in an environment variable, local runtime config, or launch script. Desktop settings only save the variable name.",
     local: "Local",
     activeKeyHidden: "Selected, key not stored",
@@ -217,33 +228,7 @@ const settingsCopy = {
   },
 } as const;
 
-const providers = [
-  { id: "anthropic", name: "Anthropic (Claude)", subtitle: "Claude API models for remote research jobs.", subtitleZh: "面向远程研究任务的 Claude API 模型。", kind: "api", defaultApiBaseUrl: "https://api.anthropic.com/v1", defaultApiKeyEnvVar: "ANTHROPIC_API_KEY", defaultApiProtocol: "native", defaultContextWindow: 200000, models: ["claude-sonnet-4-5", "claude-3-7-sonnet", "claude-3-5-haiku"] },
-  { id: "claude-code", name: "Claude Code CLI (local)", subtitle: "Local Claude Code CLI handoff without storing API keys.", subtitleZh: "通过本地 Claude Code 命令行交接任务，不在桌面端保存 API key。", kind: "local", command: "claude" as const, models: ["sonnet", "opus", "default"] },
-  { id: "codex-cli", name: "Codex CLI (local)", subtitle: "Local Codex runtime for repo-aware research and automation.", subtitleZh: "本地 Codex 运行时，用于仓库上下文研究和自动化。", kind: "local", command: "codex" as const, models: ["gpt-5.5", "gpt-5.4", "gpt-5.3-codex"] },
-  { id: "openai", name: "OpenAI (GPT)", subtitle: "Hosted GPT models when explicit API use is allowed.", subtitleZh: "仅在明确允许 API 使用时启用的托管 GPT 模型。", kind: "api", defaultApiBaseUrl: "https://api.openai.com/v1", defaultApiKeyEnvVar: "OPENAI_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 128000, models: ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"] },
-  { id: "google", name: "Google (Gemini)", subtitle: "Gemini API provider for external model runs.", subtitleZh: "用于外部模型运行的 Gemini API 提供方。", kind: "api", defaultApiBaseUrl: "https://generativelanguage.googleapis.com/v1beta", defaultApiKeyEnvVar: "GEMINI_API_KEY", defaultApiProtocol: "native", defaultContextWindow: 1000000, models: ["gemini-2.5-pro", "gemini-2.5-flash"] },
-  { id: "deepseek", name: "DeepSeek", subtitle: "OpenAI-compatible DeepSeek endpoint.", subtitleZh: "OpenAI 兼容的 DeepSeek 端点。", kind: "api", defaultApiBaseUrl: "https://api.deepseek.com/v1", defaultApiKeyEnvVar: "DEEPSEEK_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 64000, models: ["deepseek-reasoner", "deepseek-chat"] },
-  { id: "kimi", name: "Kimi (Moonshot)", subtitle: "Moonshot international endpoint.", subtitleZh: "Moonshot 国际区端点。", kind: "api", defaultApiBaseUrl: "https://api.moonshot.ai/v1", defaultApiKeyEnvVar: "MOONSHOT_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 256000, models: ["kimi-k2.6", "kimi-k2.5", "kimi-k2-thinking", "kimi-for-coding"] },
-  { id: "kimi-cn", name: "Kimi (Moonshot, 中国)", subtitle: "Moonshot China endpoint profile.", subtitleZh: "Moonshot 中国区端点配置。", kind: "api", defaultApiBaseUrl: "https://api.moonshot.cn/v1", defaultApiKeyEnvVar: "MOONSHOT_CN_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 256000, models: ["kimi-k2.6", "kimi-k2.5", "kimi-k2-thinking", "kimi-for-coding"] },
-  { id: "qwen-dashscope", name: "通义千问 / DashScope", subtitle: "Alibaba Cloud DashScope OpenAI-compatible endpoint.", subtitleZh: "阿里云 DashScope OpenAI 兼容端点。", kind: "api", defaultApiBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", defaultApiKeyEnvVar: "DASHSCOPE_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 131072, models: ["qwen-plus", "qwen-max", "qwen-turbo", "qwen-long", "qwen3-coder-plus"] },
-  { id: "bailian-coding", name: "阿里百炼 Coding Plan", subtitle: "Alibaba Bailian coding endpoint for Qwen/Kimi/GLM/MiniMax presets.", subtitleZh: "阿里百炼 Coding Plan，覆盖 Qwen/Kimi/GLM/MiniMax 等模型。", kind: "api", defaultApiBaseUrl: "https://coding.dashscope.aliyuncs.com/v1", defaultApiKeyEnvVar: "BAILIAN_CODING_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 131072, models: ["qwen3.6-plus", "qwen3-coder-plus", "kimi-k2.5", "glm-5", "MiniMax-M2.5"] },
-  { id: "zhipu", name: "智谱 GLM (Zhipu)", subtitle: "BigModel GLM OpenAI-compatible endpoint.", subtitleZh: "智谱 BigModel GLM OpenAI 兼容端点。", kind: "api", defaultApiBaseUrl: "https://open.bigmodel.cn/api/paas/v4", defaultApiKeyEnvVar: "ZHIPU_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 128000, models: ["glm-4.6", "glm-4.5", "glm-4.5-air", "glm-4-plus", "glm-4-flash"] },
-  { id: "minimax-global", name: "MiniMax (Global)", subtitle: "MiniMax Anthropic-compatible global endpoint.", subtitleZh: "MiniMax 国际区 Anthropic 兼容端点。", kind: "api", defaultApiBaseUrl: "https://api.minimax.io/anthropic", defaultApiKeyEnvVar: "MINIMAX_API_KEY", defaultApiProtocol: "anthropic-compatible", defaultContextWindow: 200000, models: ["MiniMax-M2.7", "MiniMax-M2.5"] },
-  { id: "minimax-cn", name: "MiniMax (中国)", subtitle: "MiniMax China Anthropic-compatible endpoint.", subtitleZh: "MiniMax 中国区 Anthropic 兼容端点。", kind: "api", defaultApiBaseUrl: "https://api.minimaxi.com/anthropic", defaultApiKeyEnvVar: "MINIMAX_CN_API_KEY", defaultApiProtocol: "anthropic-compatible", defaultContextWindow: 200000, models: ["MiniMax-M2.7", "MiniMax-M2.5"] },
-  { id: "volcengine-ark", name: "火山引擎 Ark / 豆包", subtitle: "Volcengine Ark OpenAI-compatible endpoint.", subtitleZh: "火山引擎 Ark / 豆包 OpenAI 兼容端点。", kind: "api", defaultApiBaseUrl: "https://ark.cn-beijing.volces.com/api/v3", defaultApiKeyEnvVar: "VOLCENGINE_ARK_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 128000, models: ["doubao-seed-1-6", "doubao-1-5-pro-32k", "deepseek-v3", "Doubao-Seed-2.0-pro"] },
-  { id: "baidu-qianfan", name: "百度千帆 / 文心", subtitle: "Baidu Qianfan OpenAI-compatible endpoint.", subtitleZh: "百度千帆 / 文心 OpenAI 兼容端点。", kind: "api", defaultApiBaseUrl: "https://qianfan.baidubce.com/v2", defaultApiKeyEnvVar: "QIANFAN_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 128000, models: ["ernie-4.5-turbo-128k", "ernie-4.5-8k", "ernie-x1-turbo-32k"] },
-  { id: "tencent-hunyuan", name: "腾讯混元 (Hunyuan)", subtitle: "Tencent Hunyuan OpenAI-compatible endpoint.", subtitleZh: "腾讯混元 OpenAI 兼容端点。", kind: "api", defaultApiBaseUrl: "https://api.hunyuan.cloud.tencent.com/v1", defaultApiKeyEnvVar: "HUNYUAN_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 128000, models: ["hunyuan-t1-latest", "hunyuan-turbos-latest", "hunyuan-large"] },
-  { id: "siliconflow", name: "硅基流动 (SiliconFlow)", subtitle: "OpenAI-compatible model gateway for Chinese and open-weight models.", subtitleZh: "硅基流动 OpenAI 兼容模型网关，覆盖国产和开源模型。", kind: "api", defaultApiBaseUrl: "https://api.siliconflow.cn/v1", defaultApiKeyEnvVar: "SILICONFLOW_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 128000, models: ["deepseek-ai/DeepSeek-V3", "Qwen/Qwen3-235B-A22B", "THUDM/GLM-4-32B-0414"] },
-  { id: "baichuan", name: "百川智能 (Baichuan)", subtitle: "Baichuan OpenAI-compatible endpoint.", subtitleZh: "百川智能 OpenAI 兼容端点。", kind: "api", defaultApiBaseUrl: "https://api.baichuan-ai.com/v1", defaultApiKeyEnvVar: "BAICHUAN_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 128000, models: ["Baichuan4-Turbo", "Baichuan4-Air", "Baichuan3-Turbo"] },
-  { id: "yi", name: "零一万物 Yi", subtitle: "01.AI Yi OpenAI-compatible endpoint.", subtitleZh: "零一万物 Yi OpenAI 兼容端点。", kind: "api", defaultApiBaseUrl: "https://api.lingyiwanwu.com/v1", defaultApiKeyEnvVar: "YI_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 128000, models: ["yi-large", "yi-medium", "yi-vision"] },
-  { id: "iflytek-spark", name: "讯飞星火 (Spark)", subtitle: "iFlytek Spark OpenAI-compatible endpoint.", subtitleZh: "讯飞星火 OpenAI 兼容端点。", kind: "api", defaultApiBaseUrl: "https://spark-api-open.xf-yun.com/v1", defaultApiKeyEnvVar: "SPARK_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 128000, models: ["4.0Ultra", "generalv3.5", "generalv3"] },
-  { id: "groq", name: "Groq", subtitle: "Fast hosted inference for low-latency checks.", subtitleZh: "用于低延迟检查的快速托管推理。", kind: "api", defaultApiBaseUrl: "https://api.groq.com/openai/v1", defaultApiKeyEnvVar: "GROQ_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 128000, models: ["llama-3.3-70b", "mixtral"] },
-  { id: "xai", name: "xAI (Grok)", subtitle: "Grok provider for approved hosted research tasks.", subtitleZh: "用于已批准托管研究任务的 Grok 提供方。", kind: "api", defaultApiBaseUrl: "https://api.x.ai/v1", defaultApiKeyEnvVar: "XAI_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 131072, models: ["grok-4", "grok-3", "grok-3-mini"] },
-  { id: "nvidia", name: "NVIDIA NIM", subtitle: "NIM endpoints for enterprise or local gateway use.", subtitleZh: "用于企业端点或本地网关的 NIM 配置。", kind: "api", defaultApiBaseUrl: "https://integrate.api.nvidia.com/v1", defaultApiKeyEnvVar: "NVIDIA_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 128000, models: ["meta/llama-3.3-70b-instruct", "nvidia/llama-3.3-nemotron-super-49b-v1.5", "deepseek-ai/deepseek-v3.2"] },
-  { id: "ollama-local", name: "Ollama (Local)", subtitle: "Local OpenAI-compatible endpoint.", subtitleZh: "本地 OpenAI 兼容模型端点。", kind: "api", defaultApiBaseUrl: "http://localhost:11434/v1", defaultApiKeyEnvVar: "OLLAMA_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 32768, models: ["qwen3", "llama3.3", "deepseek-r1"] },
-  { id: "custom-openai", name: "Custom OpenAI-Compatible", subtitle: "Any OpenAI-compatible gateway, relay, vLLM, LM Studio, or LocalAI endpoint.", subtitleZh: "任意 OpenAI 兼容网关、转发、vLLM、LM Studio 或 LocalAI 端点。", kind: "api", defaultApiBaseUrl: "https://your-gateway.example.com/v1", defaultApiKeyEnvVar: "CUSTOM_LLM_API_KEY", defaultApiProtocol: "openai-compatible", defaultContextWindow: 128000, models: ["custom-model"] },
-] as const;
+const providers = providerAdapters;
 
 function visiblePath(path: string) {
   return path.replace(/ +(?=\/|$)/g, (match) => "[space]".repeat(match.length));
@@ -264,7 +249,7 @@ function defaultProviderConfig(providerId: string): LlmProviderConfig {
     expanded: false,
     selectedModel: provider?.models[0] ?? "default",
     customModel: "",
-    contextWindow: provider && "defaultContextWindow" in provider ? provider.defaultContextWindow : providerId.includes("cli") ? 128000 : 64000,
+    contextWindow: provider?.defaultContextWindow ?? (provider?.kind === "local" ? 128000 : 64000),
     reasoningMode: "balanced",
     apiBaseUrl: provider && "defaultApiBaseUrl" in provider ? provider.defaultApiBaseUrl : "",
     apiKeyEnvVar: provider && "defaultApiKeyEnvVar" in provider ? provider.defaultApiKeyEnvVar : "",
@@ -278,15 +263,19 @@ function defaultProviderConfig(providerId: string): LlmProviderConfig {
   };
 }
 
-function normalizeProviderSettings(settings: DesktopSettings) {
+function normalizeProviderSettings(settings: DesktopSettings): LlmProviderCenterSettings {
   const current = settings.llmProviderCenter || { activeProviderId: null, providers: {} };
   const knownProviderIds: string[] = providers.map((item) => item.id);
-  const activeProviderId = current.activeProviderId && knownProviderIds.includes(current.activeProviderId)
-    ? current.activeProviderId
+  const mappedActiveProviderId = current.activeProviderId
+    ? providerIdAliases[current.activeProviderId] || current.activeProviderId
+    : null;
+  const activeProviderId = mappedActiveProviderId && knownProviderIds.includes(mappedActiveProviderId)
+    ? mappedActiveProviderId
     : null;
   const normalized = { ...current.providers };
   for (const provider of providers) {
-    const saved = normalized[provider.id];
+    const aliasId = Object.entries(providerIdAliases).find(([, target]) => target === provider.id)?.[0];
+    const saved = normalized[provider.id] || (aliasId ? normalized[aliasId] : undefined);
     const defaults = defaultProviderConfig(provider.id);
     const merged = {
       ...defaults,
@@ -327,6 +316,7 @@ export function RuntimeSettingsPanel({
   const [section, setSection] = useState<SettingsSection>("llm");
   const [cliChecks, setCliChecks] = useState<Record<string, LlmCliCheckResult | null>>({});
   const [apiChecks, setApiChecks] = useState<Record<string, LlmApiKeyCheckResult | null>>({});
+  const [providerTests, setProviderTests] = useState<Record<string, LlmProviderTestResult | null>>({});
   const [checkingCli, setCheckingCli] = useState<string | null>(null);
   const [checkingApi, setCheckingApi] = useState<string | null>(null);
   const [agentApiInfo, setAgentApiInfo] = useState<AgentReadApiServerInfo | null>(null);
@@ -459,7 +449,7 @@ export function RuntimeSettingsPanel({
     }
   };
 
-  const runCliCheck = async (providerId: "codex-cli" | "claude-code", command: "codex" | "claude") => {
+  const runCliCheck = async (providerId: "local-codex" | "local-claude", command: "codex" | "claude") => {
     setCheckingCli(providerId);
     try {
       const result = await checkLocalLlmCli(command);
@@ -513,6 +503,76 @@ export function RuntimeSettingsPanel({
 
   const runApiKeyCheck = async (providerId: string) => {
     const config = center.providers[providerId] ?? defaultProviderConfig(providerId);
+    if (providerId === "ernie-ai-studio") {
+      setCheckingApi(providerId);
+      try {
+        const model = config.customModel.trim() || config.selectedModel || "ernie-5.1";
+        const result = await testErnieChat(model);
+        setProviderTests((current) => ({ ...current, [providerId]: result }));
+        const available = result.status === "ready";
+        setApiChecks((current) => ({
+          ...current,
+          [providerId]: {
+            providerId,
+            envVar: result.apiKeyEnv,
+            available,
+            message: result.message,
+          },
+        }));
+        const nextProviders = Object.fromEntries(
+          Object.entries(center.providers).map(([id, value]) => [
+            id,
+            {
+              ...value,
+              enabled: available
+                ? id === providerId
+                : id !== providerId && id === center.activeProviderId,
+              ...(id === providerId
+                ? {
+                    selectedModel: result.model || value.selectedModel,
+                    apiKeyEnvVar: result.apiKeyEnv,
+                    apiBaseUrl: result.baseUrl,
+                    apiKeyConfigured: available,
+                    apiKeyCheckedAt: result.checkedAt,
+                  }
+                : {}),
+            },
+          ]),
+        );
+        updateCenter({
+          activeProviderId: available
+            ? providerId
+            : center.activeProviderId === providerId ? null : center.activeProviderId,
+          providers: nextProviders,
+        });
+      } catch (err) {
+        const message = String(err).replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, "Bearer [redacted]");
+        setProviderTests((current) => ({
+          ...current,
+          [providerId]: {
+            provider: "ernie-ai-studio",
+            model: config.selectedModel,
+            status: "unknown",
+            latencyMs: null,
+            usage: null,
+            checkedAt: new Date().toISOString(),
+            message,
+            errorCode: "unknown",
+            apiKeyEnv: "AI_STUDIO_API_KEY",
+            baseUrl: config.apiBaseUrl || "https://aistudio.baidu.com/llm/lmapi/v3",
+            models: [],
+          },
+        }));
+        updateProvider(providerId, {
+          enabled: false,
+          apiKeyConfigured: false,
+          apiKeyCheckedAt: new Date().toISOString(),
+        });
+      } finally {
+        setCheckingApi(null);
+      }
+      return;
+    }
     if (isLoopbackHttpEndpoint(config.apiBaseUrl)) {
       const result: LlmApiKeyCheckResult = {
         providerId,
@@ -1148,11 +1208,21 @@ export function RuntimeSettingsPanel({
                 const config = center.providers[provider.id] ?? defaultProviderConfig(provider.id);
                 const cliCheck = cliChecks[provider.id];
                 const apiCheck = apiChecks[provider.id];
+                const providerTest = providerTests[provider.id];
                 const isLocal = provider.kind === "local";
+                const isErnie = provider.id === "ernie-ai-studio";
                 const persistedCliAvailable = Boolean(config.cliAvailable);
                 const localApiReady = isLoopbackHttpEndpoint(config.apiBaseUrl);
                 const canEnable = isLocal ? Boolean(cliCheck?.available || persistedCliAvailable) : Boolean(apiCheck?.available || apiProviderReady(config));
-                const status = isLocal
+                const status = isErnie
+                  ? checkingApi === provider.id
+                    ? text.checking
+                    : providerTest
+                      ? providerTest.status === "ready" ? text.detected : providerTest.status === "missing_key" ? text.notConfigured : text.notFound
+                      : config.enabled
+                        ? text.enabled
+                        : text.notConfigured
+                  : isLocal
                   ? checkingCli === provider.id
                     ? text.checking
                     : cliCheck
@@ -1180,7 +1250,7 @@ export function RuntimeSettingsPanel({
                         <button
                           className="provider-inline-action"
                           type="button"
-                          onClick={() => runCliCheck(provider.id as "codex-cli" | "claude-code", provider.command)}
+                          onClick={() => runCliCheck(provider.id as "local-codex" | "local-claude", provider.command as "codex" | "claude")}
                           disabled={checkingCli === provider.id}
                         >
                           <RefreshCw size={14} />
@@ -1216,7 +1286,7 @@ export function RuntimeSettingsPanel({
                               <code>{cliCheck?.path || config.cliPath ? visiblePath(cliCheck?.path || config.cliPath || "") : text.pathPending}</code>
                             </div>
                             <button
-                              onClick={() => runCliCheck(provider.id as "codex-cli" | "claude-code", provider.command)}
+                              onClick={() => runCliCheck(provider.id as "local-codex" | "local-claude", provider.command as "codex" | "claude")}
                               disabled={checkingCli === provider.id}
                             >
                               <RefreshCw size={14} />
@@ -1253,14 +1323,16 @@ export function RuntimeSettingsPanel({
                                   value={config.apiBaseUrl || ""}
                                   onChange={(event) => updateProvider(provider.id, { apiBaseUrl: event.target.value })}
                                   placeholder={"defaultApiBaseUrl" in provider ? provider.defaultApiBaseUrl : "https://api.example.com/v1"}
+                                  readOnly={isErnie}
                                 />
                               </label>
                               <label className="field-label">
-                                {text.apiKeyEnvVar}
+                                {isErnie ? text.apiKeySource : text.apiKeyEnvVar}
                                 <input
                                   value={config.apiKeyEnvVar || ""}
                                   onChange={(event) => updateProvider(provider.id, { apiKeyEnvVar: event.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "") })}
                                   placeholder={"defaultApiKeyEnvVar" in provider ? provider.defaultApiKeyEnvVar : "PROVIDER_API_KEY"}
+                                  readOnly={isErnie}
                                 />
                               </label>
                               <button
@@ -1269,12 +1341,21 @@ export function RuntimeSettingsPanel({
                                 disabled={checkingApi === provider.id || (!config.apiKeyEnvVar?.trim() && !localApiReady)}
                               >
                                 <RefreshCw size={14} />
-                                {text.checkKeyAndEnable}
+                                {isErnie ? text.testConnection : text.checkKeyAndEnable}
                               </button>
                             </div>
                             <div className={classNames("settings-notice", apiCheck && !apiCheck.available && "danger")}>
                               {apiCheck?.message || `${text.apiKeyHint} ${text.protocolHint}`}
                             </div>
+                            {isErnie && (
+                              <div className={classNames("settings-notice", providerTest && providerTest.status !== "ready" && "danger")}>
+                                <strong>{status}</strong>
+                                {providerTest?.checkedAt ? ` · ${text.lastChecked}: ${new Date(providerTest.checkedAt).toLocaleString()}` : ""}
+                                {providerTest?.latencyMs ? ` · ${providerTest.latencyMs} ms` : ""}
+                                {providerTest?.model ? ` · ${providerTest.model}` : ""}
+                                {providerTest?.message ? ` · ${text.errorDetails}: ${providerTest.message}` : ""}
+                              </div>
+                            )}
                           </div>
                         )}
                         {isLocal && !canEnable && (
@@ -1284,18 +1365,29 @@ export function RuntimeSettingsPanel({
                           </div>
                         )}
 
-                        <div className="model-chip-row">
-                          {provider.models.map((model) => (
-                            <button
-                              type="button"
-                              key={model}
-                              className={config.selectedModel === model ? "active" : ""}
-                              onClick={() => updateProvider(provider.id, { selectedModel: model })}
-                            >
-                              {model}
-                            </button>
-                          ))}
-                        </div>
+                        {isErnie ? (
+                          <label className="field-label">
+                            Model
+                            <select value={config.selectedModel} onChange={(event) => updateProvider(provider.id, { selectedModel: event.target.value })}>
+                              {provider.models.map((model) => (
+                                <option key={model} value={model}>{model}</option>
+                              ))}
+                            </select>
+                          </label>
+                        ) : (
+                          <div className="model-chip-row">
+                            {provider.models.map((model) => (
+                              <button
+                                type="button"
+                                key={model}
+                                className={config.selectedModel === model ? "active" : ""}
+                                onClick={() => updateProvider(provider.id, { selectedModel: model })}
+                              >
+                                {model}
+                              </button>
+                            ))}
+                          </div>
+                        )}
 
                         <div className="provider-controls">
                           <label className="field-label">

@@ -14,6 +14,7 @@ import type {
   LlmAnswerRequest,
   LlmAnswerResult,
   LlmCliCheckResult,
+  LlmProviderTestResult,
   IngestPlan,
   QueryWritebackDraft,
   ReviewQueueItem,
@@ -105,6 +106,14 @@ export function checkLocalLlmCli(command: "codex" | "claude"): Promise<LlmCliChe
 
 export function checkLlmApiKey(providerId: string, apiKeyEnvVar: string): Promise<LlmApiKeyCheckResult> {
   return invoke("check_llm_api_key", { providerId, apiKeyEnvVar });
+}
+
+export function checkErnieProvider(): Promise<LlmProviderTestResult> {
+  return invoke("check_ernie_provider");
+}
+
+export function testErnieChat(model: string): Promise<LlmProviderTestResult> {
+  return invoke("test_ernie_chat", { model });
 }
 
 export function generateLlmAnswer(vaultPath: string, request: LlmAnswerRequest): Promise<LlmAnswerResult> {

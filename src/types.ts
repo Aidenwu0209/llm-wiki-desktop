@@ -324,6 +324,66 @@ export type LlmProviderCenterSettings = {
   providers: Record<string, LlmProviderConfig>;
 };
 
+export type ProviderAdapterId =
+  | "ernie-ai-studio"
+  | "openai-compatible"
+  | "deepseek"
+  | "local-codex"
+  | "local-claude"
+  | "custom";
+
+export type ProviderAdapterStatus =
+  | "configured"
+  | "missing_key"
+  | "connection_failed"
+  | "ready";
+
+export type ProviderAdapter = {
+  id: ProviderAdapterId;
+  displayName: string;
+  name: string;
+  subtitle: string;
+  subtitleZh: string;
+  kind: "api" | "local";
+  providerType: "hosted" | "local" | "custom";
+  command?: "codex" | "claude";
+  baseUrl?: string;
+  apiKeyEnv?: string;
+  defaultModel: string;
+  fallbackModels: string[];
+  models: string[];
+  supportsStructuredOutput?: boolean | "model-dependent";
+  supportsStreaming?: boolean | "optional";
+  status?: ProviderAdapterStatus;
+  defaultApiBaseUrl?: string;
+  defaultApiKeyEnvVar?: string;
+  defaultApiProtocol?: "openai-compatible" | "anthropic-compatible" | "native" | string;
+  defaultContextWindow?: number;
+};
+
+export type LlmProviderTestStatus =
+  | "ready"
+  | "missing_key"
+  | "network_error"
+  | "auth_error"
+  | "model_not_found"
+  | "rate_limited"
+  | "unknown";
+
+export type LlmProviderTestResult = {
+  provider: string;
+  model?: string | null;
+  status: LlmProviderTestStatus;
+  latencyMs?: number | null;
+  usage?: Record<string, unknown> | null;
+  checkedAt: string;
+  message: string;
+  errorCode?: string | null;
+  apiKeyEnv: string;
+  baseUrl: string;
+  models?: string[];
+};
+
 export type LlmAnswerEvidenceRef = {
   id: string;
   type: string;
