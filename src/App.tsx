@@ -7,6 +7,7 @@ import {
   BarChart3,
   Check,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
@@ -4001,25 +4002,35 @@ function ShellTreeSection({
   selectedPath?: string;
   onSelect: (file: VaultFile) => void;
 }) {
+  const [expanded, setExpanded] = useState(true);
   return (
     <section className="shell-tree-section">
-      <div className="shell-tree-title">
-        <span>{icon}{title}</span>
+      <button
+        type="button"
+        className="shell-tree-title shell-tree-toggle"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((open) => !open)}
+      >
+        <span>{expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}{icon}{title}</span>
         <em>{meta}</em>
-      </div>
-      {files.length === 0 && <p className="empty">{empty}</p>}
-      {files.map((file) => (
-        <button
-          key={file.path}
-          type="button"
-          className={classNames(selectedPath === file.path && "selected")}
-          onClick={() => onSelect(file)}
-          title={file.path}
-        >
-          <strong>{file.title || file.name}</strong>
-          <span>{file.status || file.updated || file.kind}</span>
-        </button>
-      ))}
+      </button>
+      {expanded && (
+        <>
+          {files.length === 0 && <p className="empty">{empty}</p>}
+          {files.map((file) => (
+            <button
+              key={file.path}
+              type="button"
+              className={classNames("shell-tree-item", selectedPath === file.path && "selected")}
+              onClick={() => onSelect(file)}
+              title={file.path}
+            >
+              <strong>{file.title || file.name}</strong>
+              <span>{file.status || file.updated || file.kind}</span>
+            </button>
+          ))}
+        </>
+      )}
     </section>
   );
 }
@@ -4039,26 +4050,51 @@ function ShellFileTree({
   return (
     <div className="shell-file-tree">
       {groups.map((group) => (
-        <section className="shell-tree-section shell-folder-section" key={group.folder}>
-          <div className="shell-tree-title">
-            <span><FolderOpen size={14} />{group.folder}</span>
-            <em>{group.files.length}</em>
-          </div>
-          {group.files.map((file) => (
-            <button
-              key={file.path}
-              type="button"
-              className={classNames("file-tree-item", selectedPath === file.path && "selected")}
-              onClick={() => onSelect(file)}
-              title={file.path}
-            >
-              <strong>{file.name}</strong>
-              <span>{file.path}</span>
-            </button>
-          ))}
-        </section>
+        <ShellFileTreeGroup
+          key={group.folder}
+          group={group}
+          selectedPath={selectedPath}
+          onSelect={onSelect}
+        />
       ))}
     </div>
+  );
+}
+
+function ShellFileTreeGroup({
+  group,
+  selectedPath,
+  onSelect,
+}: {
+  group: { folder: string; files: VaultFile[] };
+  selectedPath?: string;
+  onSelect: (file: VaultFile) => void;
+}) {
+  const [expanded, setExpanded] = useState(true);
+  return (
+    <section className="shell-tree-section shell-folder-section">
+      <button
+        type="button"
+        className="shell-tree-title shell-tree-toggle"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((open) => !open)}
+      >
+        <span>{expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}<FolderOpen size={14} />{group.folder}</span>
+        <em>{group.files.length}</em>
+      </button>
+      {expanded && group.files.map((file) => (
+        <button
+          key={file.path}
+          type="button"
+          className={classNames("shell-tree-item", "file-tree-item", selectedPath === file.path && "selected")}
+          onClick={() => onSelect(file)}
+          title={file.path}
+        >
+          <strong>{file.name}</strong>
+          <span>{file.path}</span>
+        </button>
+      ))}
+    </section>
   );
 }
 

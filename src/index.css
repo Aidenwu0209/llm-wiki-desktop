@@ -279,9 +279,20 @@ textarea {
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 6px;
+  width: 100%;
+  min-height: 28px;
+  border: 0;
+  background: transparent;
+  padding: 0;
   color: #3b4843;
   font-size: 12px;
   font-weight: 900;
+  text-align: left;
+}
+
+.shell-tree-toggle:hover:not(:disabled) {
+  background: transparent;
+  color: #17201d;
 }
 
 .shell-tree-title span {
@@ -297,7 +308,7 @@ textarea {
   font-style: normal;
 }
 
-.shell-tree-section button {
+.shell-tree-item {
   display: block;
   width: 100%;
   height: auto;
@@ -309,19 +320,19 @@ textarea {
   text-align: left;
 }
 
-.shell-tree-section button:hover {
+.shell-tree-item:hover {
   border-color: #cbd4cf;
   background: #f4f8f2;
 }
 
-.shell-tree-section button.selected {
+.shell-tree-item.selected {
   border-color: #8fb29d;
   background: #edf7f1;
   box-shadow: inset 3px 0 0 #2f6b45;
 }
 
-.shell-tree-section strong,
-.shell-tree-section span {
+.shell-tree-item strong,
+.shell-tree-item span {
   display: block;
   min-width: 0;
   overflow: hidden;
