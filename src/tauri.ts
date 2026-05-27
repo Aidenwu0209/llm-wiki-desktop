@@ -16,6 +16,8 @@ import type {
   LlmCliCheckResult,
   LlmProviderTestResult,
   IngestPlan,
+  ProviderAnswerDraft,
+  ProviderAnswerRequest,
   QueryWritebackDraft,
   ReviewQueueItem,
   RuntimeSettings,
@@ -118,6 +120,10 @@ export function testErnieChat(model: string): Promise<LlmProviderTestResult> {
 
 export function generateLlmAnswer(vaultPath: string, request: LlmAnswerRequest): Promise<LlmAnswerResult> {
   return invoke("generate_llm_answer", { vaultPath, request });
+}
+
+export function generateErnieEvidenceAnswer(vaultPath: string, request: ProviderAnswerRequest): Promise<ProviderAnswerDraft> {
+  return invoke("generate_ernie_evidence_answer", { vaultPath, request });
 }
 
 export function agentReadApiReadiness(vaultPath: string): Promise<AgentReadApiReadiness> {
