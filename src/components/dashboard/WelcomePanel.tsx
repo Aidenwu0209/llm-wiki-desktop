@@ -1,8 +1,27 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, BookOpen, BriefcaseBusiness, CheckCircle2, FolderOpen, GraduationCap, History, Library, Plus, Sprout } from "lucide-react";
+import {
+  AlertTriangle,
+  BookOpen,
+  Bot,
+  BriefcaseBusiness,
+  CheckCircle2,
+  Eye,
+  FileJson2,
+  FileUp,
+  FolderOpen,
+  GitPullRequestDraft,
+  GraduationCap,
+  History,
+  Library,
+  MessageSquareText,
+  Network,
+  Plus,
+  ScanText,
+  Sprout,
+} from "lucide-react";
 import type { DesktopAppState, VaultSuggestion } from "../../types";
 import { LogoMark } from "../brand/LogoMark";
-import { languageName, type UiLanguage } from "../../i18n";
+import { languageName, WELCOME_ONBOARDING_COPY, type UiLanguage } from "../../i18n";
 
 export type WikiProjectTemplate = "research" | "reading" | "personal-growth" | "business" | "general";
 
@@ -27,6 +46,7 @@ type WelcomePanelProps = {
   onToggleLanguage: () => void;
   onSelectVault: (path: string) => void;
   onCreateVault: () => void;
+  onViewDemoTour?: () => void;
   onCreateProject?: (draft: NewWikiProjectDraft) => boolean | Promise<boolean>;
   onChooseParentDirectory?: () => Promise<string | null>;
 };
@@ -108,6 +128,9 @@ const welcomeCopy = {
   },
 } as const;
 
+const onboardingStepIcons = [Library, FileUp, ScanText, MessageSquareText, GitPullRequestDraft] as const;
+const onboardingFlowIcons = [FileUp, ScanText, FileJson2, Bot, Network, MessageSquareText, GitPullRequestDraft] as const;
+
 function classNames(...items: Array<string | false | null | undefined>) {
   return items.filter(Boolean).join(" ");
 }
@@ -151,10 +174,12 @@ export function WelcomePanel({
   onToggleLanguage,
   onSelectVault,
   onCreateVault,
+  onViewDemoTour,
   onCreateProject,
   onChooseParentDirectory,
 }: WelcomePanelProps) {
   const text = welcomeCopy[language];
+  const onboarding = WELCOME_ONBOARDING_COPY[language];
   const [internalCreateOpen, setInternalCreateOpen] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [template, setTemplate] = useState<WikiProjectTemplate>("research");
@@ -251,6 +276,49 @@ export function WelcomePanel({
         )}
       </div>
 
+      <section className="welcome-onboarding" aria-labelledby="welcome-onboarding-title">
+        <div className="welcome-onboarding-head">
+          <div>
+            <h2 id="welcome-onboarding-title">{onboarding.title}</h2>
+            <p>{onboarding.subtitle}</p>
+          </div>
+          {onViewDemoTour && (
+            <button type="button" className="demo-tour-button" onClick={onViewDemoTour}>
+              <Eye size={16} />
+              {onboarding.viewDemoTour}
+            </button>
+          )}
+        </div>
+
+        <ol className="welcome-onboarding-steps">
+          {onboarding.steps.map((step, index) => {
+            const Icon = onboardingStepIcons[index] ?? CheckCircle2;
+            return (
+              <li key={step} className="welcome-onboarding-step">
+                <span className="welcome-step-index">{index + 1}</span>
+                <Icon size={18} />
+                <strong>{step}</strong>
+              </li>
+            );
+          })}
+        </ol>
+
+        <div className="welcome-flow-diagram" aria-label={onboarding.title}>
+          {onboarding.flow.map((item, index) => {
+            const Icon = onboardingFlowIcons[index] ?? Network;
+            return (
+              <div className="welcome-flow-segment" key={item}>
+                <span className="welcome-flow-node">
+                  <Icon size={16} />
+                  {item}
+                </span>
+                {index < onboarding.flow.length - 1 && <span className="welcome-flow-arrow" aria-hidden="true">→</span>}
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
       <div className="welcome-projects">
         <section>
           <div className="section-head compact">
@@ -285,6 +353,13 @@ export function WelcomePanel({
               <span className="inline-state ok">demo</span>
               <code>{visiblePath(demoVault.path)}</code>
               <PathRiskNotice message={text.projectPathWhitespaceWarning} parts={demoVaultRiskParts} />
+            </button>
+          )}
+          {!demoVault?.exists && onViewDemoTour && (
+            <button type="button" onClick={onViewDemoTour}>
+              <strong>{onboarding.viewDemoTour}</strong>
+              <span className="inline-state ok">{onboarding.syntheticDemo}</span>
+              <code>{onboarding.demoDescription}</code>
             </button>
           )}
           {detectedProjects.map((item) => {

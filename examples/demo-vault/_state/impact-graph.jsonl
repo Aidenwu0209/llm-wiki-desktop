@@ -1,0 +1,2 @@
+{"edge_id":"demo-edge-0001","from_type":"source","from_id":"DEMO-0001","to_type":"claim","to_id":"demo-claim-0002","relationship":"supports","status":"needs_review"}
+{"edge_id":"demo-edge-0002","from_type":"claim","from_id":"demo-claim-0002","to_type":"proposal","to_id":"demo-proposal-0001","relationship":"gates","status":"proposed"}

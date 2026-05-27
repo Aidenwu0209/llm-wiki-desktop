@@ -1,0 +1,1 @@
+{"item_id":"demo-review-0001","kind":"proposal_review","severity":"p2","title":"Review ERNIE answer evidence before writeback","status":"open","target_path":"reviews/query-writeback/sample-proposal.md","source_id":"DEMO-0001","claim_id":"demo-claim-0002","recommended_action":"Approve only after checking evidence ids."}

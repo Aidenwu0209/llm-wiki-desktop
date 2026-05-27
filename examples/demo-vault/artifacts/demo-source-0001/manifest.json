@@ -1,0 +1,10 @@
+{
+  "source_id": "DEMO-0001",
+  "source_uuid": "demo-source-0001",
+  "parser": "PaddleOCR-VL-1.5",
+  "parser_version": "synthetic-demo",
+  "source_path": "raw/inbox/sample-project.md",
+  "markdown_path": "artifacts/demo-source-0001/markdown.md",
+  "chunks_path": "artifacts/demo-source-0001/chunks.jsonl",
+  "chunk_count": 4
+}

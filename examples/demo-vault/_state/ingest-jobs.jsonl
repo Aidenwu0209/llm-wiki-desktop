@@ -1,0 +1,1 @@
+{"job_id":"demo-job-0001","source_uuid":"demo-source-0001","source_id":"DEMO-0001","kind":"parse","status":"succeeded","current_step":"published","next_action":"Ask ERNIE with cited evidence","inputs":["raw/inbox/sample-project.md"],"outputs":["sources/sample-project-source.md","artifacts/demo-source-0001/chunks.jsonl"]}

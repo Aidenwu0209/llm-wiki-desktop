@@ -6458,6 +6458,11 @@ body[data-shell-panel-resizing="true"] * {
 }
 
 @media (max-width: 900px) {
+  body {
+    min-width: 0;
+    overflow: auto;
+  }
+
   .settings-center {
     grid-template-columns: 1fr;
   }
@@ -6824,6 +6829,138 @@ button.primary:hover:not(:disabled),
   gap: 14px;
 }
 
+.welcome-onboarding {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #d8ded9;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.welcome-onboarding-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 14px;
+}
+
+.welcome-onboarding-head h2 {
+  margin: 0;
+  color: #17201d;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.welcome-onboarding-head p {
+  max-width: 620px;
+  margin: 5px 0 0;
+  color: #64706a;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.demo-tour-button {
+  min-height: 34px;
+  white-space: nowrap;
+}
+
+.welcome-onboarding-steps {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.welcome-onboarding-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "index icon"
+    "label label";
+  align-items: center;
+  gap: 7px;
+  min-height: 92px;
+  border: 1px solid #d8ded9;
+  border-radius: 8px;
+  background: #fbfcfa;
+  padding: 10px;
+}
+
+.welcome-onboarding-step svg {
+  grid-area: icon;
+  justify-self: end;
+  color: #27475f;
+}
+
+.welcome-step-index {
+  grid-area: index;
+  display: inline-grid;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  border-radius: 999px;
+  background: #183850;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.welcome-onboarding-step strong {
+  grid-area: label;
+  color: #17201d;
+  font-size: 12px;
+  line-height: 1.32;
+}
+
+.welcome-flow-diagram {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 7px;
+  border: 1px solid #cbd4cf;
+  border-radius: 8px;
+  background: #f7f8f5;
+  padding: 9px;
+}
+
+.welcome-flow-segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+}
+
+.welcome-flow-node {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  border: 1px solid #d8ded9;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 0 10px;
+  color: #263630;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.welcome-flow-node svg {
+  flex: 0 0 auto;
+  color: #365f47;
+}
+
+.welcome-flow-arrow {
+  align-self: center;
+  color: #64706a;
+  font-size: 15px;
+  font-weight: 800;
+}
+
 .welcome-only-shell {
   display: grid;
   align-content: center;
@@ -6943,6 +7080,39 @@ button.primary:hover:not(:disabled),
 .welcome-path-risk svg {
   flex: 0 0 auto;
   margin-top: 1px;
+}
+
+@media (max-width: 1180px) {
+  .welcome-onboarding-steps {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .welcome-onboarding-head {
+    grid-template-columns: 1fr;
+  }
+
+  .demo-tour-button {
+    justify-self: start;
+  }
+}
+
+@media (max-width: 900px) {
+  .welcome-only-shell {
+    padding: 22px;
+  }
+
+  .welcome-product-center {
+    padding: 28px 18px;
+  }
+
+  .welcome-onboarding-steps,
+  .welcome-projects {
+    grid-template-columns: 1fr;
+  }
+
+  .welcome-flow-node {
+    white-space: normal;
+  }
 }
 
 .project-modal-head p {

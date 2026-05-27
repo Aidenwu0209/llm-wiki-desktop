@@ -42,6 +42,23 @@ open "src-tauri/target/release/bundle/macos/LLM Wiki.app"
 - `新建项目`：选择项目名称、模板、输出语言和父目录，桌面端会创建一个新的 open-llm-wiki vault。
 - `打开项目`：选择已有 vault。不要选择原始 PDF 文件夹，应该选择已经初始化过的 LLM Wiki vault。
 
+Welcome 页同时展示评委可直接理解的 OCR + ERNIE 演示路径：
+
+```text
+PDF / Image -> PaddleOCR-VL-1.5 -> Markdown / JSON Artifact
+-> LLM Wiki Runtime -> Evidence Map -> ERNIE Answer -> Writeback Proposal
+```
+
+页面上的 5 步导览对应：
+
+1. Create or open a Vault / 创建或打开知识库。
+2. Submit PDFs or images / 提交 PDF 或图片。
+3. Parse with PaddleOCR-VL-1.5 / 使用 PaddleOCR-VL-1.5 解析。
+4. Ask with ERNIE using evidence / 使用文心一言基于证据问答。
+5. Create a writeback proposal / 创建可审核写回提案。
+
+仓库内提供一个合成示例 vault：[`examples/demo-vault`](examples/demo-vault)。它只包含自造 sample，不包含论文、截图或版权材料。没有可打开的真实 demo vault 时，Welcome 页只显示 `View Demo Tour`，不会假装打开不存在的 vault。
+
 创建或打开后会进入 `仪表盘`。仪表盘会显示 schema、runtime、Obsidian、资料数量、概念数量、审核压力和写回状态。
 
 ### 3. 导入论文或资料

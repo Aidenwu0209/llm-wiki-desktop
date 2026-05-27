@@ -14,6 +14,57 @@ export function languageName(language: UiLanguage) {
   return language === "zh" ? "中文" : "English";
 }
 
+export const WELCOME_ONBOARDING_COPY = {
+  zh: {
+    title: "OCR + ERNIE 证据工作流",
+    subtitle: "评委第一次打开时可以按这条路径完成从资料提交到可审核写回。",
+    steps: [
+      "创建或打开知识库",
+      "提交 PDF 或图片",
+      "使用 PaddleOCR-VL-1.5 解析",
+      "使用文心一言基于证据问答",
+      "创建可审核写回提案",
+    ],
+    flow: [
+      "PDF / 图片",
+      "PaddleOCR-VL-1.5",
+      "Markdown / JSON Artifact",
+      "LLM Wiki Runtime",
+      "Evidence Map",
+      "文心一言回答",
+      "Writeback Proposal",
+    ],
+    demoTitle: "演示路径",
+    demoDescription: "无真实 vault 时先查看合成 Demo Tour；不会假装打开不存在的知识库。",
+    viewDemoTour: "查看 Demo Tour",
+    syntheticDemo: "合成示例",
+  },
+  en: {
+    title: "OCR + ERNIE Evidence Flow",
+    subtitle: "A first-time reviewer can follow this path from submission to auditable writeback.",
+    steps: [
+      "Create or open a Vault",
+      "Submit PDFs or images",
+      "Parse with PaddleOCR-VL-1.5",
+      "Ask with ERNIE using evidence",
+      "Create a writeback proposal",
+    ],
+    flow: [
+      "PDF / Image",
+      "PaddleOCR-VL-1.5",
+      "Markdown / JSON Artifact",
+      "LLM Wiki Runtime",
+      "Evidence Map",
+      "ERNIE Answer",
+      "Writeback Proposal",
+    ],
+    demoTitle: "Demo path",
+    demoDescription: "If no real demo vault is available, use the synthetic Demo Tour instead of pretending to open a vault.",
+    viewDemoTour: "View Demo Tour",
+    syntheticDemo: "Synthetic demo",
+  },
+} as const;
+
 const ZH_RUNTIME_LABELS: Record<string, string> = {
   all: "全部",
   approved: "已批准",
