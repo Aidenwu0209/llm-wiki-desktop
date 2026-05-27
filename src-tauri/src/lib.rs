@@ -14682,6 +14682,49 @@ mod tests {
     }
 
     #[test]
+    fn generated_obsidian_home_surfaces_current_ingest_plan_gates() {
+        let vault = test_vault("obsidian-home-ingest-plan");
+        create_minimal_vault(&vault).expect("create vault");
+        let primary = vault.join("raw").join("a-primary.md");
+        let duplicate = vault.join("raw").join("z-duplicate.md");
+        write_text(&primary, "# Same Source\n").expect("write primary");
+        write_text(&duplicate, "# Same Source\n").expect("write duplicate");
+
+        let plan = plan_ingest(to_display(&vault)).expect("write desktop ingest plan");
+        assert_eq!(
+            plan.entries
+                .iter()
+                .filter(|entry| plan_entry_is_pipeline_runnable(entry))
+                .count(),
+            1
+        );
+        assert!(plan
+            .entries
+            .iter()
+            .any(|entry| entry.current_state == "duplicate"
+                && entry.requires_human_approval
+                && entry.file_name == "z-duplicate.md"));
+
+        let home = generate_entry_note(&vault).expect("generate home");
+        let text = read_text(&home);
+        assert!(text.contains("- Runnable ingest inputs: 1"));
+        assert!(text.contains("- Review-gated ingest inputs: 1"));
+        assert!(text.contains("- Plan generated: "));
+        assert!(!text.contains("- Plan generated: not generated"));
+        assert!(text.contains("### Runnable Ingest Inputs"));
+        assert!(text.contains("[[raw/a-primary|a-primary.md]]"));
+        assert!(text.contains("`imported`"));
+        assert!(text.contains("### Review-Gated Ingest Inputs"));
+        assert!(text.contains("[[raw/z-duplicate|z-duplicate.md]]"));
+        assert!(text.contains("`duplicate`"));
+        assert!(text.contains(
+            "Which runnable inputs can be parsed, staged, or published now, and which are review-gated?"
+        ));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
     fn generated_obsidian_home_preserves_custom_entry_note() {
         let vault = test_vault("obsidian-home-custom");
         create_minimal_vault(&vault).expect("create vault");
@@ -15422,6 +15465,122 @@ fn markdown_list_links(vault: &Path, paths: &[PathBuf], empty: &str, limit: usiz
         .collect::<String>()
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EntryNoteIngestPlan {
+    #[serde(default)]
+    generated_at: String,
+    #[serde(default)]
+    entries: Vec<EntryNoteIngestPlanEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EntryNoteIngestPlanEntry {
+    source_path: String,
+    #[serde(default)]
+    file_name: String,
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    action: String,
+    #[serde(default)]
+    current_state: String,
+    #[serde(default)]
+    next_action_label: String,
+    #[serde(default)]
+    requires_human_approval: bool,
+}
+
+impl EntryNoteIngestPlanEntry {
+    fn is_review_gated(&self) -> bool {
+        self.requires_human_approval
+            || matches!(
+                self.current_state.as_str(),
+                "duplicate" | "needs_review" | "blocked_contract"
+            )
+    }
+
+    fn is_runnable(&self) -> bool {
+        if self.is_review_gated() {
+            return false;
+        }
+        matches!(self.status.as_str(), "ready" | "stageable" | "cached")
+            || (self.action == "parse_required"
+                && is_parseable_binary(&PathBuf::from(&self.source_path)))
+    }
+}
+
+#[derive(Default)]
+struct EntryNotePlanState {
+    generated_at: String,
+    runnable: Vec<EntryNoteIngestPlanEntry>,
+    review_gated: Vec<EntryNoteIngestPlanEntry>,
+}
+
+fn read_entry_note_plan_state(vault: &Path) -> EntryNotePlanState {
+    let path = vault.join("_state").join("desktop-ingest-plan.json");
+    let text = read_text(&path);
+    if text.trim().is_empty() {
+        return EntryNotePlanState::default();
+    }
+    let Ok(plan) = serde_json::from_str::<EntryNoteIngestPlan>(&text) else {
+        return EntryNotePlanState::default();
+    };
+    let mut state = EntryNotePlanState {
+        generated_at: plan.generated_at,
+        ..EntryNotePlanState::default()
+    };
+    for entry in plan.entries {
+        if entry.is_review_gated() {
+            state.review_gated.push(entry);
+        } else if entry.is_runnable() {
+            state.runnable.push(entry);
+        }
+    }
+    state
+}
+
+fn markdown_plan_entry_links(
+    vault: &Path,
+    entries: &[EntryNoteIngestPlanEntry],
+    empty: &str,
+    limit: usize,
+) -> String {
+    if entries.is_empty() {
+        return format!("- {empty}\n");
+    }
+    entries
+        .iter()
+        .take(limit)
+        .map(|entry| {
+            let path = PathBuf::from(&entry.source_path);
+            let label = if entry.file_name.trim().is_empty() {
+                obsidian_link(vault, &path)
+            } else {
+                entry.file_name.clone()
+            };
+            let state = if entry.current_state.trim().is_empty() {
+                entry.status.as_str()
+            } else {
+                entry.current_state.as_str()
+            };
+            let next_action = if entry.next_action_label.trim().is_empty() {
+                entry.action.as_str()
+            } else {
+                entry.next_action_label.as_str()
+            };
+            format!(
+                "- [[{}|{}]] - `{}`; {}\n",
+                obsidian_link(vault, &path),
+                label,
+                state,
+                next_action
+            )
+        })
+        .collect::<String>()
+}
+
 fn count_status_rows(path: &Path) -> HashMap<String, usize> {
     let mut counts = HashMap::new();
     for line in read_text(path)
@@ -15528,6 +15687,7 @@ fn generate_entry_note(vault: &Path) -> Result<PathBuf, String> {
                 .copied()
                 .unwrap_or_default(),
         );
+    let plan_state = read_entry_note_plan_state(vault);
     let pending_source_inputs = pending_registry_rows(&registry_statuses)
         .max(pending_registry_rows(&desktop_statuses))
         .max(raw_evidence_inputs.len().saturating_sub(published_sources));
@@ -15537,6 +15697,18 @@ fn generate_entry_note(vault: &Path) -> Result<PathBuf, String> {
         &raw_evidence_inputs,
         "No raw evidence inputs staged.",
         12,
+    );
+    let runnable_plan_links = markdown_plan_entry_links(
+        vault,
+        &plan_state.runnable,
+        "No runnable ingest inputs in the current desktop plan.",
+        8,
+    );
+    let review_gated_plan_links = markdown_plan_entry_links(
+        vault,
+        &plan_state.review_gated,
+        "No review-gated ingest inputs in the current desktop plan.",
+        8,
     );
     let concept_links = markdown_list_links(vault, &concepts, "No concept pages yet.", 12);
     let graph_reports = graph_report_notes(vault);
@@ -15550,14 +15722,23 @@ fn generate_entry_note(vault: &Path) -> Result<PathBuf, String> {
         4,
     );
     let rendered = format!(
-        "# LLM Wiki Home\n\n<!-- llm-wiki-desktop:generated-home -->\n\n## Start Here\n\n- Read the corpus map first to understand which source pages exist and which inputs are still stale or blocked.\n- Use the concept map for synthesis reading after checking the trust status below.\n- Open graph and traceability reports before trusting cross-source synthesis.\n- Resolve review-required claims before treating generated insights as stable knowledge.\n- Keep query writeback proposals in `reviews/query-writeback/` until a human explicitly approves them.\n\n## Corpus Map\n\n- Raw evidence inputs: {raw_evidence_count}\n- Registry candidates: {candidate_sources}\n- Pending parse or ingest: {pending_source_inputs}\n- Source pages: {source_count}\n- Published sources: {published_sources}\n- Stale sources: {stale_sources}\n- Blocked sources: {blocked_sources}\n\n### Raw Evidence Awaiting Ingest\n\n{raw_links}\n### Source Pages\n\n{source_links}\n## Concept Map\n\n- Concept pages: {concept_count}\n\n{concept_links}\n## Graph & Traceability\n\n- Graph reports: {graph_report_count}\n- Obsidian canvases: {graph_canvas_count}\n\n### Graph Reports\n\n{graph_report_links}\n### Obsidian Canvases\n\n{graph_canvas_links}\n## Reading Quality\n\n- Report: [`{reading_report}`]({reading_report})\n- Findings: {reading_findings}\n- Trust issues: {reading_trust_issues}\n- Duplicate groups: {reading_duplicate_groups}\n- Orphan concepts: {reading_orphan_concepts}\n- Low-synthesis concepts: {reading_low_synthesis}\n\n## Trust Status\n\n- Claims: {claims}\n- Claims needing review: {claims_needing_review}\n- Stale claims: {stale_claims}\n- Contradicted claims: {contradicted_claims}\n- Science review queue: [`{review_path}`]({review_path}) ({reviews} items)\n- Traceability / lint findings: [`{lint_path}`]({lint_path}) ({lint_findings} items)\n- Query writeback proposals waiting for review: {proposed_writebacks}\n\n## Review Queue\n\n- Claims ledger: [`claims/claims.jsonl`](claims/claims.jsonl)\n- Science review queue: [`{review_path}`]({review_path})\n- Query writeback review area: [`reviews/query-writeback/`](reviews/query-writeback/)\n\n## Suggested Questions\n\n- Which raw evidence inputs are still waiting for parse or ingest?\n- Which sources are published, stale, or blocked, and what is the next action for each?\n- Which concepts are safe to read as stable synthesis, and which still depend on review-required claims?\n- What evidence supports the main research strategy, and which conclusions are inference or forecast?\n- Which graph report or canvas shows broken evidence paths, stale links, or disconnected concepts?\n- Which query writeback proposals are still review-only and should not be copied into concept pages?\n\n## Trust Boundary\n\nThis generated home note is a navigation aid. Source pages, claims, science review, reading quality findings, graph reports, and query writeback approval remain runtime-owned state. Do not treat proposed writeback content or review-required claims as approved knowledge.\n",
+        "# LLM Wiki Home\n\n<!-- llm-wiki-desktop:generated-home -->\n\n## Start Here\n\n- Read the corpus map first to understand which source pages exist and which inputs are still stale or blocked.\n- Use the current ingest plan section before running parse, staging, or runtime ingest.\n- Use the concept map for synthesis reading after checking the trust status below.\n- Open graph and traceability reports before trusting cross-source synthesis.\n- Resolve review-required claims before treating generated insights as stable knowledge.\n- Keep query writeback proposals in `reviews/query-writeback/` until a human explicitly approves them.\n\n## Corpus Map\n\n- Raw evidence inputs: {raw_evidence_count}\n- Registry candidates: {candidate_sources}\n- Pending parse or ingest: {pending_source_inputs}\n- Runnable ingest inputs: {runnable_ingest_inputs}\n- Review-gated ingest inputs: {review_gated_ingest_inputs}\n- Plan generated: {plan_generated_at}\n- Source pages: {source_count}\n- Published sources: {published_sources}\n- Stale sources: {stale_sources}\n- Blocked sources: {blocked_sources}\n\n### Raw Evidence Awaiting Ingest\n\n{raw_links}\n### Runnable Ingest Inputs\n\n{runnable_plan_links}\n### Review-Gated Ingest Inputs\n\n{review_gated_plan_links}\n### Source Pages\n\n{source_links}\n## Concept Map\n\n- Concept pages: {concept_count}\n\n{concept_links}\n## Graph & Traceability\n\n- Graph reports: {graph_report_count}\n- Obsidian canvases: {graph_canvas_count}\n\n### Graph Reports\n\n{graph_report_links}\n### Obsidian Canvases\n\n{graph_canvas_links}\n## Reading Quality\n\n- Report: [`{reading_report}`]({reading_report})\n- Findings: {reading_findings}\n- Trust issues: {reading_trust_issues}\n- Duplicate groups: {reading_duplicate_groups}\n- Orphan concepts: {reading_orphan_concepts}\n- Low-synthesis concepts: {reading_low_synthesis}\n\n## Trust Status\n\n- Claims: {claims}\n- Claims needing review: {claims_needing_review}\n- Stale claims: {stale_claims}\n- Contradicted claims: {contradicted_claims}\n- Science review queue: [`{review_path}`]({review_path}) ({reviews} items)\n- Traceability / lint findings: [`{lint_path}`]({lint_path}) ({lint_findings} items)\n- Query writeback proposals waiting for review: {proposed_writebacks}\n\n## Review Queue\n\n- Claims ledger: [`claims/claims.jsonl`](claims/claims.jsonl)\n- Science review queue: [`{review_path}`]({review_path})\n- Query writeback review area: [`reviews/query-writeback/`](reviews/query-writeback/)\n\n## Suggested Questions\n\n- Which raw evidence inputs are still waiting for parse or ingest?\n- Which runnable inputs can be parsed, staged, or published now, and which are review-gated?\n- Which sources are published, stale, or blocked, and what is the next action for each?\n- Which concepts are safe to read as stable synthesis, and which still depend on review-required claims?\n- What evidence supports the main research strategy, and which conclusions are inference or forecast?\n- Which graph report or canvas shows broken evidence paths, stale links, or disconnected concepts?\n- Which query writeback proposals are still review-only and should not be copied into concept pages?\n\n## Trust Boundary\n\nThis generated home note is a navigation aid. Source pages, claims, science review, reading quality findings, graph reports, and query writeback approval remain runtime-owned state. Do not treat proposed writeback content or review-required claims as approved knowledge.\n",
         raw_evidence_count = raw_evidence_inputs.len(),
+        runnable_ingest_inputs = plan_state.runnable.len(),
+        review_gated_ingest_inputs = plan_state.review_gated.len(),
+        plan_generated_at = if plan_state.generated_at.trim().is_empty() {
+            "not generated"
+        } else {
+            plan_state.generated_at.as_str()
+        },
         source_count = sources.len(),
         concept_count = concepts.len(),
         graph_report_count = graph_reports.len(),
         graph_canvas_count = graph_canvases.len(),
         graph_report_links = graph_report_links,
         graph_canvas_links = graph_canvas_links,
+        runnable_plan_links = runnable_plan_links,
+        review_gated_plan_links = review_gated_plan_links,
         reading_report = if reading_quality.report_path.is_empty() {
             "_state/obsidian-reading-quality.json"
         } else {
