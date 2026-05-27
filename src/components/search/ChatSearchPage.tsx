@@ -25,7 +25,7 @@ import type {
   VaultStatus,
   WritebackProposal,
 } from "../../types";
-import type { UiLanguage } from "../../i18n";
+import { runtimeLabel, runtimeText, type UiLanguage } from "../../i18n";
 import { isLoopbackHttpEndpoint } from "../../lib/local-endpoints";
 import { generateLlmAnswer } from "../../tauri";
 
@@ -354,9 +354,29 @@ const relationCopy = {
 type RelationLabels = (typeof relationCopy)[UiLanguage];
 type RelationKey = keyof RelationLabels;
 
-function relation(labels: RelationLabels, label: RelationKey, value?: string | number | boolean | null) {
+function localizedSearchValue(value: string | number | boolean, language: UiLanguage) {
+  if (language !== "zh") return String(value);
+  if (typeof value === "boolean") return value ? "是" : "否";
+  if (typeof value === "number") return String(value);
+  const raw = value.trim();
+  if (!raw) return "";
+  const direct = runtimeLabel(raw, language);
+  if (direct !== raw) return direct;
+  if (raw.includes(",") && /^[\w\s,-]+$/.test(raw)) {
+    return raw
+      .split(",")
+      .map((part) => {
+        const token = part.trim();
+        return runtimeLabel(token, language) || token;
+      })
+      .join("、");
+  }
+  return runtimeText(raw, language);
+}
+
+function relation(labels: RelationLabels, label: RelationKey, value?: string | number | boolean | null, language: UiLanguage = "en") {
   if (value === undefined || value === null || value === "" || value === false) return null;
-  return `${labels[label]}: ${String(value)}`;
+  return `${labels[label]}: ${localizedSearchValue(value, language)}`;
 }
 
 function normalizeHistoryEvidence(value: unknown): HistoryEvidenceRef[] {
@@ -600,8 +620,8 @@ function isBlockedEvidenceResult(item: SearchResult) {
 }
 
 function blockedEvidenceReason(item: SearchResult, language: UiLanguage) {
-  const status = item.status ? `status=${item.status}` : null;
-  const severity = item.severity ? `severity=${item.severity}` : null;
+  const status = item.status ? `${language === "zh" ? "状态" : "status"}=${localizedSearchValue(item.status, language)}` : null;
+  const severity = item.severity ? `${language === "zh" ? "严重性" : "severity"}=${localizedSearchValue(item.severity, language)}` : null;
   const relation = item.relations.find((entry) => /missing|artifact hash|unknown source/i.test(entry));
   return [status, severity, relation].filter(Boolean).join(" · ") || (language === "zh" ? "证据需要人工确认" : "evidence requires human confirmation");
 }
@@ -689,7 +709,8 @@ function buildSearchIndex({
   writebacks,
   traceabilityWarnings,
   labels,
-}: Pick<ChatSearchPageProps, "status" | "claims" | "evidencePaths" | "reviewItems" | "writebacks" | "traceabilityWarnings"> & { labels: RelationLabels }) {
+  language,
+}: Pick<ChatSearchPageProps, "status" | "claims" | "evidencePaths" | "reviewItems" | "writebacks" | "traceabilityWarnings"> & { labels: RelationLabels; language: UiLanguage }) {
   const evidenceByClaim = buildEvidenceIndex(evidencePaths);
   const results: SearchResult[] = [];
   const files = status?.files ?? [];
@@ -697,15 +718,17 @@ function buildSearchIndex({
   for (const file of files) {
     const title = file.title || file.name || file.path;
     const status = file.status || file.qaVerdict || (file.needsReview ? "needs_review" : null);
+    const displayStatus = status ? localizedSearchValue(status, language) : null;
+    const displayQaVerdict = file.qaVerdict ? localizedSearchValue(file.qaVerdict, language) : null;
     const excerpt = compactText(file.excerpt, 280);
     const relations = unique([
-      relation(labels, "kind", file.kind),
-      relation(labels, "status", file.status),
-      relation(labels, "qa", file.qaVerdict),
-      relation(labels, "needsReview", file.needsReview ? file.needsReview : null),
-      relation(labels, "updated", file.updated),
+      relation(labels, "kind", file.kind, language),
+      relation(labels, "status", file.status, language),
+      relation(labels, "qa", file.qaVerdict, language),
+      relation(labels, "needsReview", file.needsReview ? file.needsReview : null, language),
+      relation(labels, "updated", file.updated, language),
     ]);
-    const snippet = excerpt || compactText([status, file.updated, file.path].filter(Boolean).join(" · "));
+    const snippet = excerpt || compactText([displayStatus, file.updated, file.path].filter(Boolean).join(" · "));
     results.push({
       id: `file:${file.path}`,
       type: file.kind,
@@ -713,7 +736,7 @@ function buildSearchIndex({
       path: file.path,
       snippet: snippet || file.path,
       status,
-      evidence: file.qaVerdict || excerpt,
+      evidence: displayQaVerdict || excerpt,
       relations,
       searchText: [title, file.name, file.path, file.kind, file.status, file.qaVerdict, file.updated, file.excerpt].join(" "),
       priority: file.kind === "concept" ? 6 : file.kind === "source" ? 5 : file.kind === "note" ? 4 : 3,
@@ -725,13 +748,13 @@ function buildSearchIndex({
     const evidence = evidenceItems[0];
     const sourcePath = claim.sourcePath || evidence?.sourcePage || evidence?.rawPath || "";
     const relations = unique([
-      relation(labels, "claim", claim.claimId),
-      relation(labels, "source", claim.sourceId || claim.sourceUuid || evidence?.sourceId),
-      relation(labels, "sourcePath", sourcePath),
-      relation(labels, "verdict", claim.verdict),
-      relation(labels, "status", claim.status),
-      relation(labels, "concepts", claim.concepts.join(", ")),
-      relation(labels, "line", claim.line),
+      relation(labels, "claim", claim.claimId, language),
+      relation(labels, "source", claim.sourceId || claim.sourceUuid || evidence?.sourceId, language),
+      relation(labels, "sourcePath", sourcePath, language),
+      relation(labels, "verdict", claim.verdict, language),
+      relation(labels, "status", claim.status, language),
+      relation(labels, "concepts", claim.concepts.join(", "), language),
+      relation(labels, "line", claim.line, language),
     ]);
     results.push({
       id: `claim:${claim.claimId}:${claim.line}`,
@@ -761,12 +784,12 @@ function buildSearchIndex({
   for (const item of evidencePaths) {
     const path = item.sourcePage || item.artifactPath || item.qaReportPath || item.rawPath || CLAIM_LEDGER_PATH;
     const relations = unique([
-      relation(labels, "claim", item.claimId),
-      relation(labels, "source", item.sourceId || item.sourceUuid),
-      relation(labels, "concept", item.concept),
-      relation(labels, "semantic", item.semanticStatus),
-      relation(labels, "scienceReview", item.scienceReviewStatus),
-      relation(labels, "missing", item.missing.join(", ")),
+      relation(labels, "claim", item.claimId, language),
+      relation(labels, "source", item.sourceId || item.sourceUuid, language),
+      relation(labels, "concept", item.concept, language),
+      relation(labels, "semantic", item.semanticStatus, language),
+      relation(labels, "scienceReview", item.scienceReviewStatus, language),
+      relation(labels, "missing", item.missing.join(", "), language),
     ]);
     results.push({
       id: `evidence:${item.claimId}:${path}`,
@@ -799,12 +822,12 @@ function buildSearchIndex({
   for (const item of reviewItems) {
     const path = item.targetPath || item.evidencePath || REVIEW_QUEUE_PATH;
     const relations = unique([
-      relation(labels, "review", item.itemId),
-      relation(labels, "kind", item.kind),
-      relation(labels, "claim", item.claimId),
-      relation(labels, "source", item.sourceId),
-      relation(labels, "status", item.status),
-      relation(labels, "action", item.recommendedAction),
+      relation(labels, "review", item.itemId, language),
+      relation(labels, "kind", item.kind, language),
+      relation(labels, "claim", item.claimId, language),
+      relation(labels, "source", item.sourceId, language),
+      relation(labels, "status", item.status, language),
+      relation(labels, "action", item.recommendedAction, language),
     ]);
     results.push({
       id: `review:${item.itemId}`,
@@ -836,11 +859,11 @@ function buildSearchIndex({
   for (const proposal of writebacks) {
     const path = proposal.targetPath || WRITEBACK_QUEUE_PATH;
     const relations = unique([
-      relation(labels, "proposal", proposal.proposalId),
-      relation(labels, "status", proposal.status),
-      relation(labels, "target", proposal.targetPath),
-      relation(labels, "updated", proposal.updatedAt),
-      relation(labels, "applied", proposal.appliedAt),
+      relation(labels, "proposal", proposal.proposalId, language),
+      relation(labels, "status", proposal.status, language),
+      relation(labels, "target", proposal.targetPath, language),
+      relation(labels, "updated", proposal.updatedAt, language),
+      relation(labels, "applied", proposal.appliedAt, language),
     ]);
     results.push({
       id: `writeback:${proposal.proposalId}`,
@@ -867,12 +890,12 @@ function buildSearchIndex({
   for (const warning of traceabilityWarnings) {
     const path = warning.sourcePath || warning.artifactPath || warning.claimPath || CLAIM_LEDGER_PATH;
     const relations = unique([
-      relation(labels, "claim", warning.claimId),
-      relation(labels, "source", warning.sourceId),
-      relation(labels, "sourcePath", warning.sourcePath),
-      relation(labels, "artifact", warning.artifactPath),
-      relation(labels, "missingAnchor", warning.missingAnchor),
-      relation(labels, "action", warning.nextAction || warning.suggestedAction),
+      relation(labels, "claim", warning.claimId, language),
+      relation(labels, "source", warning.sourceId, language),
+      relation(labels, "sourcePath", warning.sourcePath, language),
+      relation(labels, "artifact", warning.artifactPath, language),
+      relation(labels, "missingAnchor", warning.missingAnchor, language),
+      relation(labels, "action", warning.nextAction || warning.suggestedAction, language),
     ]);
     results.push({
       id: `traceability:${warning.warningId}`,
@@ -1110,6 +1133,8 @@ export function ChatSearchPage({
 }: ChatSearchPageProps) {
   const text = chatCopy[language];
   const typeLabel = (type: SearchKind) => (text.resultTypes as Record<SearchKind, string>)[type] || type;
+  const resultStatusLabel = (result: SearchResult) =>
+    localizedSearchValue(result.severity || result.status || result.type, language);
   const defaultQuestions = language === "zh" ? DEFAULT_DEEPSEEK_QUESTIONS : DEFAULT_DEEPSEEK_QUESTIONS_EN;
   const [searchText, setSearchText] = useState("");
   const [typeFilter, setTypeFilter] = useState<SearchFilter>("all");
@@ -1124,7 +1149,7 @@ export function ChatSearchPage({
   const [history, setHistory] = useState<QueryHistoryItem[]>(() => loadHistory(vaultPath));
   const activeProvider = useMemo(() => providerSummary(providerCenter, language), [providerCenter, language]);
   const index = useMemo(
-    () => buildSearchIndex({ status, claims, evidencePaths, reviewItems, writebacks, traceabilityWarnings, labels: relationCopy[language] }),
+    () => buildSearchIndex({ status, claims, evidencePaths, reviewItems, writebacks, traceabilityWarnings, labels: relationCopy[language], language }),
     [claims, evidencePaths, language, reviewItems, status, traceabilityWarnings, writebacks],
   );
 
@@ -1363,7 +1388,7 @@ export function ChatSearchPage({
                 <span>{item.question}</span>
                 <em>
                   {item.evidence.length} {text.evidenceCount}
-                  {item.proposal ? ` · ${item.proposal.status}` : ""}
+                  {item.proposal ? ` · ${localizedSearchValue(item.proposal.status, language)}` : ""}
                 </em>
                 {item.targetPath && <code>{item.targetPath}</code>}
               </button>
@@ -1408,7 +1433,7 @@ export function ChatSearchPage({
               onClick={() => setSelectedResultId(result.id)}
             >
               <span className={classNames("status-chip", result.severity || result.status || result.type)}>
-                {result.severity || result.status || result.type}
+                {resultStatusLabel(result)}
               </span>
               <div className="search-result-body">
                 <strong>{result.title}</strong>
@@ -1515,7 +1540,7 @@ export function ChatSearchPage({
               <button key={`evidence-map-${item.id}`} type="button" onClick={() => openResult(item)}>
                 <span>E{index + 1}</span>
                 <strong>{item.title}</strong>
-                <em>{typeLabel(item.type)} · {item.status || text.loadedStatus}</em>
+                <em>{typeLabel(item.type)} · {localizedSearchValue(item.status || text.loadedStatus, language)}</em>
               </button>
             ))}
           </div>
@@ -1526,7 +1551,7 @@ export function ChatSearchPage({
             <article key={`reference-${item.id}`}>
               <span>E{index + 1}</span>
               <strong>{item.title}</strong>
-              <em>{item.type} · {item.path}</em>
+              <em>{typeLabel(item.type)} · {item.path}</em>
               <p>{item.evidence || item.snippet || text.noEvidenceQuote}</p>
               <div className="inline-actions">
                 <button type="button" onClick={() => openResult(item)}><FolderOpen size={14} />{text.actions.open}</button>
@@ -1556,7 +1581,7 @@ export function ChatSearchPage({
               >
                 <GitCompare size={14} />
                 <span>{proposal.title}</span>
-                <em>{proposal.status || text.proposalFallback} · {proposal.path}</em>
+                <em>{localizedSearchValue(proposal.status || text.proposalFallback, language)} · {proposal.path}</em>
               </button>
             ))}
           </div>
