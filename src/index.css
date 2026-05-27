@@ -82,9 +82,24 @@ textarea {
   overflow: hidden;
 }
 
+.app-shell.nashsu-aligned-shell {
+  grid-template-columns: 64px 286px minmax(0, 1fr) 382px;
+  grid-template-areas: "nav tree workspace preview";
+  background: #f5f6f3;
+}
+
+.app-shell.nashsu-aligned-shell:not(.inspector-open) {
+  grid-template-columns: 64px 286px minmax(0, 1fr);
+  grid-template-areas: "nav tree workspace";
+}
+
 .app-shell.settings-mode {
   grid-template-columns: 168px minmax(0, 1fr);
   grid-template-areas: "nav workspace";
+}
+
+.app-shell.settings-mode .icon-sidebar {
+  align-items: stretch;
 }
 
 .icon-sidebar {
@@ -97,6 +112,325 @@ textarea {
   background: #17201d;
   padding: 14px 12px;
   color: #f4f8f2;
+}
+
+.nashsu-aligned-shell .icon-sidebar {
+  align-items: center;
+  gap: 12px;
+  padding: 12px 8px;
+}
+
+.nashsu-aligned-shell .icon-brand {
+  width: 44px;
+  height: 44px;
+}
+
+.nashsu-aligned-shell .nav-rail {
+  justify-items: center;
+}
+
+.nashsu-aligned-shell .nav-button {
+  grid-template-columns: 1fr;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+}
+
+.nashsu-aligned-shell .nav-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.nashsu-aligned-shell .nav-badge {
+  top: 1px;
+  right: 1px;
+  box-shadow: 0 0 0 2px #17201d;
+}
+
+.knowledge-sidebar,
+.preview-sidebar {
+  min-height: 0;
+  overflow: hidden;
+  border-color: #d5ddd8;
+  background: #ffffff;
+}
+
+.knowledge-sidebar {
+  grid-area: tree;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-right: 1px solid #d5ddd8;
+  padding: 12px;
+}
+
+.knowledge-project {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 46px;
+  border-bottom: 1px solid #e1e7e2;
+  padding-bottom: 10px;
+}
+
+.knowledge-project div {
+  min-width: 0;
+}
+
+.knowledge-project strong,
+.knowledge-project span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-project strong {
+  color: #17201d;
+  font-size: 14px;
+}
+
+.knowledge-project span {
+  margin-top: 2px;
+  color: #64706a;
+  font-size: 11px;
+}
+
+.knowledge-project button {
+  width: 32px;
+  min-height: 32px;
+  padding: 0;
+}
+
+.knowledge-tabs,
+.knowledge-stat-strip,
+.knowledge-next-actions {
+  display: grid;
+  gap: 6px;
+}
+
+.knowledge-tabs {
+  grid-template-columns: 1fr 1fr;
+}
+
+.knowledge-tabs button {
+  min-height: 32px;
+  border-radius: 6px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.knowledge-tabs button.active {
+  border-color: #365f47;
+  background: #eef6f0;
+  color: #1f5637;
+}
+
+.knowledge-stat-strip {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.knowledge-stat-strip button {
+  display: grid;
+  gap: 2px;
+  min-height: 54px;
+  border-color: #e0e6e2;
+  background: #fbfcfa;
+  padding: 6px;
+}
+
+.knowledge-stat-strip strong,
+.knowledge-next-actions strong {
+  color: #17201d;
+  font-size: 15px;
+}
+
+.knowledge-stat-strip span,
+.knowledge-next-actions span {
+  color: #64706a;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.knowledge-tree-scroll {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.shell-tree-section {
+  min-width: 0;
+}
+
+.shell-tree-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  color: #3b4843;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.shell-tree-title span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.shell-tree-title em {
+  color: #7b8580;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.shell-tree-section button {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 42px;
+  margin-top: 5px;
+  border-color: transparent;
+  background: transparent;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.shell-tree-section button:hover {
+  border-color: #cbd4cf;
+  background: #f4f8f2;
+}
+
+.shell-tree-section strong,
+.shell-tree-section span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shell-tree-section strong {
+  color: #17201d;
+  font-size: 12px;
+}
+
+.shell-tree-section span {
+  margin-top: 2px;
+  color: #64706a;
+  font-size: 10px;
+}
+
+.knowledge-bottom {
+  display: grid;
+  gap: 8px;
+  margin-top: auto;
+  border-top: 1px solid #e1e7e2;
+  padding-top: 10px;
+}
+
+.knowledge-next-actions {
+  grid-template-columns: 1fr;
+}
+
+.knowledge-next-actions button {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  min-height: 34px;
+  justify-content: start;
+  border-color: #e0e6e2;
+  background: #fbfcfa;
+  padding: 0 8px;
+}
+
+.preview-sidebar {
+  grid-area: preview;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-left: 1px solid #d5ddd8;
+  padding: 12px;
+}
+
+.preview-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 38px;
+}
+
+.preview-sidebar-header strong,
+.preview-sidebar-header span {
+  display: block;
+}
+
+.preview-sidebar-header strong {
+  color: #17201d;
+  font-size: 13px;
+}
+
+.preview-sidebar-header span {
+  margin-top: 2px;
+  color: #64706a;
+  font-size: 11px;
+}
+
+.preview-sidebar-header button {
+  width: 30px;
+  min-height: 30px;
+  padding: 0;
+}
+
+.preview-sidebar .details-panel {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  border-radius: 6px;
+  box-shadow: none;
+}
+
+@media (max-width: 1440px) {
+  .app-shell.nashsu-aligned-shell {
+    grid-template-columns: 64px 264px minmax(0, 1fr) 340px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .app-shell.nashsu-aligned-shell,
+  .app-shell.nashsu-aligned-shell.inspector-open {
+    grid-template-columns: 64px 264px minmax(0, 1fr);
+    grid-template-areas: "nav tree workspace";
+  }
+
+  .preview-sidebar {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .app-shell.nashsu-aligned-shell,
+  .app-shell.nashsu-aligned-shell:not(.inspector-open),
+  .app-shell.nashsu-aligned-shell.inspector-open {
+    grid-template-columns: 64px minmax(0, 1fr);
+    grid-template-areas: "nav workspace";
+  }
+
+  .knowledge-sidebar {
+    display: none;
+  }
 }
 
 .sidebar {
@@ -369,6 +703,43 @@ textarea {
   min-width: 0;
   overflow: auto;
   padding: 16px 18px 22px;
+}
+
+.nashsu-aligned-shell .workspace {
+  gap: 12px;
+  padding: 12px 14px 18px;
+}
+
+.nashsu-aligned-shell .topbar {
+  align-items: center;
+  border-bottom: 1px solid #e1e7e2;
+  padding: 0 0 10px;
+}
+
+.nashsu-aligned-shell .topbar h2 {
+  font-size: 18px;
+}
+
+.nashsu-aligned-shell .topbar p {
+  font-size: 12px;
+}
+
+.nashsu-aligned-shell .topbar-status {
+  flex: 1 1 520px;
+  gap: 6px;
+}
+
+.nashsu-aligned-shell .status-pill,
+.nashsu-aligned-shell .health,
+.nashsu-aligned-shell .language-toggle,
+.nashsu-aligned-shell .sidebar-toggle {
+  min-height: 30px;
+  font-size: 11px;
+}
+
+.nashsu-aligned-shell .sidebar-toggle {
+  border-color: #365f47;
+  color: #1f5637;
 }
 
 .topbar {

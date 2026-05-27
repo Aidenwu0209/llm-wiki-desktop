@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type DragEvent } from "react";
+import { useEffect, useMemo, useState, type DragEvent, type ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -10,7 +10,6 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardList,
-  Copy,
   Database,
   FileInput,
   FolderOpen,
@@ -689,6 +688,515 @@ const initialDesktopSettings: DesktopSettings = {
   },
 };
 
+const shellDemoVaultPath = "/Users/demo/DeepSeek LLM Wiki";
+const shellDemoGeneratedAt = "2026-05-27T12:00:00.000Z";
+
+const shellDemoFiles: VaultFile[] = [
+  {
+    name: "Home.md",
+    path: "Home.md",
+    kind: "note",
+    title: "DeepSeek Wiki Home",
+    status: "entrypoint",
+    updated: "2026-05-27",
+    outboundLinks: [
+      "concepts/deepseek-research-strategy.md",
+      "concepts/deepseek-decision-logic.md",
+      "reviews/query-writeback/deepseek-research-insights.md",
+    ],
+  },
+  {
+    name: "deepseek-research-strategy.md",
+    path: "concepts/deepseek-research-strategy.md",
+    kind: "concept",
+    title: "DeepSeek Research Strategy",
+    status: "synthesis",
+    updated: "2026-05-27",
+    inboundLinks: ["Home.md"],
+    outboundLinks: ["sources/LLM-0001-deepseek-v3.md", "sources/LLM-0002-deepseek-r1.md"],
+    sourceRefs: ["LLM-0001", "LLM-0002"],
+  },
+  {
+    name: "deepseek-decision-logic.md",
+    path: "concepts/deepseek-decision-logic.md",
+    kind: "concept",
+    title: "DeepSeek Decision Logic",
+    status: "needs_review",
+    updated: "2026-05-27",
+    inboundLinks: ["Home.md"],
+    outboundLinks: ["sources/LLM-0003-deepseek-moe.md"],
+    sourceRefs: ["LLM-0003"],
+  },
+  {
+    name: "deepseek-evolution-forecast.md",
+    path: "concepts/deepseek-evolution-forecast.md",
+    kind: "concept",
+    title: "DeepSeek Evolution Forecast",
+    status: "hypothesis",
+    updated: "2026-05-27",
+    sourceRefs: ["LLM-0001", "LLM-0002", "LLM-0004"],
+  },
+  {
+    name: "LLM-0001-deepseek-v3.md",
+    path: "sources/LLM-0001-deepseek-v3.md",
+    kind: "source",
+    sourceId: "LLM-0001",
+    title: "DeepSeek-V3 Technical Report",
+    status: "published",
+    updated: "2026-05-27",
+    outboundLinks: ["concepts/deepseek-research-strategy.md"],
+  },
+  {
+    name: "LLM-0002-deepseek-r1.md",
+    path: "sources/LLM-0002-deepseek-r1.md",
+    kind: "source",
+    sourceId: "LLM-0002",
+    title: "DeepSeek-R1 Reasoning Report",
+    status: "published",
+    updated: "2026-05-27",
+    outboundLinks: ["concepts/deepseek-research-strategy.md"],
+  },
+  {
+    name: "LLM-0003-deepseek-moe.md",
+    path: "drafts/LLM-0003-deepseek-moe.md",
+    kind: "draft",
+    sourceId: "LLM-0003",
+    title: "DeepSeekMoE Source Draft",
+    status: "qa_pending",
+    updated: "2026-05-27",
+    outboundLinks: ["concepts/deepseek-decision-logic.md"],
+  },
+  {
+    name: "reading-quality.md",
+    path: "reports/reading-quality.md",
+    kind: "report",
+    title: "Reading Quality Report",
+    status: "2 warnings",
+    updated: "2026-05-27",
+  },
+  {
+    name: "deepseek-research-insights.md",
+    path: "reviews/query-writeback/deepseek-research-insights.md",
+    kind: "report",
+    title: "DeepSeek Research Insight Proposal",
+    status: "proposed",
+    updated: "2026-05-27",
+  },
+];
+
+const shellDemoStatus: VaultStatus = {
+  path: shellDemoVaultPath,
+  schemaValid: true,
+  runtimeInstalled: true,
+  obsidianEnabled: true,
+  dashboardAvailable: true,
+  runtimeScriptsPath: "open-llm-wiki/scripts",
+  runtimeVersion: "shell-demo",
+  lastUpdated: shellDemoGeneratedAt,
+  counts: {
+    inbox: 2,
+    notes: 1,
+    sources: 2,
+    drafts: 1,
+    concepts: 3,
+    reports: 2,
+    claims: 12,
+    claimsNeedingReview: 3,
+    scienceReviewQueue: 3,
+    growthQueue: 2,
+    staleClaims: 1,
+    contradictedClaims: 0,
+    ingestJobs: 4,
+    actions: 3,
+  },
+  readingQuality: {
+    concepts: 3,
+    sources: 2,
+    findings: 2,
+    trustIssues: 1,
+    duplicateGroups: 0,
+    orphanConcepts: 0,
+    staleEvidenceReferences: 1,
+    brokenEvidenceReferences: 1,
+    sourceIdentityDrift: 0,
+    lowSynthesisConcepts: 1,
+    reportPath: "reports/reading-quality.md",
+  },
+  productScorecard: {
+    passed: 9,
+    failed: 1,
+    manual: 2,
+    notRun: 1,
+    reportPath: "reports/product-scorecard.md",
+  },
+  files: shellDemoFiles,
+  errors: [],
+};
+
+const shellDemoClaims: ClaimLedgerItem[] = [
+  {
+    claimId: "claim-demo-001",
+    claimText: "DeepSeek repeatedly frames architecture choices around compute efficiency before scaling breadth.",
+    sourceId: "LLM-0001",
+    sourceUuid: "source-demo-0001",
+    sourcePath: "sources/LLM-0001-deepseek-v3.md",
+    verdict: "supported",
+    status: "supported",
+    needsReview: false,
+    concepts: ["deepseek-research-strategy"],
+    evidenceQuote: "Efficiency-first model design is treated as a primary constraint in the source evidence.",
+    evidenceHash: "demo-evidence-001",
+    updatedAt: shellDemoGeneratedAt,
+    line: 42,
+  },
+  {
+    claimId: "claim-demo-002",
+    claimText: "The R1-style reasoning path should be separated from forecast claims until a human review accepts the synthesis.",
+    sourceId: "LLM-0002",
+    sourceUuid: "source-demo-0002",
+    sourcePath: "sources/LLM-0002-deepseek-r1.md",
+    verdict: "needs_review",
+    status: "needs_review",
+    needsReview: true,
+    concepts: ["deepseek-evolution-forecast"],
+    evidenceQuote: "The evidence supports reasoning training as a direction, not a guaranteed roadmap.",
+    evidenceHash: "demo-evidence-002",
+    updatedAt: shellDemoGeneratedAt,
+    line: 88,
+  },
+];
+
+const shellDemoEvidencePaths: EvidencePathItem[] = [
+  {
+    claimId: "claim-demo-001",
+    concept: "deepseek-research-strategy",
+    claimText: shellDemoClaims[0].claimText,
+    chainStatus: "ok",
+    missing: [],
+    sourceId: "LLM-0001",
+    sourceUuid: "source-demo-0001",
+    sourcePage: "sources/LLM-0001-deepseek-v3.md",
+    evidenceAnchor: "#efficiency",
+    evidenceQuote: shellDemoClaims[0].evidenceQuote,
+    rawPath: "raw/deepseek_paper/DeepSeek-V3.pdf",
+    artifactPath: "artifacts/LLM-0001/markdown.md",
+    chunksPath: "artifacts/LLM-0001/chunks.jsonl",
+    semanticStatus: "supported",
+    scienceReviewStatus: "not_required",
+  },
+  {
+    claimId: "claim-demo-002",
+    concept: "deepseek-evolution-forecast",
+    claimText: shellDemoClaims[1].claimText,
+    chainStatus: "needs_review",
+    missing: ["science_review"],
+    sourceId: "LLM-0002",
+    sourceUuid: "source-demo-0002",
+    sourcePage: "sources/LLM-0002-deepseek-r1.md",
+    evidenceAnchor: "#reasoning",
+    evidenceQuote: shellDemoClaims[1].evidenceQuote,
+    rawPath: "raw/deepseek_paper/DeepSeek-R1.pdf",
+    artifactPath: "artifacts/LLM-0002/markdown.md",
+    chunksPath: "artifacts/LLM-0002/chunks.jsonl",
+    semanticStatus: "needs_review",
+    scienceReviewStatus: "queued",
+  },
+];
+
+const shellDemoTraceabilityWarnings: TraceabilityWarning[] = [
+  {
+    warningId: "warning-demo-001",
+    claimId: "claim-demo-002",
+    claimText: shellDemoClaims[1].claimText,
+    claimPath: "claims/deepseek-evolution-forecast.md",
+    sourceId: "LLM-0002",
+    sourcePath: "sources/LLM-0002-deepseek-r1.md",
+    artifactPath: "artifacts/LLM-0002/markdown.md",
+    missingHeading: "",
+    missingAnchor: "#reasoning",
+    severity: "p2",
+    summary: "Forecast claim still needs explicit evidence review before writeback.",
+    suggestedAction: "Open the review queue and keep the proposal in proposed status.",
+    nextAction: "review",
+    findingId: "finding-demo-001",
+  },
+];
+
+const shellDemoReviewItems: ReviewQueueItem[] = [
+  {
+    itemId: "review-demo-001",
+    kind: "science_review",
+    severity: "p1",
+    title: "Review DeepSeek evolution forecast claim",
+    body: "The claim is useful for the insight page, but it must remain a hypothesis until a reviewer checks the cited source.",
+    status: "open",
+    targetPath: "concepts/deepseek-evolution-forecast.md",
+    sourceId: "LLM-0002",
+    claimId: "claim-demo-002",
+    evidencePath: "artifacts/LLM-0002/chunks.jsonl",
+    recommendedAction: "Keep proposal-first writeback and request human review.",
+  },
+];
+
+const shellDemoWritebacks: WritebackProposal[] = [
+  {
+    proposalId: "proposal-demo-001",
+    targetPath: "reviews/query-writeback/deepseek-research-insights.md",
+    title: "DeepSeek research insight query",
+    status: "proposed",
+    diff: [
+      "+ ## Evidence",
+      "+ - Supported: efficiency-first architecture pressure from [[sources/LLM-0001-deepseek-v3.md]].",
+      "+ ## Hypothesis",
+      "+ - Reasoning evolution remains a forecast until science review accepts [[claims/deepseek-evolution-forecast.md]].",
+    ].join("\n"),
+    content: "Evidence, inference, hypothesis, and forecast are separated before writeback.",
+    createdAt: shellDemoGeneratedAt,
+    updatedAt: shellDemoGeneratedAt,
+  },
+];
+
+const shellDemoIngestPlan: IngestPlan = {
+  generatedAt: shellDemoGeneratedAt,
+  vaultPath: shellDemoVaultPath,
+  planPath: "reports/ingest-plan.json",
+  summary: {
+    total: 4,
+    ready: 1,
+    stageable: 1,
+    blocked: 1,
+    cached: 0,
+    published: 1,
+  },
+  entries: [
+    {
+      sourcePath: "raw/deepseek_paper/DeepSeek-V3.pdf",
+      fileName: "DeepSeek-V3.pdf",
+      sha256: "demo-sha256-v3",
+      artifactSha256: null,
+      artifactPath: null,
+      status: "ready",
+      action: "parse_required",
+      reason: "Local parser is ready; no cloud parser required.",
+      parserHint: "local-text",
+      currentState: "raw copied",
+      nextActionLabel: "Parse locally",
+      command: ["uv", "run", "python", "scripts/wiki_ingest.py"],
+      inputs: ["raw/deepseek_paper/DeepSeek-V3.pdf"],
+      outputs: ["artifacts/LLM-0001/markdown.md"],
+      requiresHumanApproval: false,
+      usesNetwork: false,
+    },
+    {
+      sourcePath: "raw/deepseek_paper/DeepSeek-R1.pdf",
+      fileName: "DeepSeek-R1.pdf",
+      sha256: "demo-sha256-r1",
+      artifactSha256: "demo-artifact-r1",
+      artifactPath: "artifacts/LLM-0002/markdown.md",
+      status: "published",
+      action: "none",
+      reason: "Source page is published and linked to claims.",
+      parserHint: "local-text",
+      currentState: "published",
+      nextActionLabel: "Review claims",
+      command: [],
+      inputs: ["raw/deepseek_paper/DeepSeek-R1.pdf"],
+      outputs: ["sources/LLM-0002-deepseek-r1.md"],
+      requiresHumanApproval: false,
+      usesNetwork: false,
+    },
+    {
+      sourcePath: "raw/deepseek_paper/DeepSeekMoE.pdf",
+      fileName: "DeepSeekMoE.pdf",
+      sha256: "demo-sha256-moe",
+      artifactSha256: null,
+      artifactPath: "artifacts/LLM-0003/markdown.md",
+      status: "stageable",
+      action: "publish_required",
+      reason: "Parsed draft exists, but publish gate has not run.",
+      parserHint: "local-text",
+      currentState: "draft",
+      nextActionLabel: "Publish source",
+      command: ["uv", "run", "python", "scripts/wiki_publish.py"],
+      inputs: ["artifacts/LLM-0003/markdown.md"],
+      outputs: ["sources/LLM-0003-deepseek-moe.md"],
+      requiresHumanApproval: false,
+      usesNetwork: false,
+    },
+    {
+      sourcePath: "raw/deepseek_paper/DeepSeekMath.pdf",
+      fileName: "DeepSeekMath.pdf",
+      sha256: "demo-sha256-math",
+      artifactSha256: null,
+      artifactPath: null,
+      status: "blocked",
+      action: "manual_review",
+      reason: "Formula-heavy sections need local parser confirmation before source publication.",
+      parserHint: "local-text",
+      currentState: "raw copied",
+      nextActionLabel: "Review parser limits",
+      command: [],
+      inputs: ["raw/deepseek_paper/DeepSeekMath.pdf"],
+      outputs: [],
+      requiresHumanApproval: true,
+      usesNetwork: false,
+    },
+  ],
+  registry: [
+    {
+      sourceUuid: "source-demo-0001",
+      sourceId: "LLM-0001",
+      rawPath: "raw/deepseek_paper/DeepSeek-V3.pdf",
+      canonicalPath: "raw/deepseek_paper/DeepSeek-V3.pdf",
+      sourcePath: "sources/LLM-0001-deepseek-v3.md",
+      sourceSha256: "demo-sha256-v3",
+      mime: "application/pdf",
+      status: "registered",
+      createdAt: shellDemoGeneratedAt,
+      updatedAt: shellDemoGeneratedAt,
+    },
+    {
+      sourceUuid: "source-demo-0002",
+      sourceId: "LLM-0002",
+      rawPath: "raw/deepseek_paper/DeepSeek-R1.pdf",
+      canonicalPath: "raw/deepseek_paper/DeepSeek-R1.pdf",
+      sourcePath: "sources/LLM-0002-deepseek-r1.md",
+      sourceSha256: "demo-sha256-r1",
+      mime: "application/pdf",
+      artifactPath: "artifacts/LLM-0002/markdown.md",
+      artifactSha256: "demo-artifact-r1",
+      parser: "local-text",
+      parserVersion: "demo",
+      status: "published",
+      createdAt: shellDemoGeneratedAt,
+      updatedAt: shellDemoGeneratedAt,
+      publishedAt: shellDemoGeneratedAt,
+    },
+  ],
+  sourceAliases: [],
+  artifacts: [
+    {
+      sourcePath: "sources/LLM-0002-deepseek-r1.md",
+      sourceId: "LLM-0002",
+      sourceUuid: "source-demo-0002",
+      artifactPath: "artifacts/LLM-0002/markdown.md",
+      manifestPath: "artifacts/LLM-0002/manifest.json",
+      chunksPath: "artifacts/LLM-0002/chunks.jsonl",
+      parser: "local-text",
+      parserVersion: "demo",
+      sourceSha256: "demo-sha256-r1",
+      artifactSha256: "demo-artifact-r1",
+      status: "valid",
+      contractValid: true,
+      chunkCount: 18,
+      anchorsLines: true,
+      anchorsPages: true,
+      anchorsTables: false,
+      anchorsFigures: false,
+      anchorsEquations: false,
+      limitations: ["tables pending"],
+      lintErrors: [],
+    },
+  ],
+  jobs: [
+    {
+      jobId: "job-demo-001",
+      sourceUuid: "source-demo-0001",
+      sourceId: "LLM-0001",
+      sourcePath: "raw/deepseek_paper/DeepSeek-V3.pdf",
+      fileName: "DeepSeek-V3.pdf",
+      kind: "parse",
+      status: "queued",
+      currentStep: "waiting",
+      nextAction: "Parse locally",
+      reason: "Ready for local parser.",
+      attempt: 0,
+      maxAttempts: 3,
+      inputs: ["raw/deepseek_paper/DeepSeek-V3.pdf"],
+      outputs: ["artifacts/LLM-0001/markdown.md"],
+    },
+  ],
+  actions: [
+    {
+      actionId: "action-demo-001",
+      kind: "science_review",
+      severity: "p1",
+      title: "Review forecast claim before writeback",
+      body: "The insight page can cite this claim only after human review keeps forecast language separate from evidence.",
+      reason: "Semantic QA marked the forecast as needs_review.",
+      status: "open",
+      recommendedAction: "Open Reviews",
+      primaryObjectType: "claim",
+      primaryObjectId: "claim-demo-002",
+      affectedObjects: [{ objectType: "concept", objectId: "deepseek-evolution-forecast", status: "needs_review" }],
+      links: [{ label: "review", path: "reviews/query-writeback/deepseek-research-insights.md" }],
+    },
+  ],
+  impactEdges: [
+    {
+      edgeId: "edge-demo-001",
+      fromType: "source",
+      fromId: "LLM-0002",
+      toType: "claim",
+      toId: "claim-demo-002",
+      relationship: "supports",
+      status: "needs_review",
+    },
+  ],
+  lintFindings: [
+    {
+      findingId: "finding-demo-001",
+      severity: "p2",
+      kind: "writeback_gate",
+      objectType: "proposal",
+      objectId: "proposal-demo-001",
+      title: "Proposal is waiting for explicit approval",
+      detail: "The shell must show that writeback is proposed, not silently applied.",
+      status: "open",
+      path: "reviews/query-writeback/deepseek-research-insights.md",
+    },
+  ],
+};
+
+const shellDemoRuntimeHistory: RuntimeJobEvent[] = [
+  {
+    jobId: "runtime-demo-001",
+    kind: "lint",
+    status: "succeeded",
+    stage: "wiki_lint",
+    attempt: 1,
+    maxAttempts: 1,
+    retryCount: 1,
+    command: ["uv", "run", "python", "scripts/wiki_lint.py", "vault"],
+    startedAt: shellDemoGeneratedAt,
+    endedAt: shellDemoGeneratedAt,
+    elapsedMs: 4200,
+    durationMs: 4200,
+    exitCode: 0,
+    logPath: "runs/demo/wiki_lint.log",
+  },
+];
+
+const shellDemoEntryNote: VaultEntryNote = {
+  vaultPath: shellDemoVaultPath,
+  entryPath: `${shellDemoVaultPath}/Home.md`,
+  entryRelativePath: "Home.md",
+  obsidianUri: "obsidian://open?path=%2FUsers%2Fdemo%2FDeepSeek%20LLM%20Wiki%2FHome.md",
+  fallbackPath: shellDemoVaultPath,
+  reason: "shell-demo",
+  warning: null,
+  isWorkspaceRoot: false,
+  isRawSourceFolder: false,
+};
+
+function isShellDemoMode() {
+  const viteEnv = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env;
+  return Boolean(viteEnv?.DEV)
+    && !isTauriAvailable()
+    && typeof window !== "undefined"
+    && new URLSearchParams(window.location.search).has("shellDemo");
+}
+
 function importDialogExtensions(settings: DesktopSettings) {
   const raw = settings.sourceWatchEnabled
     ? settings.sourceWatchAllowedExtensions
@@ -852,7 +1360,7 @@ function App() {
   const [runtimeHistory, setRuntimeHistory] = useState<RuntimeJobEvent[]>([]);
   const [liveLogLines, setLiveLogLines] = useState<string[]>([]);
   const [activePage, setActivePage] = useState<ShellPage>("dashboard");
-  const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
+  const [detailDrawerOpen, setDetailDrawerOpen] = useState(true);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [actionFocusIndex, setActionFocusIndex] = useState(0);
   const [actionListExpanded, setActionListExpanded] = useState(false);
@@ -972,15 +1480,6 @@ function App() {
         : `Clipboard API unavailable. Copy ${readableLabel} manually:\n${text}`);
     }
   };
-  const revealEntryOrVault = async () => {
-    const target = entryNote?.fallbackPath || entryNote?.entryPath || vaultPath;
-    if (!target) return;
-    try {
-      await revealPath(target);
-    } catch (err) {
-      setRestoreError(`Reveal failed. Open or copy this path manually:\n${target}\n${String(err)}`);
-    }
-  };
   const persistInterfaceLanguage = async (nextLanguage: UiLanguage) => {
     setInterfaceLanguage(nextLanguage);
     localStorage.setItem(INTERFACE_LANGUAGE_STORAGE_KEY, nextLanguage);
@@ -1017,6 +1516,31 @@ function App() {
     let ignore = false;
     async function boot() {
       if (!isTauriAvailable()) {
+        if (isShellDemoMode()) {
+          const demoSettings = {
+            ...initialDesktopSettings,
+            projectName: "DeepSeek Research Wiki",
+            projectPurpose: "Evidence-backed DeepSeek paper reading and writeback review.",
+            interfaceLanguage,
+          };
+          setVaultPath(shellDemoVaultPath);
+          setStatus(shellDemoStatus);
+          setIngestPlan(shellDemoIngestPlan);
+          setClaims(shellDemoClaims);
+          setEvidencePaths(shellDemoEvidencePaths);
+          setTraceabilityWarnings(shellDemoTraceabilityWarnings);
+          setRuntimeHistory(shellDemoRuntimeHistory);
+          setReviewItems(shellDemoReviewItems);
+          setWritebacks(shellDemoWritebacks);
+          setEntryNote(shellDemoEntryNote);
+          setDesktopSettings(demoSettings);
+          setAppState({ lastSelectedVault: shellDemoVaultPath, recentVaults: [shellDemoVaultPath], interfaceLanguage });
+          setVaultSuggestions([{ label: "DeepSeek Shell Demo", path: shellDemoVaultPath, kind: "deepseek", exists: true }]);
+          setDetailSelection({ kind: "claim", claim: shellDemoClaims[0], evidence: shellDemoEvidencePaths[0] });
+          setSelectedFile(shellDemoFiles[1]);
+          setRestoreError(null);
+          return;
+        }
         setAppState({ recentVaults: [] });
         setVaultSuggestions([]);
         setRestoreError(null);
@@ -1982,6 +2506,116 @@ function App() {
       </div>
     </section>
   );
+  const renderKnowledgeSidebar = () => {
+    const primaryConcepts = grouped.concept.slice(0, 12);
+    const primarySources = [...grouped.source, ...grouped.draft].slice(0, 12);
+    const primaryNotes = grouped.note.slice(0, 8);
+    const primaryReports = grouped.report.slice(0, 8);
+    const runnableCount = runnableIngestCount(ingestPlan);
+    const reviewCount = openReviewCount + (status?.counts.claimsNeedingReview ?? 0);
+    const traceabilityCount = traceabilityWarnings.length + brokenEvidence + contractP0P1;
+    return (
+      <aside className="knowledge-sidebar" aria-label={interfaceLanguage === "zh" ? "知识树和文件树" : "Knowledge and file tree"}>
+        <div className="knowledge-project">
+          <div>
+            <strong>{vaultDisplayName}</strong>
+            <span>{interfaceLanguage === "zh" ? "LLM Wiki 工作区" : "LLM Wiki workspace"}</span>
+          </div>
+          <button type="button" onClick={chooseVault} title={interfaceLanguage === "zh" ? "切换项目" : "Switch project"}>
+            <FolderOpen size={15} />
+          </button>
+        </div>
+
+        <div className="knowledge-tabs" role="tablist" aria-label={interfaceLanguage === "zh" ? "导航模式" : "Navigation modes"}>
+          <button type="button" className="active">
+            <Database size={14} />{interfaceLanguage === "zh" ? "知识树" : "Knowledge"}
+          </button>
+          <button type="button">
+            <FileInput size={14} />{interfaceLanguage === "zh" ? "文件树" : "Files"}
+          </button>
+        </div>
+
+        <div className="knowledge-stat-strip">
+          <button type="button" onClick={() => setActivePage("sources")}>
+            <strong>{status?.counts.sources ?? 0}</strong>
+            <span>{interfaceLanguage === "zh" ? "Source" : "Sources"}</span>
+          </button>
+          <button type="button" onClick={() => setActivePage("concepts")}>
+            <strong>{status?.counts.concepts ?? 0}</strong>
+            <span>{interfaceLanguage === "zh" ? "Concept" : "Concepts"}</span>
+          </button>
+          <button type="button" onClick={() => setActivePage("reviews")}>
+            <strong>{reviewCount}</strong>
+            <span>{interfaceLanguage === "zh" ? "Review" : "Review"}</span>
+          </button>
+        </div>
+
+        <div className="knowledge-tree-scroll">
+          <ShellTreeSection
+            title={interfaceLanguage === "zh" ? "Concepts" : "Concepts"}
+            meta={`${primaryConcepts.length}/${grouped.concept.length}`}
+            icon={<Database size={14} />}
+            files={primaryConcepts}
+            empty={interfaceLanguage === "zh" ? "暂无概念页" : "No concept pages"}
+            onSelect={selectFileForDetails}
+          />
+          <ShellTreeSection
+            title={interfaceLanguage === "zh" ? "Sources" : "Sources"}
+            meta={`${primarySources.length}/${grouped.source.length + grouped.draft.length}`}
+            icon={<FileInput size={14} />}
+            files={primarySources}
+            empty={interfaceLanguage === "zh" ? "暂无资料页" : "No source pages"}
+            onSelect={selectFileForDetails}
+          />
+          <ShellTreeSection
+            title={interfaceLanguage === "zh" ? "Wiki Notes" : "Wiki Notes"}
+            meta={`${primaryNotes.length}/${grouped.note.length}`}
+            icon={<SquareStack size={14} />}
+            files={primaryNotes}
+            empty={interfaceLanguage === "zh" ? "暂无笔记" : "No notes"}
+            onSelect={selectFileForDetails}
+          />
+          <ShellTreeSection
+            title={interfaceLanguage === "zh" ? "Reports" : "Reports"}
+            meta={`${primaryReports.length}/${grouped.report.length}`}
+            icon={<ShieldCheck size={14} />}
+            files={primaryReports}
+            empty={interfaceLanguage === "zh" ? "暂无报告" : "No reports"}
+            onSelect={selectFileForDetails}
+          />
+        </div>
+
+        <div className="knowledge-bottom">
+          <div className="knowledge-next-actions">
+            <button type="button" onClick={() => setActivePage("sources")}>
+              <Play size={14} />
+              <span>{interfaceLanguage === "zh" ? "可运行 ingest" : "Runnable ingest"}</span>
+              <strong>{runnableCount}</strong>
+            </button>
+            <button type="button" onClick={() => setActivePage("traceability")}>
+              <GitCompare size={14} />
+              <span>{interfaceLanguage === "zh" ? "证据问题" : "Traceability"}</span>
+              <strong>{traceabilityCount}</strong>
+            </button>
+          </div>
+          <ActivityMiniPanel
+            activeJob={activeJob}
+            history={runtimeHistory}
+            runtimeRunning={runtimeRunning}
+            getDurationSeconds={runtimeDurationSeconds}
+            getLogPath={runtimeLogPath}
+            isRetryable={isRetryableRuntimeStatus}
+            isTerminal={isTerminalRuntimeStatus}
+            statusTone={runtimeStatusTone}
+            onOpenLog={openPath}
+            onRetry={handleRetryRuntimeJob}
+            onCancel={handleCancelRuntimeJob}
+            onOpenActivity={() => setActivePage("activity")}
+          />
+        </div>
+      </aside>
+    );
+  };
 
   if (!vaultPath) {
     return (
@@ -2016,9 +2650,10 @@ function App() {
     <main
       className={classNames(
         "app-shell",
+        activePage !== "settings" && "nashsu-aligned-shell",
         `interface-${interfaceLanguage}`,
         activePage === "settings" && "settings-mode",
-        activePage !== "settings" && detailDrawerOpen && "drawer-open",
+        activePage !== "settings" && detailDrawerOpen && "inspector-open",
         dragActive && "drag-active",
       )}
       onDragOver={(event) => {
@@ -2055,124 +2690,7 @@ function App() {
         <div className={classNames("rail-status", tone)} title={vaultPath || "No vault selected"} />
       </aside>
 
-      {activePage !== "settings" && detailDrawerOpen && (
-        <aside className="sidebar command-sidebar open">
-          <div className="drawer-header">
-            <span>{copy.drawerTitle}</span>
-            <button type="button" onClick={() => setDetailDrawerOpen(false)} aria-label={interfaceLanguage === "zh" ? "关闭侧栏" : "Close inspector"}>
-              <XCircle size={16} />
-            </button>
-          </div>
-          <div className="brand">
-          <div className="brand-mark">
-            <BrandMark size={42} />
-          </div>
-          <div>
-            <h1>LLM Wiki</h1>
-            <p>{vaultPath ? copy.brandSubtitleWithVault : copy.brandSubtitleNoVault}</p>
-          </div>
-        </div>
-
-        <section className="panel">
-          <h2>{copy.vaultManagement}</h2>
-          <div className="path-field" title={vaultPath || copy.noVault}>{vaultPath ? visiblePath(vaultPath) : copy.noVault}</div>
-          <div className="path-field" title={entryNote?.entryPath || copy.entryPending}>
-            {entryNote?.entryRelativePath ? visiblePath(entryNote.entryRelativePath) : copy.entryPending}
-          </div>
-          {entryNote?.obsidianUri && (
-            <div className="path-field" title={entryNote.obsidianUri}>{entryNote.obsidianUri}</div>
-          )}
-          {vaultPath && hasWhitespacePathSegment(vaultPath) && (
-            <p className="note warn-text">当前路径包含尾随空格目录段，桌面端会按真实路径保留；手动输入时请使用选择器或最近 vault。</p>
-          )}
-          {entryNote?.warning && <p className="note warn-text">{entryNote.warning}</p>}
-          <div className="button-row">
-            <button onClick={chooseVault}><FolderOpen size={16} />{copy.open}</button>
-            <button onClick={() => refresh()} disabled={!vaultPath || busy === "inspect"}><RefreshCw size={16} />{copy.refresh}</button>
-          </div>
-          <input value={newVaultPath} onChange={(event) => setNewVaultPath(event.target.value)} placeholder="/absolute/path/to/new-vault" />
-          <label className="check-row">
-            <input type="checkbox" checked={enableObsidian} onChange={(event) => setEnableObsidian(event.target.checked)} />
-            {copy.enableObsidianProfile}
-          </label>
-          <button className="wide" onClick={handleCreateVault} disabled={busy === "create"}><Archive size={16} />{copy.createVault}</button>
-          <div className="button-row">
-            <button onClick={() => vaultPath && openPath(vaultPath)} disabled={!vaultPath}><FolderOpen size={16} />{copy.folder}</button>
-            <button onClick={revealEntryOrVault} disabled={!vaultPath}><FolderOpen size={16} />{copy.finder}</button>
-            <button onClick={handleOpenObsidian} disabled={!vaultPath || busy === "obsidian_open"}><SquareStack size={16} />{copy.obsidian}</button>
-          </div>
-          <div className="button-row">
-            <button onClick={() => copyText("entry path", entryNote?.fallbackPath || entryNote?.entryPath || vaultPath)} disabled={!vaultPath}><Copy size={16} />{copy.copyPath}</button>
-            <button onClick={() => copyText("Obsidian URI", entryNote?.obsidianUri)} disabled={!entryNote?.obsidianUri}><Copy size={16} />{copy.copyUri}</button>
-          </div>
-        </section>
-
-        <DetailsPanel
-          language={interfaceLanguage}
-          selection={detailSelection}
-          vaultPath={vaultPath}
-          obsidianUri={entryNote?.obsidianUri}
-          resolveVaultPath={vaultFilePath}
-          onOpenPath={openPath}
-          onRevealPath={revealResolvedPath}
-          onOpenVaultPath={openVaultItem}
-          onCopy={copyText}
-          onOpenObsidian={handleOpenObsidian}
-        />
-
-        <ActivityMiniPanel
-          activeJob={activeJob}
-          history={runtimeHistory}
-          runtimeRunning={runtimeRunning}
-          getDurationSeconds={runtimeDurationSeconds}
-          getLogPath={runtimeLogPath}
-          isRetryable={isRetryableRuntimeStatus}
-          isTerminal={isTerminalRuntimeStatus}
-          statusTone={runtimeStatusTone}
-          onOpenLog={openPath}
-          onRetry={handleRetryRuntimeJob}
-          onCancel={handleCancelRuntimeJob}
-          onOpenActivity={() => setActivePage("activity")}
-        />
-
-        <section className="panel focus-panel">
-          <h2>{copy.nextActionTitle}</h2>
-          <p className="note">{vaultPath ? copy.nextActionHelp : copy.brandSubtitleNoVault}</p>
-          <div className="focus-list">
-            <button onClick={() => setActivePage("dashboard")}>
-              <SquareStack size={15} />
-              <span>{copy.nav.dashboard}</span>
-              <em>{status?.dashboardAvailable ? copy.stateLabels.ready : copy.stateLabels.needsRefresh}</em>
-            </button>
-            <button onClick={() => setActivePage("activity")}>
-              <TerminalSquare size={15} />
-              <span>{copy.nav.activity}</span>
-              <em>{runtimeRunning ? copy.stateLabels.running : `${runtimeHistory.length} ${copy.stateLabels.history}`}</em>
-            </button>
-            <button onClick={() => setActivePage("writeback")}>
-              <GitCompare size={15} />
-              <span>{copy.nav.writeback}</span>
-              <em>{writebacks.length} ${copy.stateLabels.proposals}</em>
-            </button>
-            <button onClick={() => setActivePage("chat")}>
-              <MessageSquare size={15} />
-              <span>{copy.nav.chat}</span>
-              <em>{claims.length + reviewItems.length + writebacks.length} ${copy.stateLabels.searchableRecords}</em>
-            </button>
-            <button onClick={() => setActivePage("graph")}>
-              <Network size={15} />
-              <span>{copy.nav.graph}</span>
-              <em>{claims.length + traceabilityWarnings.length + impactEdges.length} ${copy.stateLabels.links}</em>
-            </button>
-            <button onClick={() => setActivePage("traceability")}>
-              <GitCompare size={15} />
-              <span>{copy.nav.traceability}</span>
-              <em>{traceabilityWarnings.length + brokenEvidence} ${copy.stateLabels.warnings}</em>
-            </button>
-          </div>
-        </section>
-      </aside>
-      )}
+      {activePage !== "settings" && renderKnowledgeSidebar()}
 
       <section className="workspace">
         <header className="topbar">
@@ -2923,7 +3441,65 @@ function App() {
           </>
         )}
       </section>
+
+      {activePage !== "settings" && detailDrawerOpen && (
+        <aside className="preview-sidebar" aria-label={interfaceLanguage === "zh" ? "预览和检查器" : "Preview and inspector"}>
+          <div className="preview-sidebar-header">
+            <div>
+              <strong>{interfaceLanguage === "zh" ? "Preview" : "Preview"}</strong>
+              <span>{interfaceLanguage === "zh" ? "文件预览 / 证据上下文" : "File preview / evidence context"}</span>
+            </div>
+            <button type="button" onClick={() => setDetailDrawerOpen(false)} title={interfaceLanguage === "zh" ? "关闭预览栏" : "Close preview"}>
+              <XCircle size={15} />
+            </button>
+          </div>
+          <DetailsPanel
+            language={interfaceLanguage}
+            selection={detailSelection}
+            vaultPath={vaultPath}
+            obsidianUri={entryNote?.obsidianUri}
+            resolveVaultPath={vaultFilePath}
+            onOpenPath={openPath}
+            onRevealPath={revealResolvedPath}
+            onOpenVaultPath={openVaultItem}
+            onCopy={copyText}
+            onOpenObsidian={handleOpenObsidian}
+          />
+        </aside>
+      )}
     </main>
+  );
+}
+
+function ShellTreeSection({
+  title,
+  meta,
+  icon,
+  files,
+  empty,
+  onSelect,
+}: {
+  title: string;
+  meta: string;
+  icon: ReactNode;
+  files: VaultFile[];
+  empty: string;
+  onSelect: (file: VaultFile) => void;
+}) {
+  return (
+    <section className="shell-tree-section">
+      <div className="shell-tree-title">
+        <span>{icon}{title}</span>
+        <em>{meta}</em>
+      </div>
+      {files.length === 0 && <p className="empty">{empty}</p>}
+      {files.map((file) => (
+        <button key={file.path} type="button" onClick={() => onSelect(file)} title={file.path}>
+          <strong>{file.title || file.name}</strong>
+          <span>{file.status || file.updated || file.kind}</span>
+        </button>
+      ))}
+    </section>
   );
 }
 
