@@ -2223,6 +2223,30 @@ function App() {
     setResearchPanelOpen(true);
   }
 
+  function handleReviewResearchTopic(item: ReviewQueueItem) {
+    const title = runtimeText(item.title, interfaceLanguage) || item.title;
+    const body = runtimeText(item.body, interfaceLanguage) || item.body;
+    const evidenceContext = [
+      item.targetPath ? `${interfaceLanguage === "zh" ? "目标页面" : "Target page"}: ${item.targetPath}` : "",
+      item.claimId ? `${interfaceLanguage === "zh" ? "论断" : "Claim"}: ${item.claimId}` : "",
+      item.sourceId ? `${interfaceLanguage === "zh" ? "资料" : "Source"}: ${item.sourceId}` : "",
+      item.evidencePath ? `${interfaceLanguage === "zh" ? "证据路径" : "Evidence path"}: ${item.evidencePath}` : "",
+    ].filter(Boolean).join("\n");
+    const question = interfaceLanguage === "zh"
+      ? `基于当前 LLM Wiki，请围绕审核项「${title}」生成一个可审核的 Deep Research / query writeback 研究主题。\n\n审核正文：${body}\n${evidenceContext ? `\n当前证据上下文：\n${evidenceContext}\n` : ""}\n要求：\n1. 所有确定性结论必须引用当前 wiki 的 source / claim / concept 证据。\n2. 区分 evidence、inference、hypothesis、forecast。\n3. 说明这个审核项需要补充哪些证据或人工确认。\n4. 只生成写回提案，不要静默写入 source/concept 页面。`
+      : `Using the current LLM Wiki, create a reviewable Deep Research / query writeback topic for the review item "${title}".\n\nReview body: ${body}\n${evidenceContext ? `\nCurrent evidence context:\n${evidenceContext}\n` : ""}\nRequirements:\n1. Cite current wiki source / claim / concept evidence for every firm conclusion.\n2. Distinguish evidence, inference, hypothesis, and forecast.\n3. Explain which evidence gaps or human confirmations this review item needs.\n4. Generate a writeback proposal only; do not silently write into source or concept pages.`;
+    const target = `reviews/query-writeback/${item.itemId}-deep-research.md`;
+    setResearchTopic(question);
+    setQueryText(question);
+    setQueryTarget(target);
+    setChatHandoff({ question, targetPath: target, key: Date.now() });
+    setQueryDraft(null);
+    setWritebackApplyStatus(null);
+    setError(null);
+    setActivePage("chat");
+    setResearchPanelOpen(true);
+  }
+
   async function handleOpenObsidian() {
     if (!vaultPath) return;
     setBusy("obsidian_open");
@@ -2653,6 +2677,12 @@ function App() {
               <button onClick={() => handleReviewStatus(item.itemId, "approved")} disabled={item.status === "approved"}><Check size={14} />{interfaceLanguage === "zh" ? "批准" : "approve"}</button>
               <button onClick={() => handleReviewStatus(item.itemId, "rejected")} disabled={item.status === "rejected"}><XCircle size={14} />{interfaceLanguage === "zh" ? "拒绝" : "reject"}</button>
               <button onClick={() => handleReviewStatus(item.itemId, "ignored")} disabled={item.status === "ignored"}><XCircle size={14} />{interfaceLanguage === "zh" ? "忽略" : "ignore"}</button>
+              <button
+                onClick={() => handleReviewResearchTopic(item)}
+                disabled={["approved", "resolved", "ignored", "rejected"].includes(item.status)}
+              >
+                <Search size={14} />Deep Research
+              </button>
               <button onClick={() => handleFollowup(item)}><ClipboardList size={14} />{interfaceLanguage === "zh" ? "后续动作" : "follow-up"}</button>
             </div>
           </div>
