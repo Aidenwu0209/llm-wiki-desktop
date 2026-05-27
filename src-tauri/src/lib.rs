@@ -908,7 +908,7 @@ struct TraceabilityWarning {
     finding_id: Option<String>,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct ImpactEdge {
     edge_id: String,
@@ -1831,6 +1831,127 @@ fn graph_canvas_files(vault: &Path) -> Vec<PathBuf> {
     canvases.sort();
     canvases.dedup();
     canvases
+}
+
+fn generated_impact_canvas_path(vault: &Path) -> PathBuf {
+    vault.join("canvas").join("wiki-graph.canvas")
+}
+
+fn is_managed_impact_canvas(text: &str) -> bool {
+    text.contains("llm-wiki-desktop generated impact graph")
+}
+
+fn canvas_node_label(object_type: &str, object_id: &str) -> String {
+    let suffix = object_id
+        .rsplit(['/', ':', '#'])
+        .next()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(object_id);
+    format!("{object_type}: {suffix}")
+}
+
+fn canvas_node_id(object_type: &str, object_id: &str) -> String {
+    format!("node-{}", short_hash(&format!("{object_type}:{object_id}")))
+}
+
+fn load_impact_edges_for_canvas(vault: &Path) -> Vec<ImpactEdge> {
+    read_text(&vault.join("_state").join("impact-graph.jsonl"))
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .filter_map(|line| serde_json::from_str::<ImpactEdge>(line).ok())
+        .filter(|edge| {
+            !edge.from_id.trim().is_empty()
+                && !edge.to_id.trim().is_empty()
+                && !edge.from_type.trim().is_empty()
+                && !edge.to_type.trim().is_empty()
+        })
+        .take(120)
+        .collect()
+}
+
+fn write_impact_graph_canvas(vault: &Path) -> Result<Option<PathBuf>, String> {
+    let edges = load_impact_edges_for_canvas(vault);
+    if edges.is_empty() {
+        return Ok(None);
+    }
+    let path = generated_impact_canvas_path(vault);
+    if path.is_file() && !is_managed_impact_canvas(&read_text(&path)) {
+        return Ok(Some(path));
+    }
+
+    let mut node_ids = HashMap::new();
+    let mut nodes = Vec::new();
+    for edge in &edges {
+        for (object_type, object_id) in [
+            (edge.from_type.as_str(), edge.from_id.as_str()),
+            (edge.to_type.as_str(), edge.to_id.as_str()),
+        ] {
+            let key = format!("{object_type}:{object_id}");
+            if node_ids.contains_key(&key) {
+                continue;
+            }
+            let id = canvas_node_id(object_type, object_id);
+            let index = node_ids.len();
+            node_ids.insert(key, id.clone());
+            nodes.push(serde_json::json!({
+                "id": id,
+                "type": "text",
+                "text": canvas_node_label(object_type, object_id),
+                "x": ((index % 5) as i64) * 360,
+                "y": ((index / 5) as i64) * 220,
+                "width": 260,
+                "height": 90,
+            }));
+            if node_ids.len() >= 80 {
+                break;
+            }
+        }
+        if node_ids.len() >= 80 {
+            break;
+        }
+    }
+
+    let canvas_edges = edges
+        .iter()
+        .filter_map(|edge| {
+            let from_key = format!("{}:{}", edge.from_type, edge.from_id);
+            let to_key = format!("{}:{}", edge.to_type, edge.to_id);
+            let from_node = node_ids.get(&from_key)?;
+            let to_node = node_ids.get(&to_key)?;
+            Some(serde_json::json!({
+                "id": format!("canvas-{}", short_hash(&edge.edge_id)),
+                "fromNode": from_node,
+                "toNode": to_node,
+                "label": format!("{} ({})", edge.relationship, edge.status),
+            }))
+        })
+        .collect::<Vec<_>>();
+
+    if canvas_edges.is_empty() {
+        return Ok(None);
+    }
+
+    nodes.push(serde_json::json!({
+        "id": "llm-wiki-generated-canvas-note",
+        "type": "text",
+        "text": "llm-wiki-desktop generated impact graph\nSource: _state/impact-graph.jsonl\nReview source, claim, and concept state before treating graph edges as stable knowledge.",
+        "x": -360,
+        "y": -220,
+        "width": 320,
+        "height": 150,
+    }));
+
+    let canvas = serde_json::json!({
+        "nodes": nodes,
+        "edges": canvas_edges,
+    });
+    write_text(
+        &path,
+        &(serde_json::to_string_pretty(&canvas)
+            .map_err(|e| format!("failed to serialize impact canvas: {e}"))?
+            + "\n"),
+    )?;
+    Ok(Some(path))
 }
 
 fn count_jsonl(path: &Path) -> usize {
@@ -14725,6 +14846,72 @@ mod tests {
     }
 
     #[test]
+    fn generated_obsidian_home_creates_canvas_from_impact_graph() {
+        let vault = test_vault("obsidian-impact-canvas");
+        create_minimal_vault(&vault).expect("create vault");
+        write_jsonl(
+            &vault.join("_state").join("impact-graph.jsonl"),
+            &[
+                ImpactEdge {
+                    edge_id: "edge-source-claim".to_string(),
+                    from_type: "source".to_string(),
+                    from_id: "LLM-0001".to_string(),
+                    to_type: "claim".to_string(),
+                    to_id: "claim-1".to_string(),
+                    relationship: "asserts".to_string(),
+                    status: "supported".to_string(),
+                },
+                ImpactEdge {
+                    edge_id: "edge-claim-concept".to_string(),
+                    from_type: "claim".to_string(),
+                    from_id: "claim-1".to_string(),
+                    to_type: "concept".to_string(),
+                    to_id: "research-strategy".to_string(),
+                    relationship: "affects".to_string(),
+                    status: "needs_review".to_string(),
+                },
+            ],
+        )
+        .expect("write impact graph");
+
+        let home = generate_entry_note(&vault).expect("generate home");
+        let canvas_path = vault.join("canvas").join("wiki-graph.canvas");
+        assert!(canvas_path.is_file());
+        let canvas_text = read_text(&canvas_path);
+        assert!(canvas_text.contains("llm-wiki-desktop generated impact graph"));
+        let canvas: serde_json::Value =
+            serde_json::from_str(&canvas_text).expect("canvas json is valid");
+        assert_eq!(
+            canvas
+                .get("edges")
+                .and_then(|value| value.as_array())
+                .map(Vec::len),
+            Some(2)
+        );
+        assert!(canvas_text.contains("source: LLM-0001"));
+        assert!(canvas_text.contains("claim: claim-1"));
+        assert!(canvas_text.contains("concept: research-strategy"));
+
+        let home_text = read_text(&home);
+        assert!(home_text.contains("- Obsidian canvases: 1"));
+        assert!(home_text.contains("[[canvas/wiki-graph.canvas]]"));
+
+        write_text(
+            &canvas_path,
+            "{\"nodes\":[{\"id\":\"manual\"}],\"edges\":[]}\n",
+        )
+        .expect("write manual canvas");
+        let refreshed = generate_entry_note(&vault).expect("refresh home");
+        assert_eq!(refreshed, home);
+        assert_eq!(
+            read_text(&canvas_path),
+            "{\"nodes\":[{\"id\":\"manual\"}],\"edges\":[]}\n"
+        );
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
     fn generated_obsidian_home_preserves_custom_entry_note() {
         let vault = test_vault("obsidian-home-custom");
         create_minimal_vault(&vault).expect("create vault");
@@ -15711,6 +15898,7 @@ fn generate_entry_note(vault: &Path) -> Result<PathBuf, String> {
         8,
     );
     let concept_links = markdown_list_links(vault, &concepts, "No concept pages yet.", 12);
+    let _impact_canvas = write_impact_graph_canvas(vault)?;
     let graph_reports = graph_report_notes(vault);
     let graph_canvases = graph_canvas_files(vault);
     let graph_report_links =
