@@ -527,6 +527,31 @@ textarea {
   resize: vertical;
 }
 
+.shell-research-target {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid #e0e6e2;
+  border-radius: 6px;
+  background: #fbfcfa;
+  padding: 8px;
+}
+
+.shell-research-target span {
+  color: #64706a;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.shell-research-target code {
+  overflow: hidden;
+  color: #17201d;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .shell-research-actions {
   display: grid;
   grid-template-columns: 1fr;
@@ -537,6 +562,17 @@ textarea {
   justify-content: flex-start;
   min-height: 34px;
   padding: 0 10px;
+}
+
+.shell-research-actions button.primary {
+  border-color: #315f46;
+  background: #315f46;
+  color: #ffffff;
+}
+
+.shell-research-actions button.primary:hover:not(:disabled) {
+  border-color: #234735;
+  background: #234735;
 }
 
 .shell-resize-handle {
