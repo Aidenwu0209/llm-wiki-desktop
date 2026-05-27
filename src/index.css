@@ -313,6 +313,12 @@ textarea {
   background: #f4f8f2;
 }
 
+.shell-tree-section button.selected {
+  border-color: #8fb29d;
+  background: #edf7f1;
+  box-shadow: inset 3px 0 0 #2f6b45;
+}
+
 .shell-tree-section strong,
 .shell-tree-section span {
   display: block;
@@ -331,6 +337,29 @@ textarea {
   margin-top: 2px;
   color: #64706a;
   font-size: 10px;
+}
+
+.shell-file-tree {
+  display: grid;
+  gap: 12px;
+}
+
+.shell-folder-section .shell-tree-title {
+  text-transform: none;
+}
+
+.shell-folder-section .file-tree-item {
+  padding-left: 16px;
+}
+
+.shell-folder-section .file-tree-item strong {
+  font-size: 12px;
+}
+
+.shell-folder-section .file-tree-item span {
+  color: #7a8580;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 9.5px;
 }
 
 .knowledge-bottom {

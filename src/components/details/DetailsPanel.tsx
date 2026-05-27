@@ -18,7 +18,7 @@ import {
   X,
 } from "lucide-react";
 import type { UiLanguage } from "../../i18n";
-import { readVaultImageFile, readVaultTextFile } from "../../tauri";
+import { isTauriAvailable, readVaultImageFile, readVaultTextFile } from "../../tauri";
 import type { ClaimLedgerItem, EvidencePathItem, TraceabilityWarning, VaultFile, VaultTextFilePreview, WritebackProposal } from "../../types";
 
 export type DetailSelection =
@@ -185,6 +185,28 @@ const VAULT_ROOT_RELATIVE_PREFIXES = new Set([
 
 function canPreviewVaultText(path?: string | null) {
   return Boolean(path && /\.(md|markdown|txt|json|jsonl|csv|tsv)$/i.test(path));
+}
+
+function metadataOnlyPreview(file: VaultFile, language: UiLanguage): VaultTextFilePreview {
+  const lines = [
+    `# ${file.title || file.name}`,
+    "",
+    language === "zh"
+      ? "浏览器预览只显示页面元数据。请在桌面端打开真实 vault 读取文件正文。"
+      : "Browser preview shows page metadata only. Open the desktop app against a real vault to read file contents.",
+    "",
+    `- Path: ${file.path}`,
+    `- Type: ${file.kind}`,
+    `- Status: ${file.status || "unknown"}`,
+    file.sourceId ? `- Source ID: ${file.sourceId}` : "",
+    file.updated ? `- Updated: ${file.updated}` : "",
+  ].filter(Boolean);
+  return {
+    path: file.path,
+    sizeBytes: 0,
+    content: `${lines.join("\n")}\n`,
+    truncated: false,
+  };
 }
 
 function transformWikilinks(markdown: string) {
@@ -781,6 +803,10 @@ function MarkdownImage({
       setState({ status: "idle" });
       return;
     }
+    if (!isTauriAvailable()) {
+      setState({ status: "idle" });
+      return;
+    }
     let cancelled = false;
     let objectUrl = "";
     setState({ status: "loading" });
@@ -870,6 +896,14 @@ export function DetailsPanel({
       setPreviewState({ status: "idle" });
       return;
     }
+    if (!isTauriAvailable()) {
+      if (selection.kind === "source") {
+        setPreviewState({ status: "ready", preview: metadataOnlyPreview(selection.file, language) });
+      } else {
+        setPreviewState({ status: "idle" });
+      }
+      return;
+    }
     let cancelled = false;
     setPreviewState({ status: "loading" });
     readVaultTextFile(vaultPath, sourcePreviewPath as string)
@@ -882,7 +916,7 @@ export function DetailsPanel({
     return () => {
       cancelled = true;
     };
-  }, [sourcePreviewPath, vaultPath]);
+  }, [language, selection, sourcePreviewPath, vaultPath]);
 
   return (
     <section className="panel details-panel">
