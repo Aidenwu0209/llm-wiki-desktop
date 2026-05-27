@@ -209,6 +209,7 @@ const navigationItems = [
 ] as const;
 
 type ShellPage = (typeof navigationItems)[number]["id"];
+type SidebarTreeMode = "knowledge" | "files";
 type NavBadge = {
   value: string | number;
   tone?: "neutral" | "warning" | "danger" | "live";
@@ -1320,6 +1321,34 @@ function pipelineState(index: number, status: VaultStatus | null, plan: IngestPl
   return status?.schemaValid ? "available" : "blocked";
 }
 
+function fileTreeGroups(files: VaultFile[]) {
+  const groups = new Map<string, VaultFile[]>();
+  const rootLabel = "Vault root";
+  for (const file of files) {
+    const normalizedPath = file.path.replace(/\\/g, "/").replace(/^\/+/, "");
+    const folder = normalizedPath.includes("/") ? normalizedPath.split("/")[0] : rootLabel;
+    const current = groups.get(folder) ?? [];
+    current.push(file);
+    groups.set(folder, current);
+  }
+  const folderRank = new Map([
+    [rootLabel, 0],
+    ["concepts", 1],
+    ["sources", 2],
+    ["drafts", 3],
+    ["claims", 4],
+    ["reviews", 5],
+    ["reports", 6],
+    ["raw", 7],
+  ]);
+  return Array.from(groups.entries())
+    .sort(([a], [b]) => (folderRank.get(a) ?? 99) - (folderRank.get(b) ?? 99) || a.localeCompare(b))
+    .map(([folder, folderFiles]) => ({
+      folder,
+      files: [...folderFiles].sort((a, b) => a.path.localeCompare(b.path)),
+    }));
+}
+
 function App() {
   const [interfaceLanguage, setInterfaceLanguage] = useState<UiLanguage>(() =>
     normalizeUiLanguage(typeof localStorage === "undefined" ? null : localStorage.getItem(INTERFACE_LANGUAGE_STORAGE_KEY)),
@@ -1361,6 +1390,7 @@ function App() {
   const [liveLogLines, setLiveLogLines] = useState<string[]>([]);
   const [activePage, setActivePage] = useState<ShellPage>("dashboard");
   const [detailDrawerOpen, setDetailDrawerOpen] = useState(true);
+  const [sidebarTreeMode, setSidebarTreeMode] = useState<SidebarTreeMode>("knowledge");
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [actionFocusIndex, setActionFocusIndex] = useState(0);
   const [actionListExpanded, setActionListExpanded] = useState(false);
@@ -2511,9 +2541,11 @@ function App() {
     const primarySources = [...grouped.source, ...grouped.draft].slice(0, 12);
     const primaryNotes = grouped.note.slice(0, 8);
     const primaryReports = grouped.report.slice(0, 8);
+    const fileGroups = fileTreeGroups(status?.files ?? []);
     const runnableCount = runnableIngestCount(ingestPlan);
     const reviewCount = openReviewCount + (status?.counts.claimsNeedingReview ?? 0);
     const traceabilityCount = traceabilityWarnings.length + brokenEvidence + contractP0P1;
+    const selectedPath = selectedFile?.path || (detailSelection.kind === "source" ? detailSelection.file.path : "");
     return (
       <aside className="knowledge-sidebar" aria-label={interfaceLanguage === "zh" ? "知识树和文件树" : "Knowledge and file tree"}>
         <div className="knowledge-project">
@@ -2527,10 +2559,22 @@ function App() {
         </div>
 
         <div className="knowledge-tabs" role="tablist" aria-label={interfaceLanguage === "zh" ? "导航模式" : "Navigation modes"}>
-          <button type="button" className="active">
+          <button
+            type="button"
+            className={classNames(sidebarTreeMode === "knowledge" && "active")}
+            role="tab"
+            aria-selected={sidebarTreeMode === "knowledge"}
+            onClick={() => setSidebarTreeMode("knowledge")}
+          >
             <Database size={14} />{interfaceLanguage === "zh" ? "知识树" : "Knowledge"}
           </button>
-          <button type="button">
+          <button
+            type="button"
+            className={classNames(sidebarTreeMode === "files" && "active")}
+            role="tab"
+            aria-selected={sidebarTreeMode === "files"}
+            onClick={() => setSidebarTreeMode("files")}
+          >
             <FileInput size={14} />{interfaceLanguage === "zh" ? "文件树" : "Files"}
           </button>
         </div>
@@ -2551,38 +2595,53 @@ function App() {
         </div>
 
         <div className="knowledge-tree-scroll">
-          <ShellTreeSection
-            title={interfaceLanguage === "zh" ? "Concepts" : "Concepts"}
-            meta={`${primaryConcepts.length}/${grouped.concept.length}`}
-            icon={<Database size={14} />}
-            files={primaryConcepts}
-            empty={interfaceLanguage === "zh" ? "暂无概念页" : "No concept pages"}
-            onSelect={selectFileForDetails}
-          />
-          <ShellTreeSection
-            title={interfaceLanguage === "zh" ? "Sources" : "Sources"}
-            meta={`${primarySources.length}/${grouped.source.length + grouped.draft.length}`}
-            icon={<FileInput size={14} />}
-            files={primarySources}
-            empty={interfaceLanguage === "zh" ? "暂无资料页" : "No source pages"}
-            onSelect={selectFileForDetails}
-          />
-          <ShellTreeSection
-            title={interfaceLanguage === "zh" ? "Wiki Notes" : "Wiki Notes"}
-            meta={`${primaryNotes.length}/${grouped.note.length}`}
-            icon={<SquareStack size={14} />}
-            files={primaryNotes}
-            empty={interfaceLanguage === "zh" ? "暂无笔记" : "No notes"}
-            onSelect={selectFileForDetails}
-          />
-          <ShellTreeSection
-            title={interfaceLanguage === "zh" ? "Reports" : "Reports"}
-            meta={`${primaryReports.length}/${grouped.report.length}`}
-            icon={<ShieldCheck size={14} />}
-            files={primaryReports}
-            empty={interfaceLanguage === "zh" ? "暂无报告" : "No reports"}
-            onSelect={selectFileForDetails}
-          />
+          {sidebarTreeMode === "knowledge" ? (
+            <>
+              <ShellTreeSection
+                title={interfaceLanguage === "zh" ? "Concepts" : "Concepts"}
+                meta={`${primaryConcepts.length}/${grouped.concept.length}`}
+                icon={<Database size={14} />}
+                files={primaryConcepts}
+                empty={interfaceLanguage === "zh" ? "暂无概念页" : "No concept pages"}
+                selectedPath={selectedPath}
+                onSelect={selectFileForDetails}
+              />
+              <ShellTreeSection
+                title={interfaceLanguage === "zh" ? "Sources" : "Sources"}
+                meta={`${primarySources.length}/${grouped.source.length + grouped.draft.length}`}
+                icon={<FileInput size={14} />}
+                files={primarySources}
+                empty={interfaceLanguage === "zh" ? "暂无资料页" : "No source pages"}
+                selectedPath={selectedPath}
+                onSelect={selectFileForDetails}
+              />
+              <ShellTreeSection
+                title={interfaceLanguage === "zh" ? "Wiki Notes" : "Wiki Notes"}
+                meta={`${primaryNotes.length}/${grouped.note.length}`}
+                icon={<SquareStack size={14} />}
+                files={primaryNotes}
+                empty={interfaceLanguage === "zh" ? "暂无笔记" : "No notes"}
+                selectedPath={selectedPath}
+                onSelect={selectFileForDetails}
+              />
+              <ShellTreeSection
+                title={interfaceLanguage === "zh" ? "Reports" : "Reports"}
+                meta={`${primaryReports.length}/${grouped.report.length}`}
+                icon={<ShieldCheck size={14} />}
+                files={primaryReports}
+                empty={interfaceLanguage === "zh" ? "暂无报告" : "No reports"}
+                selectedPath={selectedPath}
+                onSelect={selectFileForDetails}
+              />
+            </>
+          ) : (
+            <ShellFileTree
+              groups={fileGroups}
+              empty={interfaceLanguage === "zh" ? "暂无 vault 文件" : "No vault files"}
+              selectedPath={selectedPath}
+              onSelect={selectFileForDetails}
+            />
+          )}
         </div>
 
         <div className="knowledge-bottom">
@@ -3477,6 +3536,7 @@ function ShellTreeSection({
   icon,
   files,
   empty,
+  selectedPath,
   onSelect,
 }: {
   title: string;
@@ -3484,6 +3544,7 @@ function ShellTreeSection({
   icon: ReactNode;
   files: VaultFile[];
   empty: string;
+  selectedPath?: string;
   onSelect: (file: VaultFile) => void;
 }) {
   return (
@@ -3494,12 +3555,56 @@ function ShellTreeSection({
       </div>
       {files.length === 0 && <p className="empty">{empty}</p>}
       {files.map((file) => (
-        <button key={file.path} type="button" onClick={() => onSelect(file)} title={file.path}>
+        <button
+          key={file.path}
+          type="button"
+          className={classNames(selectedPath === file.path && "selected")}
+          onClick={() => onSelect(file)}
+          title={file.path}
+        >
           <strong>{file.title || file.name}</strong>
           <span>{file.status || file.updated || file.kind}</span>
         </button>
       ))}
     </section>
+  );
+}
+
+function ShellFileTree({
+  groups,
+  empty,
+  selectedPath,
+  onSelect,
+}: {
+  groups: Array<{ folder: string; files: VaultFile[] }>;
+  empty: string;
+  selectedPath?: string;
+  onSelect: (file: VaultFile) => void;
+}) {
+  if (groups.length === 0) return <p className="empty">{empty}</p>;
+  return (
+    <div className="shell-file-tree">
+      {groups.map((group) => (
+        <section className="shell-tree-section shell-folder-section" key={group.folder}>
+          <div className="shell-tree-title">
+            <span><FolderOpen size={14} />{group.folder}</span>
+            <em>{group.files.length}</em>
+          </div>
+          {group.files.map((file) => (
+            <button
+              key={file.path}
+              type="button"
+              className={classNames("file-tree-item", selectedPath === file.path && "selected")}
+              onClick={() => onSelect(file)}
+              title={file.path}
+            >
+              <strong>{file.name}</strong>
+              <span>{file.path}</span>
+            </button>
+          ))}
+        </section>
+      ))}
+    </div>
   );
 }
 
