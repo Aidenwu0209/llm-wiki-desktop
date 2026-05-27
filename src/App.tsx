@@ -3124,15 +3124,15 @@ function App() {
         <div className="knowledge-stat-strip">
           <button type="button" onClick={() => setActivePage("sources")}>
             <strong>{status?.counts.sources ?? 0}</strong>
-            <span>{interfaceLanguage === "zh" ? "Source" : "Sources"}</span>
+            <span>{interfaceLanguage === "zh" ? "资料" : "Sources"}</span>
           </button>
           <button type="button" onClick={() => setActivePage("concepts")}>
             <strong>{status?.counts.concepts ?? 0}</strong>
-            <span>{interfaceLanguage === "zh" ? "Concept" : "Concepts"}</span>
+            <span>{interfaceLanguage === "zh" ? "概念" : "Concepts"}</span>
           </button>
           <button type="button" onClick={() => setActivePage("reviews")}>
             <strong>{reviewCount}</strong>
-            <span>{interfaceLanguage === "zh" ? "Review" : "Review"}</span>
+            <span>{interfaceLanguage === "zh" ? "审核" : "Review"}</span>
           </button>
         </div>
 
