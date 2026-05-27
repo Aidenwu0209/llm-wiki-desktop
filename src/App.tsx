@@ -192,6 +192,8 @@ type ShellResearchReadiness = {
   searchDetail: string;
 };
 
+type ShellResearchStageState = "ready" | "warning" | "running" | "done";
+
 const shellLlmProviderNames: Record<string, string> = {
   anthropic: "Anthropic",
   "claude-code": "Claude Code CLI",
@@ -341,6 +343,35 @@ function ShellResearchPanel({
   const isZh = language === "zh";
   const trimmedTopic = topic.trim();
   const visibleProposals = proposals.slice(0, 4);
+  const evidenceReady = sourceCount + conceptCount > 0;
+  const researchStages: Array<{ label: string; detail: string; state: ShellResearchStageState }> = [
+    {
+      label: isZh ? "证据" : "Evidence",
+      detail: evidenceReady
+        ? `${sourceCount} ${isZh ? "资料" : "sources"} / ${conceptCount} ${isZh ? "概念" : "concepts"}`
+        : isZh ? "等待 vault 资料" : "Waiting for vault evidence",
+      state: evidenceReady ? "ready" : "warning",
+    },
+    {
+      label: isZh ? "模型" : "Model",
+      detail: readiness.llmReady ? readiness.llmLabel : isZh ? "未就绪" : "not ready",
+      state: readiness.llmReady ? "ready" : "warning",
+    },
+    {
+      label: isZh ? "搜索" : "Search",
+      detail: readiness.searchReady ? readiness.searchLabel : isZh ? "仅本地" : "local only",
+      state: readiness.searchReady ? "ready" : "warning",
+    },
+    {
+      label: isZh ? "提案" : "Proposal",
+      detail: proposalBusy
+        ? isZh ? "生成中" : "creating"
+        : proposalCount > 0
+          ? `${proposalCount} ${isZh ? "个待审" : "saved"}`
+          : isZh ? "尚未生成" : "not created",
+      state: proposalBusy ? "running" : proposalCount > 0 ? "done" : "warning",
+    },
+  ];
   const statusLabel = (status: WritebackProposal["status"]) => {
     if (!isZh) return status === "review_only" ? "review artifact" : status;
     const labels: Record<string, string> = {
@@ -375,6 +406,16 @@ function ShellResearchPanel({
         <span>{isZh ? "本地证据" : "local evidence"}</span>
         <span>{isZh ? "外部检索需配置" : "search gated"}</span>
         <span>{isZh ? "先生成提案" : "proposal first"}</span>
+      </div>
+
+      <div className="shell-research-stage-rail" aria-label={isZh ? "研究任务状态" : "Research task status"}>
+        {researchStages.map((stage, index) => (
+          <div key={stage.label} className={classNames("shell-research-stage", stage.state)}>
+            <span>{index + 1}</span>
+            <strong>{stage.label}</strong>
+            <em>{stage.detail}</em>
+          </div>
+        ))}
       </div>
 
       <div className="shell-research-readiness" aria-label={isZh ? "研究能力状态" : "Research capability status"}>
