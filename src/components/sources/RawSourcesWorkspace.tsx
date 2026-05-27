@@ -23,6 +23,7 @@ import type {
   VaultStatus,
 } from "../../types";
 import type { UiLanguage } from "../../i18n";
+import { isReviewGatedIngestEntry, isRunnableIngestEntry } from "../../lib/ingestPlan";
 
 type RawSourceRecord = {
   id: string;
@@ -51,7 +52,17 @@ type RawSourceRecord = {
   traceabilityStatus: string;
 };
 
-type RawSourcePlanFilter = "all" | "needs_action" | "ready" | "stageable" | "blocked" | "cached" | "published" | "missing_artifact";
+type RawSourcePlanFilter =
+  | "all"
+  | "needs_action"
+  | "runnable"
+  | "needs_review"
+  | "ready"
+  | "stageable"
+  | "blocked"
+  | "cached"
+  | "published"
+  | "missing_artifact";
 
 type RawSourceRecordWithPlan = {
   record: RawSourceRecord;
@@ -132,10 +143,12 @@ const rawCopy = {
     planFilterLabels: {
       all: "全部",
       needs_action: "需处理",
-      ready: "待解析",
-      stageable: "待发布",
+      runnable: "可执行",
+      needs_review: "需确认",
+      ready: "待运行",
+      stageable: "待生成产物",
       blocked: "阻塞",
-      cached: "已有产物",
+      cached: "可复用产物",
       published: "已发布",
       missing_artifact: "缺少产物",
     },
@@ -175,10 +188,12 @@ const rawCopy = {
     recentImportResults: (count: number) => `上次导入后有 ${count} 条导入结果。`,
     planCounts: {
       total: "总数",
-      ready: "待解析",
-      stageable: "待发布",
+      runnable: "可执行",
+      needsReview: "需确认",
+      ready: "待运行",
+      stageable: "待生成产物",
       blocked: "阻塞",
-      cached: "已有产物",
+      cached: "可复用产物",
       published: "已发布",
     },
     actions: { open: "打开", reveal: "显示", copyPath: "复制路径", obsidian: "Obsidian" },
@@ -230,6 +245,8 @@ const rawCopy = {
     planFilterLabels: {
       all: "All",
       needs_action: "Needs action",
+      runnable: "Runnable",
+      needs_review: "Review gate",
       ready: "Ready",
       stageable: "Stageable",
       blocked: "Blocked",
@@ -273,6 +290,8 @@ const rawCopy = {
     recentImportResults: (count: number) => `${count} recent import results are available after the last import.`,
     planCounts: {
       total: "total",
+      runnable: "runnable",
+      needsReview: "review gate",
       ready: "ready",
       stageable: "stageable",
       blocked: "blocked",
@@ -386,8 +405,10 @@ function recordNeedsAction(record: RawSourceRecord, planEntry: IngestPlanEntry |
 function planFilterMatchesRecord(record: RawSourceRecord, planEntry: IngestPlanEntry | null, filter: RawSourcePlanFilter) {
   if (filter === "all") return true;
   if (filter === "needs_action") return recordNeedsAction(record, planEntry);
+  if (filter === "runnable") return Boolean(planEntry && isRunnableIngestEntry(planEntry));
+  if (filter === "needs_review") return Boolean(planEntry && isReviewGatedIngestEntry(planEntry));
   if (filter === "missing_artifact") return !record.artifact;
-  return planEntry?.status === filter || record.status === filter;
+  return planEntry?.currentState === filter || planEntry?.status === filter || record.status === filter;
 }
 
 function hydrateRecord(
@@ -623,6 +644,8 @@ export function RawSourcesWorkspace({
       ([
         "all",
         "needs_action",
+        "runnable",
+        "needs_review",
         "ready",
         "stageable",
         "blocked",
@@ -636,6 +659,13 @@ export function RawSourcesWorkspace({
       })),
     [recordsWithPlan, text.planFilterLabels],
   );
+  const planMetrics = useMemo(() => {
+    const entries = ingestPlan?.entries ?? [];
+    return {
+      runnable: entries.filter(isRunnableIngestEntry).length,
+      needsReview: entries.filter(isReviewGatedIngestEntry).length,
+    };
+  }, [ingestPlan?.entries]);
   const filteredRecords = useMemo(() => {
     const query = filter.trim().toLowerCase();
     return recordsWithPlan
@@ -707,6 +737,8 @@ export function RawSourcesWorkspace({
           <p className="workflow-hint">{text.planSummary}: {ingestPlan.generatedAt}</p>
           <div className="workflow-metrics compact" aria-label={text.planSummary}>
             <span><strong>{ingestPlan.summary.total}</strong>{text.planCounts.total}</span>
+            <span><strong>{planMetrics.runnable}</strong>{text.planCounts.runnable}</span>
+            <span><strong>{planMetrics.needsReview}</strong>{text.planCounts.needsReview}</span>
             <span><strong>{ingestPlan.summary.ready}</strong>{text.planCounts.ready}</span>
             <span><strong>{ingestPlan.summary.stageable}</strong>{text.planCounts.stageable}</span>
             <span><strong>{ingestPlan.summary.blocked}</strong>{text.planCounts.blocked}</span>
@@ -755,7 +787,7 @@ export function RawSourcesWorkspace({
                   <em>{record.type} · {record.status}</em>
                   <code>{record.sourceId || record.sourceUuid || text.noSourceId} · {record.updated || text.notUpdated}</code>
                   {planEntry && (
-                    <code>{text.planState}: {planEntry.status} · {planEntry.nextActionLabel || planEntry.action}</code>
+                    <code>{text.planState}: {planEntry.currentState || planEntry.status} · {planEntry.nextActionLabel || planEntry.action}</code>
                   )}
                 </button>
               );
