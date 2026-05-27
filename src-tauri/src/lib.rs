@@ -14,6 +14,7 @@ use std::sync::{mpsc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
+use zip::ZipArchive;
 
 const MAX_VAULT_TEXT_PREVIEW_BYTES: u64 = 64 * 1024;
 const MAX_VAULT_IMAGE_PREVIEW_BYTES: u64 = 5 * 1024 * 1024;
@@ -4693,6 +4694,7 @@ fn import_sources(
 struct ImportCandidate {
     source: PathBuf,
     folder_context: Option<String>,
+    source_display: Option<String>,
 }
 
 fn supported_import_file(path: &Path) -> bool {
@@ -4777,6 +4779,7 @@ fn collect_import_dir(
                 out.push(ImportCandidate {
                     source: path,
                     folder_context,
+                    source_display: None,
                 });
             }
         }
@@ -4802,6 +4805,7 @@ fn collect_import_candidates(
                 candidates.push(ImportCandidate {
                     source: path,
                     folder_context: None,
+                    source_display: None,
                 });
             } else {
                 errors.push(format!("unsupported import type: {raw_path}"));
@@ -4811,6 +4815,184 @@ fn collect_import_candidates(
         }
     }
     (candidates, errors)
+}
+
+fn safe_archive_entry_path(name: &str) -> Option<PathBuf> {
+    if name.contains('\0') || name.contains('\\') {
+        return None;
+    }
+    let mut out = PathBuf::new();
+    for component in Path::new(name).components() {
+        match component {
+            Component::Normal(part) => {
+                if part.to_string_lossy().trim().is_empty() {
+                    return None;
+                }
+                out.push(part);
+            }
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    (!out.as_os_str().is_empty()).then_some(out)
+}
+
+fn archive_entry_path(decoded_name: &str, raw_name: &[u8]) -> Option<PathBuf> {
+    if let Ok(raw_utf8) = std::str::from_utf8(raw_name) {
+        return safe_archive_entry_path(raw_utf8);
+    }
+    safe_archive_entry_path(decoded_name)
+}
+
+fn is_archive_metadata_path(path: &Path) -> bool {
+    let mut parts = path
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(part) => Some(part.to_string_lossy().to_string()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if parts.first().is_some_and(|part| part == "__MACOSX") {
+        return true;
+    }
+    parts
+        .pop()
+        .is_some_and(|file_name| file_name.starts_with("._"))
+}
+
+fn join_folder_context(base: Option<&str>, rel_parent: Option<&Path>) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(base) = base.filter(|value| !value.trim().is_empty()) {
+        parts.push(base.trim_matches('/').to_string());
+    }
+    if let Some(parent) = rel_parent.filter(|path| !path.as_os_str().is_empty()) {
+        parts.push(parent.to_string_lossy().trim_matches('/').to_string());
+    }
+    parts.retain(|part| !part.is_empty());
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+fn extract_archive_import_candidates(
+    vault: &Path,
+    candidate: &ImportCandidate,
+) -> (Vec<ImportCandidate>, Vec<String>, Option<PathBuf>) {
+    let archive_path = &candidate.source;
+    let archive_display = candidate
+        .source_display
+        .clone()
+        .unwrap_or_else(|| to_display(archive_path));
+    let archive_file = match fs::File::open(archive_path) {
+        Ok(file) => file,
+        Err(error) => {
+            return (
+                Vec::new(),
+                vec![format!("failed to open archive {archive_display}: {error}")],
+                None,
+            )
+        }
+    };
+    let mut archive = match ZipArchive::new(archive_file) {
+        Ok(archive) => archive,
+        Err(error) => {
+            return (
+                Vec::new(),
+                vec![format!("failed to read archive {archive_display}: {error}")],
+                None,
+            )
+        }
+    };
+    let short_hash = sha256_file(archive_path)
+        .ok()
+        .and_then(|hash| hash.get(..12).map(ToString::to_string))
+        .unwrap_or_else(|| {
+            Local::now()
+                .timestamp_nanos_opt()
+                .unwrap_or_default()
+                .to_string()
+        });
+    let temp_root = vault
+        .join("_state")
+        .join("archive-import")
+        .join(format!("{}-{short_hash}", safe_stem(archive_path)));
+    let _ = fs::remove_dir_all(&temp_root);
+    let mut extracted = Vec::new();
+    let mut errors = Vec::new();
+
+    for index in 0..archive.len() {
+        let mut entry = match archive.by_index(index) {
+            Ok(entry) => entry,
+            Err(error) => {
+                errors.push(format!(
+                    "failed to read archive entry {index} from {archive_display}: {error}"
+                ));
+                continue;
+            }
+        };
+        if entry.is_dir() || entry.is_symlink() {
+            continue;
+        }
+        let Some(rel_path) = archive_entry_path(entry.name(), entry.name_raw()) else {
+            errors.push(format!(
+                "skipped unsafe archive entry `{}` from {}",
+                entry.name(),
+                archive_display
+            ));
+            continue;
+        };
+        if is_archive_metadata_path(&rel_path)
+            || auxiliary_raw_support_file(&rel_path)
+            || !supported_import_file(&rel_path)
+        {
+            continue;
+        }
+        let target = temp_root.join(&rel_path);
+        if let Some(parent) = target.parent() {
+            if let Err(error) = fs::create_dir_all(parent).map_err(|e| {
+                format!(
+                    "failed to create archive import dir {}: {e}",
+                    parent.display()
+                )
+            }) {
+                errors.push(error);
+                continue;
+            }
+        }
+        let mut output = match fs::File::create(&target).map_err(|e| {
+            format!(
+                "failed to extract archive entry {}: {e}",
+                rel_path.display()
+            )
+        }) {
+            Ok(file) => file,
+            Err(error) => {
+                errors.push(error);
+                continue;
+            }
+        };
+        if let Err(error) = std::io::copy(&mut entry, &mut output)
+            .map_err(|e| format!("failed to copy archive entry {}: {e}", rel_path.display()))
+        {
+            errors.push(error);
+            let _ = fs::remove_file(&target);
+            continue;
+        }
+        extracted.push(ImportCandidate {
+            source: target,
+            folder_context: join_folder_context(
+                candidate.folder_context.as_deref(),
+                rel_path.parent(),
+            ),
+            source_display: Some(format!("{}!{}", archive_display, rel_path.display())),
+        });
+    }
+
+    if extracted.is_empty() && errors.is_empty() {
+        errors.push(format!(
+            "archive contained no supported source files after filtering __MACOSX and helper files: {archive_display}"
+        ));
+    }
+
+    (extracted, errors, Some(temp_root))
 }
 
 fn normalize_title(value: &str) -> String {
@@ -4999,12 +5181,29 @@ fn import_sources_impl(
     let (mut doi_index, mut arxiv_index, mut known_titles) = import_report_metadata(&vault);
     collect_raw_titles(&vault.join("raw"), &mut known_titles);
     let (candidates, mut errors) = collect_import_candidates(paths, preserve_folders);
+    let mut archive_temp_roots = Vec::new();
+    let mut expanded_candidates = Vec::new();
+    for candidate in candidates {
+        if is_archive_package(&candidate.source) {
+            let (mut extracted, mut archive_errors, temp_root) =
+                extract_archive_import_candidates(&vault, &candidate);
+            expanded_candidates.append(&mut extracted);
+            errors.append(&mut archive_errors);
+            if let Some(temp_root) = temp_root {
+                archive_temp_roots.push(temp_root);
+            }
+        } else {
+            expanded_candidates.push(candidate);
+        }
+    }
     let mut imported = Vec::new();
     let mut skipped_duplicates = Vec::new();
 
-    for candidate in candidates {
+    for candidate in expanded_candidates {
         let source = candidate.source;
-        let source_display = to_display(&source);
+        let source_display = candidate
+            .source_display
+            .unwrap_or_else(|| to_display(&source));
         let file_name = source
             .file_name()
             .unwrap_or_default()
@@ -5121,6 +5320,13 @@ fn import_sources_impl(
         imported.push(preview);
     }
 
+    for temp_root in archive_temp_roots {
+        let archive_import_root = temp_root.parent().map(Path::to_path_buf);
+        let _ = fs::remove_dir_all(temp_root);
+        if let Some(archive_import_root) = archive_import_root {
+            let _ = fs::remove_dir(&archive_import_root);
+        }
+    }
     let enqueued_jobs = if enqueue_after_import && !imported.is_empty() {
         plan_ingest(to_display(&vault))?.jobs.len()
     } else {
@@ -11521,6 +11727,7 @@ mod tests {
     use super::*;
     use std::net::TcpListener;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use zip::{write::SimpleFileOptions, ZipWriter};
 
     fn test_vault(name: &str) -> PathBuf {
         let stamp = SystemTime::now()
@@ -11534,6 +11741,21 @@ mod tests {
         fs::create_dir_all(vault.join("raw").join("inbox")).expect("create raw inbox");
         fs::create_dir_all(vault.join("_state")).expect("create state dir");
         vault
+    }
+
+    fn write_test_zip(path: &Path, entries: &[(&str, &[u8])]) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create zip parent");
+        }
+        let file = fs::File::create(path).expect("create zip file");
+        let mut zip = ZipWriter::new(file);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        for (name, content) in entries {
+            zip.start_file(name, options).expect("start zip file");
+            zip.write_all(content).expect("write zip entry");
+        }
+        zip.finish().expect("finish zip");
     }
 
     fn agent_http_request(
@@ -12771,41 +12993,109 @@ mod tests {
     }
 
     #[test]
-    fn archive_zip_corpus_package_is_imported_as_raw_evidence() {
+    fn archive_zip_corpus_package_extracts_supported_sources() {
         let vault = test_vault("archive-zip-import");
         let incoming = test_vault("external-archive-zip");
         let archive = incoming.join("deepseek_paper_中文.zip");
-        fs::write(&archive, b"zip payload").expect("write archive");
+        write_test_zip(
+            &archive,
+            &[
+                (
+                    "deepseek_paper_中文/DeepSeek-V3_中文.md",
+                    b"# DeepSeek V3\n\nChinese source body.\n",
+                ),
+                ("deepseek_paper_中文/_translation_cache.json", b"{}"),
+                (
+                    "__MACOSX/deepseek_paper_中文/._DeepSeek-V3_中文.md",
+                    b"metadata",
+                ),
+            ],
+        );
 
         let batch = import_sources_impl(&vault, vec![to_display(&archive)], false, false)
             .expect("import archive package");
 
         assert_eq!(batch.imported.len(), 1);
         assert!(batch.errors.is_empty(), "{:?}", batch.errors);
-        assert_eq!(batch.imported[0].file_name, "deepseek_paper_中文.zip");
-        assert_eq!(batch.imported[0].mime, "application/zip");
+        assert_eq!(batch.imported[0].file_name, "DeepSeek-V3_中文.md");
+        assert_eq!(batch.imported[0].mime, "text/markdown");
         assert!(batch.imported[0]
-            .target_path
-            .as_deref()
-            .is_some_and(|path| path.contains("raw/inbox/deepseek_paper_中文.zip")));
+            .source_path
+            .contains("deepseek_paper_中文.zip!deepseek_paper_中文/DeepSeek-V3_中文.md"));
+        assert!(
+            batch.imported[0].target_path.as_deref().is_some_and(
+                |path| path.contains("raw/inbox/deepseek_paper_中文/DeepSeek-V3_中文.md")
+            )
+        );
+        assert!(!vault
+            .join("raw")
+            .join("inbox")
+            .join("deepseek_paper_中文.zip")
+            .exists());
+        assert!(!vault
+            .join("raw")
+            .join("inbox")
+            .join("deepseek_paper_中文")
+            .join("_translation_cache.json")
+            .exists());
+        assert!(!vault.join("raw").join("inbox").join("__MACOSX").exists());
 
-        let plan = plan_ingest(to_display(&vault)).expect("plan archive package");
+        let plan = plan_ingest(to_display(&vault)).expect("plan extracted archive package");
         let entry = plan
             .entries
             .iter()
-            .find(|entry| entry.file_name == "deepseek_paper_中文.zip")
-            .expect("archive plan entry");
-        assert_eq!(entry.status, "blocked");
-        assert_eq!(entry.action, "extract_archive_required");
-        assert_eq!(entry.current_state, "archive_extract_required");
-        assert!(entry.artifact_path.is_none());
+            .find(|entry| entry.file_name == "DeepSeek-V3_中文.md")
+            .expect("extracted markdown plan entry");
+        assert_eq!(entry.status, "stageable");
+        assert_eq!(entry.action, "stage_text_artifact");
+        assert_eq!(entry.current_state, "imported");
+        assert!(entry.artifact_path.is_some());
         assert!(entry
             .next_action_label
-            .contains("Extract this archive into raw/inbox"));
-        assert!(plan
+            .contains("Stage this text or Markdown source locally"));
+        assert!(!plan
             .actions
             .iter()
             .any(|action| action.kind == "archive_extract_required"));
+
+        let _ = fs::remove_dir_all(vault);
+        let _ = fs::remove_dir_all(incoming);
+    }
+
+    #[test]
+    fn archive_zip_import_rejects_traversal_entries() {
+        let vault = test_vault("archive-zip-traversal");
+        let incoming = test_vault("external-archive-traversal");
+        let archive = incoming.join("unsafe.zip");
+        write_test_zip(
+            &archive,
+            &[
+                ("../escape.md", b"# Escape\n"),
+                ("safe/DeepSeek-safe.md", b"# Safe\n"),
+            ],
+        );
+
+        let batch = import_sources_impl(&vault, vec![to_display(&archive)], false, false)
+            .expect("import archive with unsafe entry");
+
+        assert_eq!(batch.imported.len(), 1);
+        assert_eq!(batch.imported[0].file_name, "DeepSeek-safe.md");
+        assert!(batch
+            .errors
+            .iter()
+            .any(|error| error.contains("skipped unsafe archive entry")));
+        assert!(vault
+            .join("raw")
+            .join("inbox")
+            .join("safe")
+            .join("DeepSeek-safe.md")
+            .exists());
+        assert!(!vault.join("raw").join("escape.md").exists());
+        assert!(!vault
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .join("escape.md")
+            .exists());
 
         let _ = fs::remove_dir_all(vault);
         let _ = fs::remove_dir_all(incoming);
