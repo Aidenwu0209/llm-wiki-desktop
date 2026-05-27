@@ -1162,6 +1162,22 @@ related_concepts: []
 ## 待确认问题
 "#;
 
+const OBSIDIAN_CORE_PLUGINS: &[&str] = &[
+    "file-explorer",
+    "global-search",
+    "switcher",
+    "graph",
+    "backlink",
+    "canvas",
+    "outgoing-link",
+    "tag-pane",
+    "page-preview",
+    "templates",
+    "properties",
+    "bookmarks",
+    "command-palette",
+];
+
 fn default_pdf_parser() -> String {
     "auto".to_string()
 }
@@ -4665,11 +4681,16 @@ fn create_vault(
             return inspect_vault(to_display(&vault));
         }
     }
-    create_minimal_vault(&vault)?;
+    create_minimal_vault_with_obsidian(&vault, enable_obsidian)?;
     inspect_vault(to_display(&vault))
 }
 
+#[cfg(test)]
 fn create_minimal_vault(vault: &Path) -> Result<(), String> {
+    create_minimal_vault_with_obsidian(vault, true)
+}
+
+fn create_minimal_vault_with_obsidian(vault: &Path, enable_obsidian: bool) -> Result<(), String> {
     for dir in [
         "raw/inbox",
         "sources",
@@ -4731,6 +4752,9 @@ fn create_minimal_vault(vault: &Path) -> Result<(), String> {
         vault.join("_state/science-review-queue.jsonl").as_path(),
         "",
     )?;
+    if enable_obsidian {
+        write_obsidian_local_profile(vault)?;
+    }
     Ok(())
 }
 
@@ -4745,11 +4769,49 @@ fn write_obsidian_templates(vault: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn write_text_if_missing(path: &Path, text: &str) -> Result<(), String> {
+    if path.exists() {
+        return Ok(());
+    }
+    write_text(path, text)
+}
+
+fn write_obsidian_core_plugins(path: &Path) -> Result<(), String> {
+    let mut plugins = serde_json::from_str::<Vec<String>>(&read_text(path)).unwrap_or_default();
+    for plugin in OBSIDIAN_CORE_PLUGINS {
+        if !plugins.iter().any(|item| item == plugin) {
+            plugins.push((*plugin).to_string());
+        }
+    }
+    let rendered = serde_json::to_string_pretty(&plugins)
+        .map_err(|e| format!("failed to serialize Obsidian core plugins: {e}"))?
+        + "\n";
+    write_text(path, &rendered)
+}
+
+fn write_obsidian_local_profile(vault: &Path) -> Result<(), String> {
+    let obsidian = vault.join(".obsidian");
+    fs::create_dir_all(&obsidian)
+        .map_err(|e| format!("failed to create Obsidian profile dir: {e}"))?;
+    write_obsidian_core_plugins(&obsidian.join("core-plugins.json"))?;
+    write_text_if_missing(&obsidian.join("community-plugins.json"), "[]\n")?;
+    write_text_if_missing(
+        &obsidian.join("app.json"),
+        "{\n  \"alwaysUpdateLinks\": true,\n  \"showInlineTitle\": true,\n  \"attachmentFolderPath\": \"raw/attachments\"\n}\n",
+    )?;
+    write_text_if_missing(
+        &obsidian.join("templates.json"),
+        "{\n  \"folder\": \"templates\",\n  \"dateFormat\": \"YYYY-MM-DD\",\n  \"timeFormat\": \"HH:mm\"\n}\n",
+    )?;
+    Ok(())
+}
+
 #[tauri::command]
 fn repair_obsidian_templates(vault_path: String) -> Result<VaultStatus, String> {
     let vault = PathBuf::from(vault_path);
     require_existing_dir(&vault, "vault")?;
     write_obsidian_templates(&vault)?;
+    write_obsidian_local_profile(&vault)?;
     inspect_vault(to_display(&vault))
 }
 
@@ -14643,6 +14705,52 @@ mod tests {
         assert!(!nested_target.exists());
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn minimal_vault_writes_obsidian_local_profile() {
+        let vault = test_vault("minimal-obsidian-profile");
+        create_minimal_vault(&vault).expect("create minimal vault");
+
+        let obsidian = vault.join(".obsidian");
+        assert!(obsidian.is_dir());
+        let core_plugins = read_text(&obsidian.join("core-plugins.json"));
+        for plugin in [
+            "file-explorer",
+            "global-search",
+            "graph",
+            "backlink",
+            "canvas",
+            "templates",
+        ] {
+            assert!(
+                core_plugins.contains(plugin),
+                "missing core plugin {plugin}"
+            );
+        }
+        assert_eq!(read_text(&obsidian.join("community-plugins.json")), "[]\n");
+        assert!(read_text(&obsidian.join("app.json")).contains("\"alwaysUpdateLinks\": true"));
+        assert!(read_text(&obsidian.join("templates.json")).contains("\"folder\": \"templates\""));
+
+        let status = inspect_vault(to_display(&vault)).expect("inspect vault");
+        assert!(status.obsidian_enabled);
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn minimal_fallback_vault_respects_disabled_obsidian() {
+        let vault = test_vault("minimal-obsidian-disabled");
+        create_minimal_vault_with_obsidian(&vault, false)
+            .expect("create fallback vault without Obsidian");
+
+        assert!(!vault.join(".obsidian").exists());
+        let status = inspect_vault(to_display(&vault)).expect("inspect vault");
+        assert!(!status.obsidian_enabled);
+        assert!(vault.join("templates/source.md").is_file());
+        assert!(vault.join("templates/concept.md").is_file());
+
+        let _ = fs::remove_dir_all(vault);
     }
 
     fn registry_entry(status: &str, source_page: Option<String>) -> DesktopRegistryEntry {
