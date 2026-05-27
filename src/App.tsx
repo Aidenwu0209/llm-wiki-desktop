@@ -271,7 +271,7 @@ function shellResearchReadiness(settings: DesktopSettings, language: UiLanguage)
   if (!settings.webSearchEnabled) {
     searchDetail = isZh ? "外部搜索关闭；仍只使用 vault evidence" : "External search is off; vault evidence remains available";
   } else if (searchProviderId === "none") {
-    searchDetail = isZh ? "选择 Tavily、SerpApi 或 SearXNG 后再运行 Deep Research" : "Choose Tavily, SerpApi, or SearXNG before running Deep Research";
+    searchDetail = isZh ? "选择 Tavily、SerpApi 或 SearXNG 后再运行深度研究" : "Choose Tavily, SerpApi, or SearXNG before running Deep Research";
   } else {
     searchDetail = settings.webSearchEndpoint?.trim()
       || settings.webSearchApiKeyEnvVar?.trim()
@@ -388,14 +388,15 @@ function ShellResearchPanel({
     };
     return labels[status] ?? status;
   };
+  const researchLabel = isZh ? "深度研究" : "Deep Research";
   return (
-    <section className="shell-research-panel" aria-label={isZh ? "Deep Research" : "Deep Research"}>
+    <section className="shell-research-panel" aria-label={researchLabel}>
       <div className="shell-research-header">
         <div>
-          <strong>Deep Research</strong>
+          <strong>{researchLabel}</strong>
           <span>{isZh ? "Wiki 证据优先" : "Vault evidence first"}</span>
         </div>
-        <button type="button" onClick={onClose} title={isZh ? "关闭 Deep Research" : "Close Deep Research"}>
+        <button type="button" onClick={onClose} title={isZh ? "关闭深度研究" : "Close Deep Research"}>
           <XCircle size={15} />
         </button>
       </div>
@@ -1817,6 +1818,10 @@ function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const copy = shellCopy[interfaceLanguage];
+  const researchPanelLabel = interfaceLanguage === "zh" ? "深度研究" : "Deep Research";
+  const previewSidebarTitle = detailDrawerOpen
+    ? (interfaceLanguage === "zh" ? "预览" : "Preview")
+    : researchPanelLabel;
   const researchReadiness = useMemo(
     () => shellResearchReadiness(desktopSettings, interfaceLanguage),
     [desktopSettings, interfaceLanguage],
@@ -3074,7 +3079,7 @@ function App() {
                 onClick={() => handleReviewResearchTopic(item)}
                 disabled={["approved", "resolved", "ignored", "rejected"].includes(item.status)}
               >
-                <Search size={14} />Deep Research
+                <Search size={14} />{researchPanelLabel}
               </button>
               <button onClick={() => handleFollowup(item)}><ClipboardList size={14} />{interfaceLanguage === "zh" ? "后续动作" : "follow-up"}</button>
             </div>
@@ -3347,8 +3352,8 @@ function App() {
           <button
             type="button"
             className={classNames("nav-button", researchPanelOpen && "active")}
-            title="Deep Research"
-            aria-label="Deep Research"
+            title={researchPanelLabel}
+            aria-label={researchPanelLabel}
             onClick={() => {
               if (activePage === "settings") {
                 setActivePage("chat");
@@ -3359,7 +3364,7 @@ function App() {
             }}
           >
             <Search size={19} />
-            <span className="nav-label">Deep Research</span>
+            <span className="nav-label">{researchPanelLabel}</span>
             {busy === "query_writeback" && <span className="nav-badge live">1</span>}
           </button>
         </nav>
@@ -4124,7 +4129,7 @@ function App() {
       {activePage !== "settings" && (detailDrawerOpen || researchPanelOpen) && (
         <aside
           className={classNames("preview-sidebar", researchPanelOpen && "research-open", detailDrawerOpen && researchPanelOpen && "split-panels")}
-          aria-label={interfaceLanguage === "zh" ? "预览、检查器和 Deep Research" : "Preview, inspector, and Deep Research"}
+          aria-label={interfaceLanguage === "zh" ? "预览、检查器和深度研究" : "Preview, inspector, and Deep Research"}
         >
           <button
             type="button"
@@ -4136,7 +4141,7 @@ function App() {
           />
           <div className="preview-sidebar-header">
             <div>
-              <strong>{detailDrawerOpen ? "Preview" : "Deep Research"}</strong>
+              <strong>{previewSidebarTitle}</strong>
               <span>{detailDrawerOpen
                 ? (interfaceLanguage === "zh" ? "文件预览 / 证据上下文" : "File preview / evidence context")
                 : (interfaceLanguage === "zh" ? "Wiki 证据优先 / 提案写回" : "Vault evidence / proposal writeback")}</span>
@@ -4149,7 +4154,7 @@ function App() {
               }}
               title={detailDrawerOpen
                 ? (interfaceLanguage === "zh" ? "关闭预览栏" : "Close preview")
-                : (interfaceLanguage === "zh" ? "关闭 Deep Research" : "Close Deep Research")}
+                : (interfaceLanguage === "zh" ? "关闭深度研究" : "Close Deep Research")}
             >
               <XCircle size={15} />
             </button>
