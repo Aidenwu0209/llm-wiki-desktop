@@ -230,12 +230,14 @@ export type ImportPreview = {
   arxivId?: string | null;
   titleHint?: string | null;
   status: string;
+  reason?: string | null;
   enqueued: boolean;
 };
 
 export type ImportBatchResult = {
   imported: ImportPreview[];
   skippedDuplicates: ImportPreview[];
+  skippedSourceWatch: ImportPreview[];
   errors: string[];
   enqueuedJobs: number;
 };
