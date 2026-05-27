@@ -1315,6 +1315,80 @@ function edgeStatusClass(edge: ResearchGraphEdge) {
   return edge.type;
 }
 
+function graphStatusLabel(status: string | null | undefined, language: UiLanguage) {
+  if (!status || language !== "zh") return status;
+  const labels: Record<string, string> = {
+    applied: "已应用",
+    approved: "已批准",
+    broken: "已断开",
+    draft: "草稿",
+    linked: "已连接",
+    needs_review: "待审核",
+    ok: "正常",
+    open: "待处理",
+    p2: "P2",
+    pending: "待处理",
+    proposed: "已提议",
+    ready: "就绪",
+    stale: "已过期",
+    supported: "已支撑",
+    unresolved: "未解析",
+  };
+  return labels[status] || status;
+}
+
+function graphMetricLabel(metric: string, language: UiLanguage) {
+  if (language !== "zh") {
+    const labels: Record<string, string> = {
+      evidence: "Evidence",
+      missing: "Missing",
+      needsReview: "Needs review",
+      parser: "Parser",
+      updated: "Updated",
+    };
+    return labels[metric] || metric;
+  }
+  const labels: Record<string, string> = {
+    evidence: "证据",
+    missing: "缺失项",
+    needsReview: "需审核",
+    parser: "解析器",
+    updated: "更新",
+  };
+  return labels[metric] || metric;
+}
+
+function graphMetricValue(value: string | number, language: UiLanguage) {
+  if (typeof value === "number" || language !== "zh") return String(value);
+  const labels: Record<string, string> = {
+    claim_id: "论断 ID",
+    evidence_hash: "证据哈希",
+    evidence_quote: "证据摘录",
+    missing: "缺失",
+    no: "否",
+    none: "无",
+    present: "已提供",
+    raw_path: "原始文件",
+    science_review: "科学审核",
+    source_id: "来源 ID",
+    source_page: "来源页面",
+    source_uuid: "来源 UUID",
+    unknown: "未知",
+    yes: "是",
+  };
+  if (labels[value]) return labels[value];
+  if (value.includes(",")) {
+    return value
+      .split(",")
+      .map((part) => {
+        const token = part.trim();
+        return labels[token] || token;
+      })
+      .join("、");
+  }
+  return value;
+}
+
 function nodeSearchText(node: ResearchGraphNode) {
   return [
     node.id,
@@ -1469,6 +1543,8 @@ export function ResearchGraphPage({
     }
     return labels[edge.label] || edge.label;
   };
+  const nodeSecondaryLabel = (node: ResearchGraphNode) =>
+    nodeSubtitle(node.subtitle) || graphStatusLabel(node.status, language) || node.id;
   const nodeById = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph.nodes]);
   const degreeByNodeId = useMemo(() => {
     const degree = new Map<string, number>();
@@ -1962,13 +2038,13 @@ export function ResearchGraphPage({
             <div className="graph-node-detail">
               <span className={`status-chip ${nodeStatusClass(selected)}`}>{text.nodeTypes[selected.type]}</span>
               <strong>{selected.label}</strong>
-              <em>{nodeSubtitle(selected.subtitle) || selected.status || selected.id}</em>
+              <em>{nodeSecondaryLabel(selected)}</em>
               {selected.body && <p>{selected.body}</p>}
               {selected.path && <code>{selected.path}</code>}
               {selected.metrics && (
                 <div className="graph-node-metrics">
                   {Object.entries(selected.metrics).map(([metric, value]) => (
-                    <span key={metric}>{metric}: {String(value)}</span>
+                    <span key={metric}>{graphMetricLabel(metric, language)}: {graphMetricValue(value, language)}</span>
                   ))}
                 </div>
               )}
@@ -2024,7 +2100,7 @@ export function ResearchGraphPage({
               <button key={node.id} onClick={() => setSelectedId(node.id)}>
                 <span className={`status-chip ${nodeStatusClass(node)}`}>{text.nodeTypes[node.type]}</span>
                 <strong>{compact(node.label, 120)}</strong>
-                <em>{nodeSubtitle(node.subtitle) || node.status || node.id}</em>
+                <em>{nodeSecondaryLabel(node)}</em>
                 <code>{node.path || node.id}</code>
               </button>
             ))}
@@ -2043,7 +2119,7 @@ export function ResearchGraphPage({
                 <span className={classNames("status-chip", edgeStatusClass(edge))}>{text.edgeTypes[edge.type]}</span>
                 <strong>{edgeLabel(edge)}</strong>
                 <em>{endpointLabel(edge.from)} {"->"} {endpointLabel(edge.to)}</em>
-                <code>{edge.status || text.linked}</code>
+                <code>{graphStatusLabel(edge.status, language) || text.linked}</code>
               </button>
             ))}
           </div>
@@ -2078,7 +2154,7 @@ export function ResearchGraphPage({
               <button key={concept.id} onClick={() => setSelectedId(concept.id)}>
                 <span className="status-chip concept">{text.nodeTypes.concept}</span>
                 <strong>{concept.label}</strong>
-                <em>{nodeSubtitle(concept.subtitle) || concept.path || text.conceptTag}</em>
+                <em>{nodeSubtitle(concept.subtitle) || graphStatusLabel(concept.status, language) || concept.path || text.conceptTag}</em>
                 <code>{graph.edges.filter((edge) => edge.to === concept.id || edge.from === concept.id).length} {text.relationships}</code>
               </button>
             ))}
