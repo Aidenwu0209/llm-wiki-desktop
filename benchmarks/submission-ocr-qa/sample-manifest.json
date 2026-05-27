@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "submission-ocr-qa",
+  "name": "OCR + ERNIE + Evidence Wiki submission benchmark",
+  "description": "Acceptance-style benchmark manifest for validating OCR/PDF parsing artifacts, evidence-grounded answers, citation coverage, unsupported claims, and traceability breaks.",
+  "samples": [
+    {
+      "sample_id": "mock-paper",
+      "source_path": "raw/sources/mock-submission.pdf",
+      "source_type": "pdf",
+      "modalities": ["pdf_text", "embedded_image", "table", "heading_tree"],
+      "expected_artifacts": [
+        "sources/mock-submission.md",
+        "artifacts/mock-paper/ocr.json",
+        "artifacts/mock-paper/chunks.jsonl"
+      ],
+      "expected_evidence_ids": [
+        "mock-paper:p1:title",
+        "mock-paper:p1:parser",
+        "mock-figure:p2:label",
+        "mock-table:p3:gpu-hours",
+        "mock-artifact:chunks"
+      ]
+    },
+    {
+      "sample_id": "mock-negative-evidence",
+      "source_path": "raw/sources/mock-redaction-note.png",
+      "source_type": "image",
+      "modalities": ["image_text", "refusal"],
+      "expected_artifacts": ["artifacts/mock-negative-evidence/ocr.json"],
+      "expected_evidence_ids": ["mock-trace:missing-source"]
+    }
+  ],
+  "required_metrics": [
+    "parse_success_rate",
+    "markdown_generated",
+    "json_generated",
+    "manifest_valid",
+    "chunk_count",
+    "citation_coverage",
+    "unsupported_claim_count",
+    "traceability_break_count",
+    "ernie_answer_latency_ms",
+    "ocr_latency_ms",
+    "end_to_end_latency_ms",
+    "no_evidence_refusal_rate"
+  ],
+  "environment_contract": {
+    "vault_required": true,
+    "ernie_key_env": "AI_STUDIO_API_KEY",
+    "ernie_live_optional": true,
+    "local_evidence_must_run_without_ernie_key": true
+  }
+}
