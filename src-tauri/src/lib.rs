@@ -2824,6 +2824,97 @@ fn plan_entries_from_state(vault: &Path) -> Vec<serde_json::Value> {
         .unwrap_or_default()
 }
 
+fn registry_identity_issue_details(vault: &Path) -> Vec<String> {
+    let mut seen_rows = HashSet::new();
+    let mut missing_source_id_keys = HashSet::new();
+    let mut uuids_by_id: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut ids_by_hash: HashMap<String, HashSet<String>> = HashMap::new();
+
+    for state_file in ["source-registry.jsonl", "desktop-source-registry.jsonl"] {
+        for row in read_jsonl_values(&vault.join("_state").join(state_file)) {
+            let source_uuid = registry_row_source_uuid(&row);
+            let source_id = registry_row_source_id(&row);
+            let source_hash = registry_row_source_hash_or_uuid(&row);
+            let source_path = preferred_registry_row_path(&row).unwrap_or_default();
+            if source_uuid.is_none() && source_id.is_none() && source_hash.is_none() {
+                continue;
+            }
+            let row_key = format!(
+                "{}|{}|{}|{}",
+                source_uuid.as_deref().unwrap_or_default(),
+                source_id.as_deref().unwrap_or_default(),
+                source_hash.as_deref().unwrap_or_default(),
+                source_path
+            );
+            if !seen_rows.insert(row_key) {
+                continue;
+            }
+
+            let is_duplicate = json_string(&row, "duplicate_of")
+                .or_else(|| json_string(&row, "duplicateOf"))
+                .is_some();
+            if source_id.is_none() && !is_duplicate {
+                let issue_key = source_uuid
+                    .clone()
+                    .or_else(|| source_hash.clone())
+                    .unwrap_or(source_path.clone());
+                missing_source_id_keys.insert(issue_key);
+            }
+            if is_duplicate {
+                continue;
+            }
+
+            if let (Some(source_id), Some(source_uuid)) = (&source_id, &source_uuid) {
+                uuids_by_id
+                    .entry(source_id.clone())
+                    .or_default()
+                    .insert(source_uuid.clone());
+            }
+            if let (Some(source_hash), Some(source_id)) = (&source_hash, &source_id) {
+                ids_by_hash
+                    .entry(source_hash.clone())
+                    .or_default()
+                    .insert(source_id.clone());
+            }
+        }
+    }
+
+    let mut details = Vec::new();
+    if !missing_source_id_keys.is_empty() {
+        details.push(format!(
+            "missing_source_id: {}",
+            missing_source_id_keys.len()
+        ));
+    }
+
+    let mut duplicate_ids = uuids_by_id
+        .into_iter()
+        .filter(|(_, uuids)| uuids.len() > 1)
+        .collect::<Vec<_>>();
+    duplicate_ids.sort_by(|a, b| a.0.cmp(&b.0));
+    for (source_id, uuids) in duplicate_ids {
+        details.push(format!(
+            "duplicate_source_id: {source_id} -> {}",
+            sorted_vec(uuids).join(", ")
+        ));
+    }
+
+    let mut split_hashes = ids_by_hash
+        .into_iter()
+        .filter(|(_, ids)| ids.len() > 1)
+        .collect::<Vec<_>>();
+    split_hashes.sort_by(|a, b| a.0.cmp(&b.0));
+    for (source_hash, ids) in split_hashes {
+        details.push(format!(
+            "source_hash_identity_drift: {} -> {}",
+            short_hash(&source_hash),
+            sorted_vec(ids).join(", ")
+        ));
+    }
+
+    details
+}
+
 fn build_product_scorecard_report(vault: &Path) -> ProductScorecardReport {
     let mut metrics = Vec::new();
     let plan_path = vault.join("_state").join("desktop-ingest-plan.json");
@@ -2881,6 +2972,7 @@ fn build_product_scorecard_report(vault: &Path) -> ProductScorecardReport {
                 || !json_bool(value, "contract_valid") && !json_bool(value, "contractValid")
         })
         .count();
+    let registry_identity_issues = registry_identity_issue_details(vault);
     metrics.push(if registry_count == 0 && artifacts_count == 0 {
         scorecard_metric(
             "registry_manifest",
@@ -2893,21 +2985,38 @@ fn build_product_scorecard_report(vault: &Path) -> ProductScorecardReport {
             vec!["registry: 0".to_string(), "artifacts: 0".to_string()],
             "Run ingest or artifact staging before scoring registry completeness.",
         )
-    } else if stale_artifacts > 0 {
+    } else if stale_artifacts > 0 || !registry_identity_issues.is_empty() {
+        let mut counts = vec![
+            format!("registry: {registry_count}"),
+            format!("artifacts: {artifacts_count}"),
+        ];
+        if stale_artifacts > 0 {
+            counts.push(format!("stale_or_invalid_artifacts: {stale_artifacts}"));
+        }
+        if !registry_identity_issues.is_empty() {
+            counts.push(format!(
+                "registry_identity_issues: {}",
+                registry_identity_issues.len()
+            ));
+            counts.extend(
+                registry_identity_issues
+                    .iter()
+                    .take(5)
+                    .map(|issue| format!("identity: {issue}")),
+            );
+        }
         scorecard_metric(
             "registry_manifest",
             "Registry and artifact manifest",
             "fail",
             vec![
                 "_state/source-registry.jsonl".to_string(),
+                "_state/desktop-source-registry.jsonl".to_string(),
                 "_state/artifacts.jsonl".to_string(),
+                "_state/desktop-artifacts.jsonl".to_string(),
             ],
-            vec![
-                format!("registry: {registry_count}"),
-                format!("artifacts: {artifacts_count}"),
-                format!("stale_or_invalid_artifacts: {stale_artifacts}"),
-            ],
-            "Re-parse or restage stale artifacts before trusting downstream synthesis.",
+            counts,
+            "Repair registry identity drift or stale artifacts before trusting downstream synthesis.",
         )
     } else {
         scorecard_metric(
@@ -14975,6 +15084,41 @@ mod tests {
         assert!(registry_manifest
             .counts
             .contains(&"stale_or_invalid_artifacts: 1".to_string()));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn product_scorecard_fails_on_registry_identity_drift() {
+        let vault = test_vault("product-scorecard-registry-identity-drift");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        write_text(
+            &vault.join("_state").join("source-registry.jsonl"),
+            "{\"source_uuid\":\"sha256:a\",\"source_id\":\"LLM-0001\",\"source_path\":\"raw/inbox/a.md\",\"source_sha256\":\"hash-a\",\"status\":\"published\"}\n\
+{\"source_uuid\":\"sha256:b\",\"source_id\":\"LLM-0001\",\"source_path\":\"raw/inbox/b.md\",\"source_sha256\":\"hash-b\",\"status\":\"published\"}\n\
+{\"source_uuid\":\"sha256:c\",\"source_id\":\"LLM-0002\",\"source_path\":\"raw/inbox/c.md\",\"source_sha256\":\"same-hash\",\"status\":\"published\"}\n\
+{\"source_uuid\":\"sha256:d\",\"source_id\":\"LLM-0003\",\"source_path\":\"raw/inbox/d.md\",\"source_sha256\":\"same-hash\",\"status\":\"published\"}\n",
+        )
+        .expect("registry");
+
+        let report = build_product_scorecard_report(&vault);
+        let registry_manifest = report
+            .metrics
+            .iter()
+            .find(|metric| metric.metric_id == "registry_manifest")
+            .expect("registry manifest metric");
+        assert_eq!(registry_manifest.status, "fail");
+        assert!(registry_manifest
+            .counts
+            .contains(&"registry_identity_issues: 2".to_string()));
+        assert!(registry_manifest
+            .counts
+            .iter()
+            .any(|detail| detail.contains("duplicate_source_id: LLM-0001")));
+        assert!(registry_manifest
+            .counts
+            .iter()
+            .any(|detail| detail.contains("source_hash_identity_drift")));
 
         let _ = fs::remove_dir_all(vault);
     }
