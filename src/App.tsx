@@ -2731,25 +2731,67 @@ function App() {
     if (!vaultPath && page !== "settings") return null;
     const sourceWork = (status?.counts.inbox ?? 0) + (planned?.blocked ?? 0);
     if (page === "sources" && sourceWork > 0) {
-      return { value: sourceWork, tone: "warning", title: `${sourceWork} source item${sourceWork === 1 ? "" : "s"} need import or unblock` };
+      return {
+        value: sourceWork,
+        tone: "warning",
+        title: interfaceLanguage === "zh"
+          ? `${sourceWork} 个资料待导入或解除阻塞`
+          : `${sourceWork} source item${sourceWork === 1 ? "" : "s"} need${sourceWork === 1 ? "s" : ""} import or unblock`,
+      };
     }
     const claimWork = status?.counts.claimsNeedingReview ?? 0;
     if (page === "claims" && claimWork > 0) {
-      return { value: claimWork, tone: "warning", title: `${claimWork} claim${claimWork === 1 ? "" : "s"} need review` };
+      return {
+        value: claimWork,
+        tone: "warning",
+        title: interfaceLanguage === "zh"
+          ? `${claimWork} 条论断待审核`
+          : `${claimWork} claim${claimWork === 1 ? "" : "s"} need${claimWork === 1 ? "s" : ""} review`,
+      };
     }
     if (page === "reviews" && openReviewCount > 0) {
-      return { value: openReviewCount > 99 ? "!" : openReviewCount, tone: "warning", title: `${openReviewCount} review item${openReviewCount === 1 ? "" : "s"} are open` };
+      return {
+        value: openReviewCount > 99 ? "!" : openReviewCount,
+        tone: "warning",
+        title: interfaceLanguage === "zh"
+          ? `${openReviewCount} 个审核项未处理`
+          : `${openReviewCount} review item${openReviewCount === 1 ? " is" : "s are"} open`,
+      };
     }
     const traceabilityWork = traceabilityWarnings.length + brokenEvidence + contractP0P1;
     if (page === "traceability" && traceabilityWork > 0) {
-      return { value: traceabilityWork > 99 ? "!" : traceabilityWork, tone: "danger", title: `${traceabilityWork} traceability or contract issue${traceabilityWork === 1 ? "" : "s"}` };
+      return {
+        value: traceabilityWork > 99 ? "!" : traceabilityWork,
+        tone: "danger",
+        title: interfaceLanguage === "zh"
+          ? `${traceabilityWork} 个证据链或合约问题`
+          : `${traceabilityWork} traceability or contract issue${traceabilityWork === 1 ? "" : "s"}`,
+      };
     }
     const writebackWork = writebacks.filter((proposal) => proposal.status === "proposed" || proposal.status === "rejected").length;
     if (page === "writeback" && writebackWork > 0) {
-      return { value: writebackWork, tone: "warning", title: `${writebackWork} writeback proposal${writebackWork === 1 ? "" : "s"} need attention` };
+      return {
+        value: writebackWork,
+        tone: "warning",
+        title: interfaceLanguage === "zh"
+          ? `${writebackWork} 个写回提案待处理`
+          : `${writebackWork} writeback proposal${writebackWork === 1 ? "" : "s"} need${writebackWork === 1 ? "s" : ""} attention`,
+      };
     }
-    if (page === "activity" && runtimeRunning) return { value: "live", tone: "live", title: "Runtime job is running" };
-    if (page === "settings" && status && !status.runtimeInstalled) return { value: "!", tone: "danger", title: "Runtime path needs setup" };
+    if (page === "activity" && runtimeRunning) {
+      return {
+        value: "live",
+        tone: "live",
+        title: interfaceLanguage === "zh" ? "运行任务正在执行" : "Runtime job is running",
+      };
+    }
+    if (page === "settings" && status && !status.runtimeInstalled) {
+      return {
+        value: "!",
+        tone: "danger",
+        title: interfaceLanguage === "zh" ? "运行时路径需要设置" : "Runtime path needs setup",
+      };
+    }
     return null;
   };
   const pageStatusItems: PageStatusItem[] = (() => {
