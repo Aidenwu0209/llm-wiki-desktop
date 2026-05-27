@@ -3140,7 +3140,7 @@ function App() {
           {sidebarTreeMode === "knowledge" ? (
             <>
               <ShellTreeSection
-                title={interfaceLanguage === "zh" ? "Concepts" : "Concepts"}
+                title={interfaceLanguage === "zh" ? "概念" : "Concepts"}
                 meta={`${primaryConcepts.length}/${grouped.concept.length}`}
                 icon={<Database size={14} />}
                 files={primaryConcepts}
@@ -3149,7 +3149,7 @@ function App() {
                 onSelect={selectFileForDetails}
               />
               <ShellTreeSection
-                title={interfaceLanguage === "zh" ? "Sources" : "Sources"}
+                title={interfaceLanguage === "zh" ? "资料" : "Sources"}
                 meta={`${primarySources.length}/${grouped.source.length + grouped.draft.length}`}
                 icon={<FileInput size={14} />}
                 files={primarySources}
@@ -3158,7 +3158,7 @@ function App() {
                 onSelect={selectFileForDetails}
               />
               <ShellTreeSection
-                title={interfaceLanguage === "zh" ? "Wiki Notes" : "Wiki Notes"}
+                title={interfaceLanguage === "zh" ? "知识库笔记" : "Wiki Notes"}
                 meta={`${primaryNotes.length}/${grouped.note.length}`}
                 icon={<SquareStack size={14} />}
                 files={primaryNotes}
@@ -3167,7 +3167,7 @@ function App() {
                 onSelect={selectFileForDetails}
               />
               <ShellTreeSection
-                title={interfaceLanguage === "zh" ? "Reports" : "Reports"}
+                title={interfaceLanguage === "zh" ? "报告" : "Reports"}
                 meta={`${primaryReports.length}/${grouped.report.length}`}
                 icon={<ShieldCheck size={14} />}
                 files={primaryReports}
@@ -3190,7 +3190,7 @@ function App() {
           <div className="knowledge-next-actions">
             <button type="button" onClick={() => setActivePage("sources")}>
               <Play size={14} />
-              <span>{interfaceLanguage === "zh" ? "可运行 ingest" : "Runnable ingest"}</span>
+              <span>{interfaceLanguage === "zh" ? "可运行导入" : "Runnable ingest"}</span>
               <strong>{runnableCount}</strong>
             </button>
             <button type="button" onClick={() => setActivePage("traceability")}>
