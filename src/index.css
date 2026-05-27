@@ -2772,6 +2772,54 @@ body[data-shell-panel-resizing="true"] * {
   font-size: 11px;
 }
 
+.details-relation-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+}
+
+.details-relation-card {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  border: 1px solid #d8ded9;
+  border-radius: 6px;
+  background: #fbfcfa;
+  padding: 7px;
+}
+
+.details-relation-card.active {
+  border-color: #b8c9bc;
+  background: #f4f8f2;
+}
+
+.details-relation-card span,
+.details-relation-card em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.details-relation-card span {
+  color: #64706a;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.details-relation-card strong {
+  color: #17201d;
+  font-size: 16px;
+  line-height: 1.05;
+}
+
+.details-relation-card em {
+  color: #64706a;
+  font-size: 10px;
+  font-style: normal;
+}
+
 .details-link-grid {
   display: grid;
   gap: 8px;

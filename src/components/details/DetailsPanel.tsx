@@ -72,6 +72,9 @@ const detailsCopy = {
     noLinks: "没有页面级 wikilink。",
     noSourceRefs: "没有 frontmatter 资料引用。",
     moreLinks: (count: number) => `还有 ${count} 条未显示`,
+    frontmatterRefs: "frontmatter",
+    pageLinks: "页面链接",
+    incomingLinks: "入链",
     preview: "只读预览",
     outline: "页面大纲",
     reader: "阅读",
@@ -110,6 +113,9 @@ const detailsCopy = {
     noLinks: "No page-level wikilinks.",
     noSourceRefs: "No frontmatter source references.",
     moreLinks: (count: number) => `${count} more not shown`,
+    frontmatterRefs: "frontmatter",
+    pageLinks: "page links",
+    incomingLinks: "incoming",
     preview: "Read-only preview",
     outline: "Outline",
     reader: "Reader",
@@ -693,6 +699,35 @@ function LinkList({
   );
 }
 
+function RelationSummaryStrip({
+  text,
+  outboundLinks,
+  inboundLinks,
+  sourceRefs,
+}: {
+  text: DetailsText;
+  outboundLinks?: string[];
+  inboundLinks?: string[];
+  sourceRefs?: string[];
+}) {
+  const items = [
+    { label: text.sourceRefs, detail: text.frontmatterRefs, value: sourceRefs?.length ?? 0 },
+    { label: text.outboundLinks, detail: text.pageLinks, value: outboundLinks?.length ?? 0 },
+    { label: text.inboundLinks, detail: text.incomingLinks, value: inboundLinks?.length ?? 0 },
+  ];
+  return (
+    <div className="details-relation-strip" aria-label={`${text.sourceRefs} / ${text.outboundLinks} / ${text.inboundLinks}`}>
+      {items.map((item) => (
+        <div key={item.label} className={classNames("details-relation-card", item.value > 0 && "active")}>
+          <span>{item.label}</span>
+          <strong>{item.value}</strong>
+          <em>{item.detail}</em>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function FocusedPreviewReader({
   title,
   path,
@@ -939,6 +974,12 @@ export function DetailsPanel({
           <h3>{selection.file.title || selection.file.name}</h3>
           <p>{selection.file.kind} · QA {selection.file.qaVerdict || text.unknown} · {selection.file.updated || text.notUpdated}</p>
           <code>{selection.file.path}</code>
+          <RelationSummaryStrip
+            text={text}
+            outboundLinks={selection.file.outboundLinks}
+            inboundLinks={selection.file.inboundLinks}
+            sourceRefs={selection.file.sourceRefs}
+          />
           <DetailActions
             text={text}
             path={selection.file.path}
