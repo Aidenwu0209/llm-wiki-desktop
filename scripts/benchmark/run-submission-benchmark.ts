@@ -37,6 +37,8 @@ type OcrArtifactMetadata = {
   artifact_sha256?: string | null;
   latency_ms?: number | null;
   limitations: string[];
+  missing_fields: string[];
+  contract_valid: boolean;
   fixture?: boolean;
 };
 
@@ -54,6 +56,19 @@ const DEFAULT_QUESTIONS = "benchmarks/submission-ocr-qa/questions.jsonl";
 const DEFAULT_MANIFEST = "benchmarks/submission-ocr-qa/sample-manifest.json";
 const DEFAULT_OUT = "benchmarks/results/run.json";
 const ERNIE_BASE_URL = "https://aistudio.baidu.com/llm/lmapi/v3";
+const OCR_ARTIFACT_REQUIRED_FIELDS = [
+  "source_id",
+  "source_path",
+  "parser",
+  "parser_model",
+  "parser_version",
+  "page_count",
+  "chunk_count",
+  "source_sha256",
+  "artifact_sha256",
+  "latency_ms",
+  "limitations",
+] as const;
 
 class BenchmarkError extends Error {}
 
@@ -492,8 +507,9 @@ function ocrArtifactKey(value: Pick<OcrArtifactMetadata, "artifact_path" | "sour
 }
 
 function mergeArtifactMetadata(base: OcrArtifactMetadata, fallback?: OcrArtifactMetadata) {
-  if (!fallback) return base;
-  return {
+  const baseContract = finalizeArtifactMetadata(base);
+  if (!fallback) return baseContract;
+  const merged = finalizeArtifactMetadata({
     ...fallback,
     ...base,
     artifact_path: base.artifact_path || fallback.artifact_path,
@@ -510,6 +526,32 @@ function mergeArtifactMetadata(base: OcrArtifactMetadata, fallback?: OcrArtifact
     latency_ms: base.latency_ms ?? fallback.latency_ms ?? null,
     limitations: base.limitations.length ? base.limitations : fallback.limitations,
     fixture: Boolean(base.fixture && fallback.fixture),
+  });
+  if (!base.fixture) {
+    return {
+      ...merged,
+      missing_fields: baseContract.missing_fields,
+      contract_valid: baseContract.contract_valid,
+      fixture: false,
+    };
+  }
+  return merged;
+}
+
+function artifactFieldPresent(artifact: OcrArtifactMetadata, field: typeof OCR_ARTIFACT_REQUIRED_FIELDS[number]) {
+  if (field === "limitations") return Array.isArray(artifact.limitations);
+  if (field === "page_count" || field === "chunk_count" || field === "latency_ms") {
+    return typeof artifact[field] === "number" && Number.isFinite(artifact[field]);
+  }
+  return typeof artifact[field] === "string" && Boolean(artifact[field]?.trim());
+}
+
+function finalizeArtifactMetadata(artifact: OcrArtifactMetadata) {
+  const missingFields = OCR_ARTIFACT_REQUIRED_FIELDS.filter((field) => !artifactFieldPresent(artifact, field));
+  return {
+    ...artifact,
+    missing_fields: missingFields,
+    contract_valid: missingFields.length === 0,
   };
 }
 
@@ -542,7 +584,7 @@ async function readOcrArtifactMetadata(vault: string, manifestPath: string): Pro
       // Keep manifest values only.
     }
   }
-  return {
+  return finalizeArtifactMetadata({
     artifact_path:
       firstString(manifest, ["combined", "markdown_path", "markdownPath", "artifact_path", "artifactPath"])
       || `${parentRel}/markdown.md`,
@@ -558,12 +600,14 @@ async function readOcrArtifactMetadata(vault: string, manifestPath: string): Pro
     artifact_sha256: firstString(manifest, ["artifact_sha256", "artifactSha256"]) || null,
     latency_ms: numberFrom(manifest, ["latency_ms", "duration_ms", "parse_latency_ms"]),
     limitations: stringArrayFrom(manifest, "limitations"),
-  };
+    missing_fields: [],
+    contract_valid: false,
+  });
 }
 
 function fixtureOcrArtifacts(manifest: any): OcrArtifactMetadata[] {
   const items = Array.isArray(manifest?.fixture_ocr_artifacts) ? manifest.fixture_ocr_artifacts : [];
-  return items.map((item) => ({
+  return items.map((item) => finalizeArtifactMetadata({
     artifact_path: firstString(item, ["artifact_path", "artifactPath"]),
     manifest_path: firstString(item, ["manifest_path", "manifestPath"]) || null,
     source_path: firstString(item, ["source_path", "sourcePath"]) || null,
@@ -577,6 +621,8 @@ function fixtureOcrArtifacts(manifest: any): OcrArtifactMetadata[] {
     artifact_sha256: firstString(item, ["artifact_sha256", "artifactSha256"]) || null,
     latency_ms: numberFrom(item, ["latency_ms", "duration_ms", "parse_latency_ms"]),
     limitations: stringArrayFrom(item, "limitations"),
+    missing_fields: [],
+    contract_valid: false,
     fixture: true,
   })).filter((item) => item.artifact_path || item.source_path);
 }
@@ -629,6 +675,8 @@ async function main() {
   const noEvidenceQuestions = questionResults.filter((result) => !result.expected_answerable);
   const ocrLatencies = ocrArtifacts.flatMap((artifact) => typeof artifact.latency_ms === "number" ? [artifact.latency_ms] : []);
   const artifactDocsWithoutSource = corpus.docs.filter((doc) => (doc.kind === "json" || doc.kind === "jsonl") && !doc.source_path).length;
+  const liveOcrArtifacts = ocrArtifacts.filter((artifact) => !artifact.fixture);
+  const invalidOcrArtifactCount = liveOcrArtifacts.filter((artifact) => !artifact.contract_valid).length;
   const expectedSampleCount = Array.isArray(manifest.samples) ? manifest.samples.length : 0;
   const parsedSourceCount = new Set(
     ocrArtifacts
@@ -645,7 +693,7 @@ async function main() {
     chunk_count: ocrChunkCount || corpus.docs.length,
     citation_coverage: requiredEvidenceTotal ? coveredEvidenceTotal / requiredEvidenceTotal : 1,
     unsupported_claim_count: questionResults.filter((result) => result.unsupported_claim).length,
-    traceability_break_count: questionResults.reduce((sum, result) => sum + result.traceability_break_count, 0) + artifactDocsWithoutSource,
+    traceability_break_count: questionResults.reduce((sum, result) => sum + result.traceability_break_count, 0) + artifactDocsWithoutSource + invalidOcrArtifactCount,
     ernie_answer_latency_ms: average(ernieResults.map((result) => result.latency_ms).filter((value): value is number => typeof value === "number")),
     ocr_latency_ms: average(ocrLatencies),
     end_to_end_latency_ms: Date.now() - started,
@@ -682,6 +730,9 @@ async function main() {
       page_count: ocrPageCount || null,
       chunk_count: ocrChunkCount || null,
       latency_ms: metrics.ocr_latency_ms,
+      live_artifact_manifest_count: liveOcrArtifacts.length,
+      live_artifact_contract_valid_count: liveOcrArtifacts.filter((artifact) => artifact.contract_valid).length,
+      live_artifact_contract_error_count: invalidOcrArtifactCount,
       artifacts: ocrArtifacts,
     },
     ernie: {
