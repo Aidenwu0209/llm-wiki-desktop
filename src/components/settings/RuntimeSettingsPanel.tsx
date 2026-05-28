@@ -22,11 +22,42 @@ import {
   Sparkles,
   TerminalSquare,
 } from "lucide-react";
-import type { AgentReadApiReadiness, AgentReadApiServerInfo, DesktopSettings, LlmApiKeyCheckResult, LlmCliCheckResult, LlmProviderCenterSettings, LlmProviderConfig, LlmProviderTestResult } from "../../types";
+import type {
+  AgentReadApiReadiness,
+  AgentReadApiServerInfo,
+  DesktopSettings,
+  LlmApiKeyCheckResult,
+  LlmCliCheckResult,
+  LlmProviderCenterSettings,
+  LlmProviderConfig,
+  LlmProviderTestResult,
+  OcrParserSettings,
+  OcrParserStatus,
+  OcrParserTestResult,
+} from "../../types";
 import { languageName, type UiLanguage } from "../../i18n";
 import { isLoopbackHttpEndpoint } from "../../lib/local-endpoints";
-import { providerAdapters, providerIdAliases } from "../../lib/providers/catalog";
-import { agentReadApiReadiness, checkLlmApiKey, checkLocalLlmCli, startAgentReadApi, stopAgentReadApi, testErnieChat } from "../../tauri";
+import {
+  PADDLEOCR_VL15_API_KEY_ENV,
+  PADDLEOCR_VL15_DEFAULT_ENDPOINT,
+  PADDLEOCR_VL15_DEFAULT_MODEL,
+  PADDLEOCR_VL15_PROVIDER_ID,
+  paddleOcrVl15Provider,
+  providerAdapters,
+  providerIdAliases,
+} from "../../lib/providers/catalog";
+import {
+  agentReadApiReadiness,
+  checkLlmApiKey,
+  checkLocalLlmCli,
+  checkPaddleOcrVl15Config,
+  isTauriAvailable,
+  startAgentReadApi,
+  stopAgentReadApi,
+  testErnieChat,
+  testPaddleOcrVl15Connection,
+  testPaddleOcrVl15Parser,
+} from "../../tauri";
 import { BrandMark } from "../brand/BrandMark";
 
 type RuntimeSettingsPanelProps = {
@@ -46,6 +77,7 @@ type SettingsSection =
   | "llm"
   | "embeddings"
   | "captioning"
+  | "ocr-parser"
   | "web-search"
   | "network"
   | "agent-api"
@@ -61,6 +93,7 @@ const settingsNav: Array<{ id: SettingsSection; label: string; icon: typeof Sett
   { id: "llm", label: "LLM Models", icon: Bot },
   { id: "embeddings", label: "Embeddings", icon: Database },
   { id: "captioning", label: "Image Captioning", icon: Image },
+  { id: "ocr-parser", label: "OCR Parser", icon: FileText },
   { id: "web-search", label: "Web Search", icon: Search },
   { id: "network", label: "Network", icon: Network },
   { id: "agent-api", label: "Agent API", icon: TerminalSquare },
@@ -80,6 +113,7 @@ const settingsCopy = {
       llm: "大语言模型",
       embeddings: "向量模型",
       captioning: "图像描述",
+      "ocr-parser": "OCR 解析器",
       "web-search": "网页搜索",
       network: "网络",
       "agent-api": "Agent API",
@@ -154,6 +188,21 @@ const settingsCopy = {
     allowed: "已允许",
     blocked: "已阻止",
     allowCloudParser: "允许 layout-api 使用云解析器",
+    ocrProvider: "OCR Provider",
+    ocrTitle: "OCR 解析器",
+    ocrSubtitle: "配置 PaddleOCR-VL-1.5 的服务地址、模型和环境变量。这里只做连接和 dry-run 骨架，不执行真实解析。",
+    ocrEnable: "启用 PaddleOCR-VL-1.5 配置",
+    ocrEndpoint: "Endpoint / Service URL",
+    ocrEndpointPlaceholder: "https://your-paddleocr-service.example.com/v1",
+    ocrModel: "模型",
+    ocrStatus: "状态",
+    testParser: "测试解析器",
+    dryRun: "Dry run",
+    noRawUpload: "Test parser 只验证配置和 key 可见性，不上传 raw document，也不会写回知识库。",
+    statusConfigured: "configured",
+    statusMissingKey: "missing_key",
+    statusReady: "ready",
+    statusConnectionFailed: "connection_failed",
     aboutBoundary: "本地优先桌面外壳。运行时优先执行。证据支撑研究。先提案后写回，并保留审批门。",
     switchLanguage: "界面语言",
   },
@@ -223,6 +272,21 @@ const settingsCopy = {
     allowed: "allowed",
     blocked: "blocked",
     allowCloudParser: "Allow cloud parser for layout-api",
+    ocrProvider: "OCR provider",
+    ocrTitle: "OCR Parser",
+    ocrSubtitle: "Configure the PaddleOCR-VL-1.5 service URL, model, and environment variable. This only adds connection and dry-run scaffolding, not real parsing.",
+    ocrEnable: "Enable PaddleOCR-VL-1.5 config",
+    ocrEndpoint: "Endpoint / Service URL",
+    ocrEndpointPlaceholder: "https://your-paddleocr-service.example.com/v1",
+    ocrModel: "Model",
+    ocrStatus: "Status",
+    testParser: "Test parser",
+    dryRun: "Dry run",
+    noRawUpload: "Test parser only validates config and key visibility. It does not upload raw documents or write back to the vault.",
+    statusConfigured: "configured",
+    statusMissingKey: "missing_key",
+    statusReady: "ready",
+    statusConnectionFailed: "connection_failed",
     aboutBoundary: "Local-first desktop shell. Runtime-first execution. Evidence-backed research. Proposal-first writeback with approval gate.",
     switchLanguage: "Interface language",
   },
@@ -260,6 +324,40 @@ function defaultProviderConfig(providerId: string): LlmProviderConfig {
     cliVersion: null,
     cliPath: null,
     cliCheckedAt: null,
+  };
+}
+
+function defaultOcrParserSettings(): OcrParserSettings {
+  return {
+    enabled: false,
+    providerId: PADDLEOCR_VL15_PROVIDER_ID,
+    endpoint: PADDLEOCR_VL15_DEFAULT_ENDPOINT,
+    apiKeyEnvVar: PADDLEOCR_VL15_API_KEY_ENV,
+    model: PADDLEOCR_VL15_DEFAULT_MODEL,
+  };
+}
+
+function normalizeOcrParserSettings(settings: DesktopSettings): OcrParserSettings {
+  return {
+    ...defaultOcrParserSettings(),
+    ...(settings.ocrParser || {}),
+    apiKeyEnvVar: PADDLEOCR_VL15_API_KEY_ENV,
+    model: settings.ocrParser?.model?.trim() || PADDLEOCR_VL15_DEFAULT_MODEL,
+  };
+}
+
+function desktopShellUnavailableOcrResult(ocrParser: OcrParserSettings, parserDryRun: boolean): OcrParserTestResult {
+  return {
+    provider: PADDLEOCR_VL15_PROVIDER_ID,
+    model: ocrParser.model || PADDLEOCR_VL15_DEFAULT_MODEL,
+    status: "missing_key",
+    checkedAt: new Date().toISOString(),
+    message: "Desktop shell unavailable; PADDLEOCR_API_KEY can only be checked inside the Tauri desktop process.",
+    errorCode: "desktop_unavailable",
+    apiKeyEnv: PADDLEOCR_VL15_API_KEY_ENV,
+    endpoint: ocrParser.endpoint || "",
+    latencyMs: null,
+    parserDryRun,
   };
 }
 
@@ -325,7 +423,10 @@ export function RuntimeSettingsPanel({
   const [agentReadiness, setAgentReadiness] = useState<AgentReadApiReadiness | null>(null);
   const [agentReadinessError, setAgentReadinessError] = useState<string | null>(null);
   const [checkingAgentReadiness, setCheckingAgentReadiness] = useState(false);
+  const [ocrCheck, setOcrCheck] = useState<OcrParserTestResult | null>(null);
+  const [ocrBusy, setOcrBusy] = useState<"config" | "connection" | "parser" | null>(null);
   const center = useMemo(() => normalizeProviderSettings(settings), [settings]);
+  const ocrParser = useMemo(() => normalizeOcrParserSettings(settings), [settings]);
 
   const updateCenter = (nextCenter: typeof center) => {
     setSettings((current) => ({ ...current, llmProviderCenter: nextCenter }));
@@ -411,6 +512,43 @@ export function RuntimeSettingsPanel({
       cancelled = true;
     };
   }, [section, vaultPath]);
+
+  useEffect(() => {
+    if (section !== "ocr-parser") return;
+    let cancelled = false;
+    if (!isTauriAvailable()) {
+      setOcrCheck(desktopShellUnavailableOcrResult(ocrParser, false));
+      setOcrBusy(null);
+      return;
+    }
+    setOcrBusy("config");
+    checkPaddleOcrVl15Config(ocrParser)
+      .then((result) => {
+        if (!cancelled) setOcrCheck(result);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setOcrCheck({
+            provider: PADDLEOCR_VL15_PROVIDER_ID,
+            model: ocrParser.model || PADDLEOCR_VL15_DEFAULT_MODEL,
+            status: "connection_failed",
+            checkedAt: new Date().toISOString(),
+            message: String(err),
+            errorCode: "config_error",
+            apiKeyEnv: PADDLEOCR_VL15_API_KEY_ENV,
+            endpoint: ocrParser.endpoint || "",
+            latencyMs: null,
+            parserDryRun: false,
+          });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setOcrBusy(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [section, ocrParser.endpoint, ocrParser.model, ocrParser.apiKeyEnvVar]);
 
   const handleStartAgentApi = async () => {
     if (!vaultPath) return;
@@ -653,13 +791,71 @@ export function RuntimeSettingsPanel({
     setSettings((current) => ({ ...current, ...patch }));
   };
 
+  const updateOcrParser = (patch: Partial<OcrParserSettings>) => {
+    updateSettings({
+      ocrParser: {
+        ...ocrParser,
+        ...patch,
+        apiKeyEnvVar: PADDLEOCR_VL15_API_KEY_ENV,
+      },
+    });
+  };
+
   const updateNumberSetting = (key: keyof DesktopSettings, value: string, fallback = 0) => {
     const parsed = Number(value);
     updateSettings({ [key]: Number.isFinite(parsed) ? parsed : fallback } as Partial<DesktopSettings>);
   };
 
+  const runOcrCheck = async (kind: "connection" | "parser") => {
+    if (!isTauriAvailable()) {
+      setOcrCheck(desktopShellUnavailableOcrResult(ocrParser, kind === "parser"));
+      setOcrBusy(null);
+      return;
+    }
+    setOcrBusy(kind);
+    try {
+      const result = kind === "connection"
+        ? await testPaddleOcrVl15Connection(ocrParser)
+        : await testPaddleOcrVl15Parser(ocrParser);
+      setOcrCheck(result);
+    } catch (err) {
+      setOcrCheck({
+        provider: PADDLEOCR_VL15_PROVIDER_ID,
+        model: ocrParser.model || PADDLEOCR_VL15_DEFAULT_MODEL,
+        status: "connection_failed",
+        checkedAt: new Date().toISOString(),
+        message: String(err),
+        errorCode: "test_error",
+        apiKeyEnv: PADDLEOCR_VL15_API_KEY_ENV,
+        endpoint: ocrParser.endpoint || "",
+        latencyMs: null,
+        parserDryRun: kind === "parser",
+      });
+    } finally {
+      setOcrBusy(null);
+    }
+  };
+
   const sectionStatus = (label: string, tone: "available" | "reserved" | "disabled" = "reserved") => (
     <span className={classNames("settings-status-pill", tone)}>{label}</span>
+  );
+
+  const ocrStatusLabel = (status?: OcrParserStatus | null) => {
+    switch (status) {
+      case "configured":
+        return text.statusConfigured;
+      case "ready":
+        return text.statusReady;
+      case "connection_failed":
+        return text.statusConnectionFailed;
+      case "missing_key":
+      default:
+        return text.statusMissingKey;
+    }
+  };
+
+  const ocrStatusTone = (status?: OcrParserStatus | null) => (
+    status === "configured" || status === "ready" ? "available" : "disabled"
   );
 
   const renderSectionHead = (
@@ -799,6 +995,75 @@ export function RuntimeSettingsPanel({
             </div>
           </div>
         );
+      case "ocr-parser": {
+        const status = ocrBusy ? null : ocrCheck?.status ?? "missing_key";
+        const connectionNoticeDanger = ocrCheck?.status === "missing_key" || ocrCheck?.status === "connection_failed";
+        return (
+          <div className="settings-section-page">
+            {renderSectionHead(
+              text.ocrTitle,
+              text.ocrSubtitle,
+              sectionStatus(ocrBusy ? text.checking : ocrStatusLabel(status), ocrStatusTone(status)),
+            )}
+            <div className="settings-block">
+              <div className="settings-block-title"><FileText size={15} /><span>{paddleOcrVl15Provider.name}</span></div>
+              <label className="switch-row">
+                <input
+                  type="checkbox"
+                  checked={ocrParser.enabled}
+                  onChange={(event) => updateOcrParser({ enabled: event.target.checked })}
+                />
+                <span>{text.ocrEnable}</span>
+              </label>
+              <div className="settings-grid">
+                <label>
+                  {text.ocrProvider}
+                  <input value={paddleOcrVl15Provider.displayName} readOnly />
+                </label>
+                <label>
+                  {text.apiKeySource}
+                  <input value={ocrParser.apiKeyEnvVar} readOnly />
+                </label>
+                <label>
+                  {text.ocrModel}
+                  <input
+                    value={ocrParser.model}
+                    onChange={(event) => updateOcrParser({ model: event.target.value })}
+                    placeholder={PADDLEOCR_VL15_DEFAULT_MODEL}
+                  />
+                </label>
+                <label>
+                  {text.ocrEndpoint}
+                  <input
+                    value={ocrParser.endpoint}
+                    onChange={(event) => updateOcrParser({ endpoint: event.target.value })}
+                    placeholder={text.ocrEndpointPlaceholder}
+                  />
+                </label>
+              </div>
+              <div className="inline-actions">
+                <button type="button" onClick={() => runOcrCheck("connection")} disabled={ocrBusy !== null}>
+                  <RefreshCw size={14} />
+                  {ocrBusy === "connection" ? text.checking : text.testConnection}
+                </button>
+                <button type="button" onClick={() => runOcrCheck("parser")} disabled={ocrBusy !== null}>
+                  <FileText size={14} />
+                  {ocrBusy === "parser" ? text.checking : text.testParser}
+                </button>
+              </div>
+              <div className={classNames("settings-notice", connectionNoticeDanger && "danger")}>
+                <strong>{text.ocrStatus}: {ocrBusy ? text.checking : ocrStatusLabel(status)}</strong>
+                {ocrCheck?.checkedAt ? ` · ${text.lastChecked}: ${new Date(ocrCheck.checkedAt).toLocaleString()}` : ""}
+                {ocrCheck?.latencyMs ? ` · ${ocrCheck.latencyMs} ms` : ""}
+                {ocrCheck?.message ? ` · ${ocrCheck.message}` : ""}
+              </div>
+              <div className="settings-notice">
+                <strong>{text.dryRun}.</strong> {text.noRawUpload}
+              </div>
+            </div>
+          </div>
+        );
+      }
       case "web-search":
         return (
           <div className="settings-section-page">

@@ -5,6 +5,25 @@ export const ERNIE_AI_STUDIO_API_KEY_ENV = "AI_STUDIO_API_KEY";
 export const ERNIE_AI_STUDIO_DEFAULT_MODEL = "ernie-5.1";
 export const ERNIE_AI_STUDIO_FALLBACK_MODELS = ["ernie-4.0-turbo-128k", "ernie-3.5-8k"];
 
+export const PADDLEOCR_VL15_PROVIDER_ID = "paddleocr-vl15";
+export const PADDLEOCR_VL15_DISPLAY_NAME = "PaddleOCR-VL-1.5";
+export const PADDLEOCR_VL15_API_KEY_ENV = "PADDLEOCR_API_KEY";
+export const PADDLEOCR_VL15_DEFAULT_MODEL = "PaddleOCR-VL-1.5";
+export const PADDLEOCR_VL15_DEFAULT_ENDPOINT = "";
+
+export const paddleOcrVl15Provider = {
+  id: PADDLEOCR_VL15_PROVIDER_ID,
+  displayName: PADDLEOCR_VL15_DISPLAY_NAME,
+  name: PADDLEOCR_VL15_DISPLAY_NAME,
+  subtitle: "Optional PaddleOCR-VL-1.5 service configuration for OCR parser experiments.",
+  subtitleZh: "可选的 PaddleOCR-VL-1.5 服务配置，用于 OCR parser 实验。",
+  providerType: "hosted",
+  apiKeyEnv: PADDLEOCR_VL15_API_KEY_ENV,
+  defaultModel: PADDLEOCR_VL15_DEFAULT_MODEL,
+  defaultEndpoint: PADDLEOCR_VL15_DEFAULT_ENDPOINT,
+  status: "missing_key",
+} as const;
+
 export const providerAdapters: ProviderAdapter[] = [
   {
     id: "ernie-ai-studio",

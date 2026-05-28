@@ -162,6 +162,33 @@ export type RuntimeSettings = {
   timeoutSeconds: number;
 };
 
+export type OcrParserStatus =
+  | "configured"
+  | "missing_key"
+  | "ready"
+  | "connection_failed";
+
+export type OcrParserSettings = {
+  enabled: boolean;
+  providerId: string;
+  endpoint: string;
+  apiKeyEnvVar: string;
+  model: string;
+};
+
+export type OcrParserTestResult = {
+  provider: string;
+  model: string;
+  status: OcrParserStatus;
+  checkedAt: string;
+  message: string;
+  errorCode?: string | null;
+  apiKeyEnv: string;
+  endpoint: string;
+  latencyMs?: number | null;
+  parserDryRun: boolean;
+};
+
 export type TaskLog = {
   id: string;
   kind: string;
@@ -298,6 +325,7 @@ export type DesktopSettings = {
   autoRunLintAfterWrites: boolean;
   autoOpenReportsAfterFailures: boolean;
   skipObsidianPluginDownloads: boolean;
+  ocrParser: OcrParserSettings;
   llmProviderCenter: LlmProviderCenterSettings;
 };
 

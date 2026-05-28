@@ -24,6 +24,9 @@ const ERNIE_AI_STUDIO_BASE_URL: &str = "https://aistudio.baidu.com/llm/lmapi/v3"
 const ERNIE_AI_STUDIO_API_KEY_ENV: &str = "AI_STUDIO_API_KEY";
 const ERNIE_AI_STUDIO_DEFAULT_MODEL: &str = "ernie-5.1";
 const ERNIE_AI_STUDIO_FALLBACK_MODELS: [&str; 2] = ["ernie-4.0-turbo-128k", "ernie-3.5-8k"];
+const PADDLEOCR_VL15_PROVIDER_ID: &str = "paddleocr-vl15";
+const PADDLEOCR_VL15_API_KEY_ENV: &str = "PADDLEOCR_API_KEY";
+const PADDLEOCR_VL15_DEFAULT_MODEL: &str = "PaddleOCR-VL-1.5";
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -556,6 +559,8 @@ struct DesktopSettings {
     auto_run_lint_after_writes: bool,
     auto_open_reports_after_failures: bool,
     skip_obsidian_plugin_downloads: bool,
+    #[serde(default = "default_ocr_parser_settings")]
+    ocr_parser: OcrParserSettings,
     #[serde(default = "default_llm_provider_center")]
     llm_provider_center: LlmProviderCenterSettings,
 }
@@ -603,6 +608,21 @@ struct LlmProviderConfig {
     cli_checked_at: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct OcrParserSettings {
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default = "default_paddleocr_provider_id")]
+    provider_id: String,
+    #[serde(default)]
+    endpoint: String,
+    #[serde(default = "default_paddleocr_api_key_env_var")]
+    api_key_env_var: String,
+    #[serde(default = "default_paddleocr_model")]
+    model: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LlmCliCheckResult {
@@ -636,6 +656,21 @@ struct LlmProviderTestResult {
     api_key_env: String,
     base_url: String,
     models: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct OcrParserTestResult {
+    provider: String,
+    model: String,
+    status: String,
+    checked_at: String,
+    message: String,
+    error_code: Option<String>,
+    api_key_env: String,
+    endpoint: String,
+    latency_ms: Option<u128>,
+    parser_dry_run: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1265,6 +1300,28 @@ fn default_reasoning_mode() -> String {
     "balanced".to_string()
 }
 
+fn default_paddleocr_provider_id() -> String {
+    PADDLEOCR_VL15_PROVIDER_ID.to_string()
+}
+
+fn default_paddleocr_api_key_env_var() -> String {
+    PADDLEOCR_VL15_API_KEY_ENV.to_string()
+}
+
+fn default_paddleocr_model() -> String {
+    PADDLEOCR_VL15_DEFAULT_MODEL.to_string()
+}
+
+fn default_ocr_parser_settings() -> OcrParserSettings {
+    OcrParserSettings {
+        enabled: false,
+        provider_id: default_paddleocr_provider_id(),
+        endpoint: String::new(),
+        api_key_env_var: default_paddleocr_api_key_env_var(),
+        model: default_paddleocr_model(),
+    }
+}
+
 fn default_llm_provider_center() -> LlmProviderCenterSettings {
     LlmProviderCenterSettings {
         active_provider_id: None,
@@ -1450,6 +1507,7 @@ impl Default for DesktopSettings {
             auto_run_lint_after_writes: true,
             auto_open_reports_after_failures: false,
             skip_obsidian_plugin_downloads: true,
+            ocr_parser: default_ocr_parser_settings(),
             llm_provider_center: default_llm_provider_center(),
         }
     }
@@ -9283,10 +9341,27 @@ fn validate_desktop_settings(settings: &DesktopSettings) -> Result<(), String> {
     Ok(())
 }
 
+fn normalize_ocr_parser_settings(settings: OcrParserSettings) -> Result<OcrParserSettings, String> {
+    let endpoint = validate_paddleocr_endpoint(&settings.endpoint)?;
+    let model = settings.model.trim();
+    Ok(OcrParserSettings {
+        enabled: settings.enabled,
+        provider_id: PADDLEOCR_VL15_PROVIDER_ID.to_string(),
+        endpoint,
+        api_key_env_var: default_paddleocr_api_key_env_var(),
+        model: if model.is_empty() {
+            default_paddleocr_model()
+        } else {
+            model.to_string()
+        },
+    })
+}
+
 fn normalize_desktop_settings(mut settings: DesktopSettings) -> Result<DesktopSettings, String> {
     settings.default_pdf_parser = selected_pdf_parser(&settings.default_pdf_parser)?;
     settings.scheduled_import_path =
         normalize_scheduled_import_path(&settings.scheduled_import_path)?;
+    settings.ocr_parser = normalize_ocr_parser_settings(settings.ocr_parser)?;
     settings.source_watch_auto_ingest = false;
     Ok(settings)
 }
@@ -9762,6 +9837,236 @@ async fn test_ernie_chat(model: String) -> Result<LlmProviderTestResult, String>
     }
 }
 
+fn paddleocr_model(value: &str) -> String {
+    let model = value.trim();
+    if model.is_empty() {
+        PADDLEOCR_VL15_DEFAULT_MODEL.to_string()
+    } else {
+        model.to_string()
+    }
+}
+
+fn paddleocr_result(
+    model: String,
+    status: &str,
+    message: impl Into<String>,
+    error_code: Option<&str>,
+    api_key_env: String,
+    endpoint: String,
+    latency_ms: Option<u128>,
+    parser_dry_run: bool,
+) -> OcrParserTestResult {
+    OcrParserTestResult {
+        provider: PADDLEOCR_VL15_PROVIDER_ID.to_string(),
+        model,
+        status: status.to_string(),
+        checked_at: Local::now().to_rfc3339(),
+        message: redact_provider_error(&message.into()),
+        error_code: error_code.map(ToString::to_string),
+        api_key_env,
+        endpoint,
+        latency_ms,
+        parser_dry_run,
+    }
+}
+
+fn paddleocr_config_result(
+    endpoint: String,
+    _api_key_env_var: String,
+    model: String,
+    parser_dry_run: bool,
+) -> Result<OcrParserTestResult, String> {
+    let env_var = default_paddleocr_api_key_env_var();
+    let model = paddleocr_model(&model);
+    let endpoint = match validate_paddleocr_endpoint(&endpoint) {
+        Ok(value) => value,
+        Err(err) => {
+            return Ok(paddleocr_result(
+                model,
+                "connection_failed",
+                err,
+                Some("invalid_endpoint"),
+                env_var,
+                endpoint.trim().to_string(),
+                None,
+                parser_dry_run,
+            ))
+        }
+    };
+    if read_llm_api_key(Some(&env_var))?.is_none() {
+        return Ok(paddleocr_result(
+            model,
+            "missing_key",
+            format!("{env_var} is not visible to this desktop process"),
+            Some("missing_key"),
+            env_var,
+            endpoint,
+            None,
+            parser_dry_run,
+        ));
+    }
+    let message = if parser_dry_run {
+        "PaddleOCR parser dry run passed; no raw document was uploaded and real parsing is not implemented yet."
+    } else if endpoint.is_empty() {
+        "PaddleOCR API key is visible; add a service URL before testing a live connection."
+    } else {
+        "PaddleOCR configuration is present; use Test connection to check the service URL."
+    };
+    Ok(paddleocr_result(
+        model,
+        "configured",
+        message,
+        None,
+        env_var,
+        endpoint,
+        None,
+        parser_dry_run,
+    ))
+}
+
+#[tauri::command]
+fn check_paddleocr_vl15_config(
+    endpoint: String,
+    api_key_env_var: String,
+    model: String,
+) -> Result<OcrParserTestResult, String> {
+    paddleocr_config_result(endpoint, api_key_env_var, model, false)
+}
+
+#[tauri::command]
+async fn test_paddleocr_vl15_connection(
+    endpoint: String,
+    _api_key_env_var: String,
+    model: String,
+) -> Result<OcrParserTestResult, String> {
+    let env_var = default_paddleocr_api_key_env_var();
+    let model = paddleocr_model(&model);
+    let endpoint = match validate_paddleocr_endpoint(&endpoint) {
+        Ok(value) => value,
+        Err(err) => {
+            return Ok(paddleocr_result(
+                model,
+                "connection_failed",
+                err,
+                Some("invalid_endpoint"),
+                env_var,
+                endpoint.trim().to_string(),
+                None,
+                false,
+            ))
+        }
+    };
+    let Some(api_key) = read_llm_api_key(Some(&env_var))? else {
+        return Ok(paddleocr_result(
+            model,
+            "missing_key",
+            format!("{env_var} is not visible to this desktop process"),
+            Some("missing_key"),
+            env_var,
+            endpoint,
+            None,
+            false,
+        ));
+    };
+    if endpoint.is_empty() {
+        return Ok(paddleocr_result(
+            model,
+            "configured",
+            "PaddleOCR API key is visible; add a service URL before testing a live connection.",
+            None,
+            env_var,
+            endpoint,
+            None,
+            false,
+        ));
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|e| format!("failed to create HTTP client: {e}"))?;
+    let started = Instant::now();
+    let mut response = client
+        .head(&endpoint)
+        .bearer_auth(&api_key)
+        .send()
+        .await
+        .map_err(|e| {
+            paddleocr_result(
+                model.clone(),
+                "connection_failed",
+                format!("PaddleOCR connection request failed: {e}"),
+                Some("network_error"),
+                env_var.clone(),
+                endpoint.clone(),
+                Some(started.elapsed().as_millis()),
+                false,
+            )
+        });
+    if let Ok(head_response) = &response {
+        if head_response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
+            response = client
+                .get(&endpoint)
+                .bearer_auth(&api_key)
+                .send()
+                .await
+                .map_err(|e| {
+                    paddleocr_result(
+                        model.clone(),
+                        "connection_failed",
+                        format!("PaddleOCR connection request failed: {e}"),
+                        Some("network_error"),
+                        env_var.clone(),
+                        endpoint.clone(),
+                        Some(started.elapsed().as_millis()),
+                        false,
+                    )
+                });
+        }
+    }
+    let response = match response {
+        Ok(response) => response,
+        Err(result) => return Ok(result),
+    };
+    let latency = started.elapsed().as_millis();
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if status.is_success() {
+        return Ok(paddleocr_result(
+            model,
+            "ready",
+            "PaddleOCR service URL responded successfully.",
+            None,
+            env_var,
+            endpoint,
+            Some(latency),
+            false,
+        ));
+    }
+    Ok(paddleocr_result(
+        model,
+        "connection_failed",
+        format!(
+            "PaddleOCR service URL returned HTTP {}: {}",
+            status.as_u16(),
+            short_error_body(&body)
+        ),
+        Some("http_error"),
+        env_var,
+        endpoint,
+        Some(latency),
+        false,
+    ))
+}
+
+#[tauri::command]
+fn test_paddleocr_vl15_parser(
+    endpoint: String,
+    api_key_env_var: String,
+    model: String,
+) -> Result<OcrParserTestResult, String> {
+    paddleocr_config_result(endpoint, api_key_env_var, model, true)
+}
+
 fn sanitize_optional_env_var_name(value: &str) -> Result<Option<String>, String> {
     let name = value.trim();
     if name.is_empty() {
@@ -9881,6 +10186,19 @@ fn validate_captioning_endpoint(value: &str) -> Result<String, String> {
         return Ok(endpoint);
     }
     Err("Captioning endpoint must use HTTPS unless it is localhost HTTP".to_string())
+}
+
+fn validate_paddleocr_endpoint(value: &str) -> Result<String, String> {
+    let endpoint = value.trim().trim_end_matches('/').to_string();
+    if endpoint.is_empty() {
+        return Ok(endpoint);
+    }
+    if endpoint.to_ascii_lowercase().starts_with("https://")
+        || is_exact_loopback_http_endpoint(&endpoint)
+    {
+        return Ok(endpoint);
+    }
+    Err("PaddleOCR service URL must use HTTPS unless it is localhost HTTP".to_string())
 }
 
 fn openai_chat_completions_url(base: &str) -> String {
@@ -13406,6 +13724,16 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
     use zip::{write::SimpleFileOptions, ZipWriter};
 
+    static PADDLEOCR_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn restore_env_var(name: &str, previous: Option<std::ffi::OsString>) {
+        if let Some(value) = previous {
+            std::env::set_var(name, value);
+        } else {
+            std::env::remove_var(name);
+        }
+    }
+
     fn test_vault(name: &str) -> PathBuf {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -13711,6 +14039,56 @@ mod tests {
             ERNIE_AI_STUDIO_FALLBACK_MODELS,
             ["ernie-4.0-turbo-128k", "ernie-3.5-8k"]
         );
+    }
+
+    #[test]
+    fn paddleocr_provider_contract_defaults_are_stable() {
+        assert_eq!(PADDLEOCR_VL15_PROVIDER_ID, "paddleocr-vl15");
+        assert_eq!(PADDLEOCR_VL15_API_KEY_ENV, "PADDLEOCR_API_KEY");
+        assert_eq!(PADDLEOCR_VL15_DEFAULT_MODEL, "PaddleOCR-VL-1.5");
+        let settings = default_ocr_parser_settings();
+        assert!(!settings.enabled);
+        assert_eq!(settings.provider_id, PADDLEOCR_VL15_PROVIDER_ID);
+        assert_eq!(settings.api_key_env_var, PADDLEOCR_VL15_API_KEY_ENV);
+        assert_eq!(settings.model, PADDLEOCR_VL15_DEFAULT_MODEL);
+        assert!(settings.endpoint.is_empty());
+    }
+
+    #[test]
+    fn paddleocr_config_reports_missing_key_without_failing() {
+        let _guard = PADDLEOCR_ENV_LOCK.lock().expect("lock paddleocr env");
+        let previous = std::env::var_os(PADDLEOCR_VL15_API_KEY_ENV);
+        std::env::remove_var(PADDLEOCR_VL15_API_KEY_ENV);
+        let result = check_paddleocr_vl15_config(
+            "https://ocr.example.com/v1".to_string(),
+            "IGNORED_ENV_VAR".to_string(),
+            String::new(),
+        )
+        .expect("check config");
+        restore_env_var(PADDLEOCR_VL15_API_KEY_ENV, previous);
+
+        assert_eq!(result.status, "missing_key");
+        assert_eq!(result.api_key_env, PADDLEOCR_VL15_API_KEY_ENV);
+        assert_eq!(result.model, PADDLEOCR_VL15_DEFAULT_MODEL);
+    }
+
+    #[test]
+    fn paddleocr_parser_dry_run_uses_env_without_network_or_document_upload() {
+        let _guard = PADDLEOCR_ENV_LOCK.lock().expect("lock paddleocr env");
+        let previous = std::env::var_os(PADDLEOCR_VL15_API_KEY_ENV);
+        std::env::set_var(PADDLEOCR_VL15_API_KEY_ENV, "1");
+        let result = test_paddleocr_vl15_parser(
+            "https://ocr.example.com/v1".to_string(),
+            "IGNORED_ENV_VAR".to_string(),
+            String::new(),
+        )
+        .expect("test parser");
+        restore_env_var(PADDLEOCR_VL15_API_KEY_ENV, previous);
+
+        assert_eq!(result.status, "configured");
+        assert!(result.parser_dry_run);
+        assert_eq!(result.model, PADDLEOCR_VL15_DEFAULT_MODEL);
+        assert!(result.message.contains("no raw document was uploaded"));
     }
 
     #[test]
@@ -18313,6 +18691,9 @@ pub fn run() {
             check_llm_api_key,
             check_ernie_provider,
             test_ernie_chat,
+            check_paddleocr_vl15_config,
+            test_paddleocr_vl15_connection,
+            test_paddleocr_vl15_parser,
             generate_llm_answer,
             generate_ernie_evidence_answer,
             plan_ingest,
