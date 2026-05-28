@@ -14,6 +14,7 @@ type Args = {
   out: string;
   model: string;
   baseUrl: string;
+  apiKeyEnvVar: string;
   selfTest: boolean;
   maxEvidence: number;
 };
@@ -67,6 +68,7 @@ const DEFAULT_OUT_DIR = "artifacts/smoke/ernie";
 const RESULT_FILE = "ernie-live-answer-result.json";
 const REPORT_FILE = "ernie-live-answer-report.md";
 const MAX_SNIPPET_CHARS = 360;
+const ERNIE_API_KEY_ENV_SETTING = "ERNIE_API_KEY_ENV";
 
 class SmokeError extends Error {}
 
@@ -79,8 +81,17 @@ Options:
   --out <dir>             Output directory. Defaults to ${DEFAULT_OUT_DIR}.
   --model <name>          ERNIE model. Defaults to ERNIE_MODEL or ${ERNIE_AI_STUDIO_DEFAULT_MODEL}.
   --base-url <url>        ERNIE OpenAI-compatible base URL. Defaults to ERNIE_BASE_URL or provider catalog.
+  --api-key-env-var <ENV> API key environment variable. Defaults to ERNIE_API_KEY_ENV or ${ERNIE_AI_STUDIO_API_KEY_ENV}.
   --max-evidence <n>      Evidence snippets per question. Defaults to 4.
   --self-test             Run no-key and mock-provider contract tests; never calls ERNIE.`;
+}
+
+function normalizeEnvVarName(value: string | undefined, fallback = ERNIE_AI_STUDIO_API_KEY_ENV) {
+  const name = String(value || fallback).trim();
+  if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) {
+    throw new SmokeError(`Invalid API key environment variable name: ${name}`);
+  }
+  return name;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -89,6 +100,7 @@ function parseArgs(argv: string[]): Args {
     out: DEFAULT_OUT_DIR,
     model: process.env.ERNIE_MODEL?.trim() || ERNIE_AI_STUDIO_DEFAULT_MODEL,
     baseUrl: process.env.ERNIE_BASE_URL?.trim() || ERNIE_AI_STUDIO_BASE_URL,
+    apiKeyEnvVar: normalizeEnvVarName(process.env[ERNIE_API_KEY_ENV_SETTING]),
     selfTest: false,
     maxEvidence: 4,
   };
@@ -110,6 +122,9 @@ function parseArgs(argv: string[]): Args {
       index += 1;
     } else if (arg === "--base-url") {
       args.baseUrl = mustHaveValue(arg, next);
+      index += 1;
+    } else if (arg === "--api-key-env-var") {
+      args.apiKeyEnvVar = normalizeEnvVarName(mustHaveValue(arg, next));
       index += 1;
     } else if (arg === "--max-evidence") {
       args.maxEvidence = Number(mustHaveValue(arg, next));
@@ -454,23 +469,30 @@ function gitCommit() {
   }
 }
 
-function redactSecrets(value: string, secret?: string) {
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function redactSecrets(value: string, secret?: string, apiKeyEnvVar = ERNIE_AI_STUDIO_API_KEY_ENV) {
   let redacted = value
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, "Bearer [redacted]")
-    .replace(/AI_STUDIO_API_KEY\s*=\s*['\"]?[^'\"\s]+/g, "AI_STUDIO_API_KEY=[redacted]")
     .replace(/api[_-]?key['\"]?\s*[:=]\s*['\"][^'\"]+['\"]/gi, "api_key: [redacted]");
+  for (const marker of Array.from(new Set([ERNIE_AI_STUDIO_API_KEY_ENV, apiKeyEnvVar].filter(Boolean)))) {
+    redacted = redacted.replace(new RegExp(`${escapeRegExp(marker)}\\s*=\\s*['"]?[^'\"\\s]+`, "g"), `${marker}=[redacted]`);
+  }
   if (secret) redacted = redacted.split(secret).join("[redacted]");
   return redacted;
 }
 
 async function runSmoke(args: Args, options: { apiKey?: string; fetchImpl?: FetchLike; writeOutputs?: boolean } = {}) {
   const vault = await assertVault(args.vault);
-  const apiKey = options.apiKey ?? process.env[ERNIE_AI_STUDIO_API_KEY_ENV]?.trim() ?? "";
+  const apiKeyEnvVar = normalizeEnvVarName(args.apiKeyEnvVar);
+  const apiKey = options.apiKey ?? process.env[apiKeyEnvVar]?.trim() ?? "";
   if (!apiKey) {
     return {
       ok: false,
       status: "missing_key" as const,
-      message: `${ERNIE_AI_STUDIO_API_KEY_ENV} is missing; ERNIE live smoke did not call provider and did not generate a success report.`,
+      message: `${apiKeyEnvVar} is missing; ERNIE live smoke did not call provider and did not generate a success report.`,
       provider_called: false,
     };
   }
@@ -501,7 +523,7 @@ async function runSmoke(args: Args, options: { apiKey?: string; fetchImpl?: Fetc
         citations: [],
         citation_coverage: 0,
         unsupported_claims: [],
-        warnings: [redactSecrets(String(err), apiKey)],
+        warnings: [redactSecrets(String(err), apiKey, apiKeyEnvVar)],
         raw_document_sent: false,
         status: "provider_error",
       });
@@ -520,7 +542,7 @@ async function runSmoke(args: Args, options: { apiKey?: string; fetchImpl?: Fetc
       id: "ernie-ai-studio",
       base_url: args.baseUrl,
       model: args.model,
-      api_key_env: ERNIE_AI_STUDIO_API_KEY_ENV,
+      api_key_env: apiKeyEnvVar,
       api_key_logged: false,
     },
     safety: {
@@ -609,6 +631,7 @@ async function runSelfTest() {
     out: "artifacts/smoke/ernie-self-test",
     model: ERNIE_AI_STUDIO_DEFAULT_MODEL,
     baseUrl: ERNIE_AI_STUDIO_BASE_URL,
+    apiKeyEnvVar: ERNIE_AI_STUDIO_API_KEY_ENV,
     selfTest: true,
     maxEvidence: 4,
   };
@@ -644,13 +667,38 @@ async function runSelfTest() {
   assert(mocked.output.metrics.unsupported_claim_count >= 1, "mock provider should surface unsupported claims");
   assert(mocked.output.questions.some((item: QuestionResult) => item.citations.includes("demo:p2:evidence-map")), "mock provider should surface citations");
   assert(mocked.output.questions.find((item: QuestionResult) => item.kind === "no_evidence")?.status === "refused", "Q3 must refuse no-evidence questions");
-  const redacted = redactSecrets("Bearer mock-secret-token AI_STUDIO_API_KEY=mock-secret-token", "mock-secret-token");
+  const customEnv = "CUSTOM_AI_STUDIO_API_KEY";
+  const previousCustomEnv = process.env[customEnv];
+  process.env[customEnv] = "custom-secret-token";
+  const customEnvCallsBefore = providerCalls;
+  try {
+    const customEnvRun = await runSmoke({ ...args, apiKeyEnvVar: customEnv }, { fetchImpl: fakeFetch, writeOutputs: false });
+    assert(customEnvRun.ok, "custom key env var smoke should complete");
+    assert(customEnvRun.output.provider.api_key_env === customEnv, "custom key env var should be reported by name only");
+    assert(providerCalls > customEnvCallsBefore, "custom key env var should allow provider calls");
+  } finally {
+    if (previousCustomEnv === undefined) delete process.env[customEnv];
+    else process.env[customEnv] = previousCustomEnv;
+  }
+
+  const redacted = redactSecrets("Bearer mock-secret-token CUSTOM_AI_STUDIO_API_KEY=mock-secret-token", "mock-secret-token", "CUSTOM_AI_STUDIO_API_KEY");
   assert(!redacted.includes("mock-secret-token"), "redaction must remove API key values");
+  assert(redacted.includes("CUSTOM_AI_STUDIO_API_KEY=[redacted]"), "redaction must preserve custom key env marker name");
+  assertThrows(() => normalizeEnvVarName("bad-name"), "invalid env var names must be rejected");
   console.log("ERNIE live smoke self-test passed.");
 }
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new SmokeError(message);
+}
+
+function assertThrows(fn: () => unknown, message: string) {
+  try {
+    fn();
+  } catch {
+    return;
+  }
+  throw new SmokeError(message);
 }
 
 async function main() {
@@ -672,6 +720,13 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(redactSecrets(String(err), process.env[ERNIE_AI_STUDIO_API_KEY_ENV]));
+  const apiKeyEnvVar = (() => {
+    try {
+      return normalizeEnvVarName(process.env[ERNIE_API_KEY_ENV_SETTING]);
+    } catch {
+      return ERNIE_AI_STUDIO_API_KEY_ENV;
+    }
+  })();
+  console.error(redactSecrets(String(err), process.env[apiKeyEnvVar], apiKeyEnvVar));
   process.exit(1);
 });

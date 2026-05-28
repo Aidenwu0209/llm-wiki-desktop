@@ -14,7 +14,8 @@ The smoke keeps the desktop runtime-first boundary:
 
 ## Environment
 
-- Required for live run: `AI_STUDIO_API_KEY`.
+- Required for live run: configured ERNIE API key environment variable, defaulting to `AI_STUDIO_API_KEY`.
+- Optional: `ERNIE_API_KEY_ENV`; names the key environment variable when it is not `AI_STUDIO_API_KEY`.
 - Optional: `ERNIE_BASE_URL`; defaults to the provider catalog base URL, `https://aistudio.baidu.com/llm/lmapi/v3`.
 - Optional: `ERNIE_MODEL`; defaults to `ernie-5.1`.
 - Public CI must not require a real key; it should run only the no-key and mock-provider contract test through `npm test`.
@@ -24,6 +25,18 @@ Do not paste the key into docs, logs, screenshots, command history, or PR descri
 ```bash
 read -rsp "AI_STUDIO_API_KEY: " AI_STUDIO_API_KEY
 export AI_STUDIO_API_KEY
+```
+
+Custom key env example:
+
+```bash
+export ERNIE_API_KEY_ENV="CUSTOM_AI_STUDIO_API_KEY"
+read -rsp "CUSTOM_AI_STUDIO_API_KEY: " CUSTOM_AI_STUDIO_API_KEY
+export CUSTOM_AI_STUDIO_API_KEY
+npm run ernie:live-smoke -- \
+  --api-key-env-var CUSTOM_AI_STUDIO_API_KEY \
+  --vault examples/demo-vault \
+  --out artifacts/smoke/ernie/
 ```
 
 ## Command
@@ -45,9 +58,9 @@ These files are local smoke artifacts. Do not commit them if they contain privat
 
 ## Key Handling
 
-The script reads the key from `AI_STUDIO_API_KEY` at runtime. It writes only the environment variable name into reports. It redacts bearer tokens and key-like markers from provider errors.
+The script reads the key from `AI_STUDIO_API_KEY` by default, or from the variable named by `ERNIE_API_KEY_ENV` / `--api-key-env-var`. It writes only the environment variable name into reports. It redacts bearer tokens and key-like markers from provider errors.
 
-If `AI_STUDIO_API_KEY` is missing, the script prints `missing_key`, exits non-zero, does not call ERNIE, and does not generate a success report.
+If the configured key environment variable is missing, the script prints `missing_key`, exits non-zero, does not call ERNIE, and does not generate a success report.
 
 ## Questions
 
@@ -103,7 +116,8 @@ tsx scripts/smoke/ernie-live-answer.ts --self-test
 
 The self-test covers:
 
-- Missing `AI_STUDIO_API_KEY` fails safely and does not call the provider.
+- Missing configured key environment variable fails safely and does not call the provider.
+- Custom key environment variable names are honored and reported by name only.
 - Mock provider output surfaces citations and unsupported claims.
 - The prompt sent to the provider does not contain raw document body text.
 - API key values are redacted from error/log text.
