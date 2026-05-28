@@ -967,7 +967,7 @@ const initialDesktopSettings: DesktopSettings = {
   layoutParsingApiUrl: "",
   layoutParsingTokenPresent: false,
   cloudParsingAllowed: false,
-  defaultPdfParser: "auto",
+  defaultPdfParser: "paddleocr-vl15",
   defaultIngestMode: "inbox_only",
   defaultObsidianProfile: "minimal",
   embeddingEnabled: false,
@@ -1665,6 +1665,11 @@ function visiblePath(path: string) {
   return path.replace(/ +(?=\/|$)/g, (match) => "[space]".repeat(match.length));
 }
 
+function pathDisplayName(path: string) {
+  const safePath = visiblePath(path);
+  return safePath.split(/[\\/]+/).filter(Boolean).pop() || safePath;
+}
+
 function isTerminalRuntimeStatus(status?: string | null) {
   return terminalRuntimeStatuses.includes(status as RuntimeJobStatus);
 }
@@ -1809,6 +1814,7 @@ function App() {
   const [knowledgeSidebarWidth, setKnowledgeSidebarWidth] = useState(defaultKnowledgeSidebarWidth);
   const [previewSidebarWidth, setPreviewSidebarWidth] = useState(defaultPreviewSidebarWidth);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  const [projectSwitcherOpen, setProjectSwitcherOpen] = useState(false);
   const [actionFocusIndex, setActionFocusIndex] = useState(0);
   const [actionListExpanded, setActionListExpanded] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -1927,6 +1933,7 @@ function App() {
       setDetailDrawerOpen(false);
       setResearchPanelOpen(false);
     }
+    setProjectSwitcherOpen(false);
   }, [activePage]);
 
   useEffect(() => {
@@ -2775,7 +2782,37 @@ function App() {
     }
   }
 
-  const vaultDisplayName = vaultPath ? visiblePath(vaultPath).split("/").filter(Boolean).pop() || visiblePath(vaultPath) : "No vault";
+  const vaultDisplayName = vaultPath ? pathDisplayName(vaultPath) : "No vault";
+  const projectSwitchOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const items: Array<{ path: string; label: string; meta: string }> = [];
+    const addProject = (path: string, label: string, meta: string) => {
+      if (!path || seen.has(path)) return;
+      seen.add(path);
+      items.push({ path, label, meta });
+    };
+
+    addProject(
+      vaultPath,
+      vaultDisplayName,
+      interfaceLanguage === "zh" ? "当前项目" : "Current project",
+    );
+    for (const path of appState?.recentVaults ?? []) {
+      addProject(
+        path,
+        pathDisplayName(path),
+        interfaceLanguage === "zh" ? "最近项目" : "Recent project",
+      );
+    }
+    for (const suggestion of vaultSuggestions.filter((item) => item.exists)) {
+      addProject(
+        suggestion.path,
+        suggestion.label || pathDisplayName(suggestion.path),
+        suggestion.kind,
+      );
+    }
+    return items.slice(0, 9);
+  }, [appState?.recentVaults, interfaceLanguage, vaultDisplayName, vaultPath, vaultSuggestions]);
   const contractP0P1 = lintFindings.filter((finding) => finding.severity === "p0" || finding.severity === "p1").length;
   const openReviewCount = reviewItems.filter((item) => !["approved", "resolved", "ignored", "rejected"].includes(item.status)).length;
   const navBadgeForPage = (page: ShellPage): NavBadge | null => {
@@ -3553,26 +3590,93 @@ function App() {
             <p>{activePageCopy.subtitle}</p>
           </div>
           <div className="topbar-status">
-            <div className="status-pill" title={vaultPath || "No vault selected"}>
-              <Database size={15} />
-              <span>{vaultDisplayName}</span>
+            <div
+              className="project-switcher"
+              onBlur={(event) => {
+                const nextTarget = event.relatedTarget;
+                if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+                  setProjectSwitcherOpen(false);
+                }
+              }}
+            >
+              <button
+                className="project-switcher-trigger"
+                type="button"
+                onClick={() => setProjectSwitcherOpen((open) => !open)}
+                aria-haspopup="menu"
+                aria-expanded={projectSwitcherOpen}
+                title={vaultPath || "No vault selected"}
+              >
+                <Database size={15} />
+                <span>
+                  <strong>{vaultDisplayName}</strong>
+                  <em>{interfaceLanguage === "zh" ? "切换项目" : "Switch project"}</em>
+                </span>
+                <ChevronDown size={14} />
+              </button>
+              {projectSwitcherOpen && (
+                <div className="project-switcher-menu" role="menu">
+                  {projectSwitchOptions.map((item) => (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      key={item.path}
+                      disabled={item.path === vaultPath}
+                      onClick={() => {
+                        setProjectSwitcherOpen(false);
+                        if (item.path !== vaultPath) void selectVault(item.path);
+                      }}
+                    >
+                      <strong>{item.label}</strong>
+                      <span>{item.meta}</span>
+                      <code>{visiblePath(item.path)}</code>
+                    </button>
+                  ))}
+                  <div className="project-switcher-actions">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProjectSwitcherOpen(false);
+                        setCreateProjectOpen(true);
+                      }}
+                    >
+                      <Archive size={14} />
+                      {interfaceLanguage === "zh" ? "新建项目" : "New Project"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProjectSwitcherOpen(false);
+                        void chooseVault();
+                      }}
+                    >
+                      <FolderOpen size={14} />
+                      {interfaceLanguage === "zh" ? "打开项目" : "Open Project"}
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
             <div className={classNames("health", tone)}>
               {tone === "ok" ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
               {vaultPath ? (status ? (status.schemaValid ? copy.labels.schemaValid : copy.labels.schemaInvalid) : copy.labels.inspecting) : copy.brandSubtitleNoVault}
             </div>
-            <div className={classNames("status-pill", status?.runtimeInstalled && "ok")}>
-              <TerminalSquare size={15} />
-              <span>{status?.runtimeInstalled ? copy.labels.runtimeReady : copy.labels.runtimeMissing}</span>
-            </div>
-            <div className={classNames("status-pill", status?.obsidianEnabled && "ok")}>
-              <SquareStack size={15} />
-              <span>{status?.obsidianEnabled ? copy.labels.obsidianEnabled : copy.labels.obsidianOff}</span>
-            </div>
-            <div className={classNames("status-pill", status?.dashboardAvailable && "ok")}>
-              <BarChart3 size={15} />
-              <span>{status?.dashboardAvailable ? copy.labels.dashboardReady : copy.labels.dashboardMissing}</span>
-            </div>
+            {activePage !== "settings" && (
+              <>
+                <div className={classNames("status-pill", status?.runtimeInstalled && "ok")}>
+                  <TerminalSquare size={15} />
+                  <span>{status?.runtimeInstalled ? copy.labels.runtimeReady : copy.labels.runtimeMissing}</span>
+                </div>
+                <div className={classNames("status-pill", status?.obsidianEnabled && "ok")}>
+                  <SquareStack size={15} />
+                  <span>{status?.obsidianEnabled ? copy.labels.obsidianEnabled : copy.labels.obsidianOff}</span>
+                </div>
+                <div className={classNames("status-pill", status?.dashboardAvailable && "ok")}>
+                  <BarChart3 size={15} />
+                  <span>{status?.dashboardAvailable ? copy.labels.dashboardReady : copy.labels.dashboardMissing}</span>
+                </div>
+              </>
+            )}
             <button
               className="command-palette-trigger"
               type="button"

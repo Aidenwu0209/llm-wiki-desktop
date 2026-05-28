@@ -27,6 +27,7 @@ const ERNIE_AI_STUDIO_FALLBACK_MODELS: [&str; 2] = ["ernie-4.0-turbo-128k", "ern
 const PADDLEOCR_VL15_PROVIDER_ID: &str = "paddleocr-vl15";
 const PADDLEOCR_VL15_API_KEY_ENV: &str = "PADDLEOCR_API_KEY";
 const PADDLEOCR_VL15_DEFAULT_MODEL: &str = "PaddleOCR-VL-1.5";
+const PADDLEOCR_LAYOUT_TOKEN_ENV: &str = "OPEN_LLM_WIKI_LAYOUT_TOKEN";
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -1272,7 +1273,7 @@ const OBSIDIAN_CORE_PLUGINS: &[&str] = &[
 ];
 
 fn default_pdf_parser() -> String {
-    "auto".to_string()
+    PADDLEOCR_VL15_PROVIDER_ID.to_string()
 }
 
 fn default_project_template() -> String {
@@ -1896,6 +1897,11 @@ fn detect_mime(path: &Path) -> String {
         "md" | "markdown" => "text/markdown",
         "txt" => "text/plain",
         "pdf" => "application/pdf",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "tif" | "tiff" => "image/tiff",
+        "bmp" => "image/bmp",
         "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -6224,6 +6230,10 @@ fn is_markdown_or_text(path: &Path) -> bool {
 }
 
 fn is_parseable_binary(path: &Path) -> bool {
+    is_pdf_binary(path) || is_image_binary(path)
+}
+
+fn is_pdf_binary(path: &Path) -> bool {
     matches!(
         path.extension()
             .and_then(OsStr::to_str)
@@ -6232,6 +6242,25 @@ fn is_parseable_binary(path: &Path) -> bool {
             .as_str(),
         "pdf"
     )
+}
+
+fn is_image_binary(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(OsStr::to_str)
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "png" | "jpg" | "jpeg" | "webp" | "tif" | "tiff" | "bmp"
+    )
+}
+
+fn parser_supports_source(parser: &str, source: &Path) -> bool {
+    if is_pdf_binary(source) {
+        true
+    } else {
+        is_image_binary(source) && matches!(parser, PADDLEOCR_VL15_PROVIDER_ID | "layout-api")
+    }
 }
 
 fn is_archive_package(path: &Path) -> bool {
@@ -6747,15 +6776,185 @@ fn write_text_artifact_contract(
     )
 }
 
-fn parser_hint_for_source(source: &Path, artifact: &Path) -> String {
-    format!(
-        "pdf_to_markdown.py \"{}\" --output \"{}\" --parser auto --no-download-images",
-        source.display(),
-        artifact
-            .parent()
-            .map(to_display)
-            .unwrap_or_else(|| to_display(artifact))
-    )
+#[derive(Debug, Clone)]
+struct SourceParserPlan {
+    reason: String,
+    parser_hint: String,
+    next_action_label: String,
+    current_state: Option<String>,
+    uses_network: bool,
+}
+
+#[derive(Debug, Clone)]
+struct PaddleOcrConfigState {
+    ready: bool,
+    endpoint: String,
+    message: String,
+}
+
+fn parser_output_dir_display(artifact: &Path) -> String {
+    artifact
+        .parent()
+        .map(to_display)
+        .unwrap_or_else(|| to_display(artifact))
+}
+
+fn runtime_parser_hint_for_source(
+    source: &Path,
+    artifact: &Path,
+    parser: &str,
+    api_url: Option<&str>,
+) -> String {
+    let mut parts = vec![
+        "pdf_to_markdown.py".to_string(),
+        format!("\"{}\"", source.display()),
+        "--output".to_string(),
+        format!("\"{}\"", parser_output_dir_display(artifact)),
+        "--parser".to_string(),
+        parser.to_string(),
+        "--no-download-images".to_string(),
+    ];
+    if let Some(api_url) = api_url.map(str::trim).filter(|value| !value.is_empty()) {
+        parts.extend(["--api-url".to_string(), format!("\"{api_url}\"")]);
+    }
+    if is_image_binary(source) && parser == "layout-api" {
+        parts.extend(["--file-type".to_string(), "1".to_string()]);
+    }
+    parts.join(" ")
+}
+
+fn paddleocr_config_state(settings: &DesktopSettings) -> Result<PaddleOcrConfigState, String> {
+    let ocr = &settings.ocr_parser;
+    let endpoint = validate_paddleocr_endpoint(&ocr.endpoint)?;
+    if !ocr.enabled {
+        return Ok(PaddleOcrConfigState {
+            ready: false,
+            endpoint,
+            message: "PaddleOCR-VL-1.5 is selected but OCR Parser is disabled in Settings"
+                .to_string(),
+        });
+    }
+    if endpoint.is_empty() {
+        return Ok(PaddleOcrConfigState {
+            ready: false,
+            endpoint,
+            message: "PaddleOCR-VL-1.5 is selected but no service URL is configured".to_string(),
+        });
+    }
+    if read_llm_api_key(Some(&ocr.api_key_env_var))?.is_none() {
+        return Ok(PaddleOcrConfigState {
+            ready: false,
+            endpoint,
+            message: format!(
+                "PaddleOCR-VL-1.5 is selected but {} is not visible to this desktop process",
+                ocr.api_key_env_var
+            ),
+        });
+    }
+    Ok(PaddleOcrConfigState {
+        ready: true,
+        endpoint,
+        message: "PaddleOCR-VL-1.5 parser configuration is ready".to_string(),
+    })
+}
+
+fn paddleocr_runtime_config(settings: &DesktopSettings) -> Result<(String, String), String> {
+    let state = paddleocr_config_state(settings)?;
+    if !state.ready {
+        return Err(format!(
+            "{}. Open Settings -> OCR Parser, enable PaddleOCR-VL-1.5, set the service URL, and expose {} before parsing.",
+            state.message, settings.ocr_parser.api_key_env_var
+        ));
+    }
+    let api_key =
+        read_llm_api_key(Some(&settings.ocr_parser.api_key_env_var))?.ok_or_else(|| {
+            format!(
+                "{} is not visible to this desktop process",
+                settings.ocr_parser.api_key_env_var
+            )
+        })?;
+    Ok((state.endpoint, api_key))
+}
+
+fn parser_plan_for_source(
+    source: &Path,
+    artifact: &Path,
+    settings: &DesktopSettings,
+) -> Result<Option<SourceParserPlan>, String> {
+    let parser = selected_pdf_parser(&settings.default_pdf_parser)?;
+    if !parser_supports_source(&parser, source) {
+        return Ok(None);
+    }
+    if parser == PADDLEOCR_VL15_PROVIDER_ID {
+        let state = paddleocr_config_state(settings)?;
+        if state.ready {
+            return Ok(Some(SourceParserPlan {
+                reason:
+                    "PDF/image requires a PaddleOCR-VL-1.5 artifact before corpus ingest can run"
+                        .to_string(),
+                parser_hint: format!(
+                    "{} # PaddleOCR-VL-1.5 via Settings -> OCR Parser; token source: {}",
+                    runtime_parser_hint_for_source(
+                        source,
+                        artifact,
+                        "layout-api",
+                        Some(&state.endpoint),
+                    ),
+                    settings.ocr_parser.api_key_env_var
+                ),
+                next_action_label: "Parse with PaddleOCR-VL-1.5, then run the ingest pipeline"
+                    .to_string(),
+                current_state: None,
+                uses_network: true,
+            }));
+        }
+        return Ok(Some(SourceParserPlan {
+            reason: state.message,
+            parser_hint: format!(
+                "Settings -> OCR Parser: enable PaddleOCR-VL-1.5, set a service URL, and expose {}; or choose auto/local-text as an explicit fallback",
+                settings.ocr_parser.api_key_env_var
+            ),
+            next_action_label:
+                "Configure PaddleOCR-VL-1.5 before parsing, or choose an explicit local fallback parser"
+                    .to_string(),
+            current_state: Some("paddleocr_config_required".to_string()),
+            uses_network: false,
+        }));
+    }
+    if parser == "layout-api" {
+        let api_url = settings.layout_parsing_api_url.trim();
+        let (current_state, next_action_label) = if settings.cloud_parsing_allowed {
+            (
+                None,
+                "Parse with layout-api, then run the ingest pipeline".to_string(),
+            )
+        } else {
+            (
+                Some("cloud_parser_approval_required".to_string()),
+                "Explicitly allow layout-api cloud parsing before parsing".to_string(),
+            )
+        };
+        return Ok(Some(SourceParserPlan {
+            reason: "PDF/image requires a layout parser artifact before corpus ingest can run"
+                .to_string(),
+            parser_hint: runtime_parser_hint_for_source(
+                source,
+                artifact,
+                "layout-api",
+                Some(api_url),
+            ),
+            next_action_label,
+            current_state,
+            uses_network: true,
+        }));
+    }
+    Ok(Some(SourceParserPlan {
+        reason: "PDF requires a parser before corpus ingest can run".to_string(),
+        parser_hint: runtime_parser_hint_for_source(source, artifact, &parser, None),
+        next_action_label: "Parse this source locally before ingest".to_string(),
+        current_state: None,
+        uses_network: false,
+    }))
 }
 
 fn plan_current_state(status: &str, action: &str) -> String {
@@ -6870,6 +7069,12 @@ fn plan_entry_is_review_gated(entry: &IngestPlanEntry) -> bool {
 
 fn plan_entry_is_pipeline_runnable(entry: &IngestPlanEntry) -> bool {
     if plan_entry_is_review_gated(entry) {
+        return false;
+    }
+    if matches!(
+        entry.current_state.as_str(),
+        "paddleocr_config_required" | "cloud_parser_approval_required"
+    ) {
         return false;
     }
     matches!(entry.status.as_str(), "ready" | "stageable" | "cached")
@@ -7011,6 +7216,7 @@ fn plan_entry_for_source(
     source: &Path,
     cached_hashes: &HashSet<String>,
     published_keys: &HashSet<(String, String)>,
+    settings: &DesktopSettings,
 ) -> Result<IngestPlanEntry, String> {
     let hash = sha256_file(source)?;
     let artifact = artifact_for_source(vault, source, &hash);
@@ -7046,6 +7252,11 @@ fn plan_entry_for_source(
     } else {
         Some(vault_relative_display(&artifact))
     };
+    let parser_plan = if is_parseable_binary(source) {
+        parser_plan_for_source(source, &artifact, settings)?
+    } else {
+        None
+    };
 
     let (status, action, reason, parser_hint) = if published {
         (
@@ -7065,12 +7276,14 @@ fn plan_entry_for_source(
         (
             "blocked".to_string(),
             "parse_required".to_string(),
-            "source hash differs from the parsed artifact manifest; regenerate combined.md before runtime ingest".to_string(),
-            if is_parseable_binary(source) {
-                Some(parser_hint_for_source(source, &artifact))
-            } else {
-                None
-            },
+            parser_plan.as_ref().map_or_else(
+                || "source hash differs from the parsed artifact manifest; regenerate combined.md before runtime ingest".to_string(),
+                |plan| format!(
+                    "source hash differs from the parsed artifact manifest; {}",
+                    plan.reason
+                ),
+            ),
+            parser_plan.as_ref().map(|plan| plan.parser_hint.clone()),
         )
     } else if text_source && cached && artifact_exists && artifact_matches_source {
         (
@@ -7094,13 +7307,12 @@ fn plan_entry_for_source(
             "plain text or Markdown can be staged locally as combined.md".to_string(),
             None,
         )
-    } else if is_parseable_binary(source) {
-        let hint = parser_hint_for_source(source, &artifact);
+    } else if let Some(plan) = &parser_plan {
         (
             "blocked".to_string(),
             "parse_required".to_string(),
-            "PDF requires a parser before corpus ingest can run".to_string(),
-            Some(hint),
+            plan.reason.clone(),
+            Some(plan.parser_hint.clone()),
         )
     } else if archive_package {
         (
@@ -7113,7 +7325,7 @@ fn plan_entry_for_source(
         (
             "blocked".to_string(),
             "unsupported_extension".to_string(),
-            "desktop staging currently supports txt, md, markdown, and existing parsed artifacts"
+            "desktop staging currently supports txt, md, markdown, PDF, and images supported by the selected parser"
                 .to_string(),
             None,
         )
@@ -7124,15 +7336,27 @@ fn plan_entry_for_source(
     } else {
         plan_current_state(&status, &action)
     };
-    let next_action_label = if parsed_artifact_stale {
+    let mut next_action_label = if parsed_artifact_stale {
         "Re-parse this source locally before ingest".to_string()
     } else {
         plan_next_action_label(&status, &action)
     };
+    let mut current_state = current_state;
+    let mut uses_network = plan_uses_network(parser_hint.as_deref());
+    if action == "parse_required" {
+        if let Some(plan) = &parser_plan {
+            if let Some(state) = &plan.current_state {
+                current_state = state.clone();
+            }
+            if !parsed_artifact_stale || plan.current_state.is_some() {
+                next_action_label = plan.next_action_label.clone();
+            }
+            uses_network = plan.uses_network;
+        }
+    }
     let command = plan_command_for_action(&action, parser_hint.as_deref());
     let inputs = vec![rel_path(vault, source)];
     let outputs = plan_outputs_for_action(vault, &artifact, &action);
-    let uses_network = plan_uses_network(parser_hint.as_deref());
 
     Ok(IngestPlanEntry {
         source_path: to_display(source),
@@ -9076,8 +9300,8 @@ fn write_ingest_plan(
 fn plan_ingest(vault_path: String) -> Result<IngestPlan, String> {
     let vault = PathBuf::from(vault_path);
     require_existing_dir(&vault, "vault")?;
-    let source_watch_rules =
-        SourceWatchRules::from_settings(&load_desktop_settings(to_display(&vault))?);
+    let settings = load_desktop_settings(to_display(&vault))?;
+    let source_watch_rules = SourceWatchRules::from_settings(&settings);
     let cached_hashes = load_cached_ingest_hashes(&vault);
     let published_keys = load_published_ingest_keys(&vault);
     let mut entries = Vec::new();
@@ -9095,7 +9319,8 @@ fn plan_ingest(vault_path: String) -> Result<IngestPlan, String> {
             ));
             continue;
         }
-        let entry = plan_entry_for_source(&vault, &source, &cached_hashes, &published_keys)?;
+        let entry =
+            plan_entry_for_source(&vault, &source, &cached_hashes, &published_keys, &settings)?;
         if let Some(path) = &entry.artifact_path {
             artifact_paths.insert(PathBuf::from(path));
         }
@@ -9945,7 +10170,7 @@ fn paddleocr_config_result(
         ));
     }
     let message = if parser_dry_run {
-        "PaddleOCR parser dry run passed; no raw document was uploaded and real parsing is not implemented yet."
+        "PaddleOCR parser dry run passed; no raw document was uploaded. Real parsing runs only from an explicit parse/ingest action."
     } else if endpoint.is_empty() {
         "PaddleOCR API key is visible; add a service URL before testing a live connection."
     } else {
@@ -12535,7 +12760,7 @@ fn run_runtime_command_impl(
             return synthetic_task_log(
                 &vault,
                 "parse_pdfs",
-                "no parse_required PDF artifacts found\n",
+                "no parse_required PDF/image artifacts found\n",
             );
         }
         return Ok(logs.remove(0));
@@ -12964,6 +13189,28 @@ fn run_process_job(
     timeout_seconds: usize,
     retry_count: usize,
 ) -> Result<TaskLog, String> {
+    run_process_job_with_env(
+        app,
+        vault,
+        job_id,
+        kind,
+        command,
+        &[],
+        timeout_seconds,
+        retry_count,
+    )
+}
+
+fn run_process_job_with_env(
+    app: Option<&AppHandle>,
+    vault: &Path,
+    job_id: String,
+    kind: &str,
+    command: Vec<String>,
+    env_overrides: &[(String, String)],
+    timeout_seconds: usize,
+    retry_count: usize,
+) -> Result<TaskLog, String> {
     if command.is_empty() {
         return Err("runtime command is empty".to_string());
     }
@@ -13018,10 +13265,15 @@ fn run_process_job(
             let _ = append_runtime_job_state(vault, &started_event);
         }
 
-        let mut child = Command::new(&command[0])
+        let mut process = Command::new(&command[0]);
+        process
             .args(command.iter().skip(1))
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        for (key, value) in env_overrides {
+            process.env(key, value);
+        }
+        let mut child = process
             .spawn()
             .map_err(|e| format!("failed to run {kind}: {e}"))?;
         let stdout = child.stdout.take();
@@ -13308,19 +13560,21 @@ fn selected_pdf_parser(value: &str) -> Result<String, String> {
         "" | "auto" => Ok("auto".to_string()),
         "local-text" => Ok("local-text".to_string()),
         "layout-api" => Ok("layout-api".to_string()),
+        PADDLEOCR_VL15_PROVIDER_ID => Ok(PADDLEOCR_VL15_PROVIDER_ID.to_string()),
         other => Err(format!(
-            "unsupported PDF parser '{other}', expected auto, local-text, or layout-api"
+            "unsupported PDF parser '{other}', expected auto, local-text, layout-api, or paddleocr-vl15"
         )),
     }
 }
 
-fn run_python_script_log(
+fn run_python_script_log_with_env(
     app: Option<&AppHandle>,
     vault: &Path,
     kind: &str,
     python_path: &str,
     script_path: &Path,
     args: &[String],
+    env_overrides: &[(String, String)],
     timeout_seconds: usize,
     retry_count: usize,
     job_id_override: Option<String>,
@@ -13328,7 +13582,16 @@ fn run_python_script_log(
     let mut command = vec![python_path.to_string(), to_display(script_path)];
     command.extend(args.iter().cloned());
     let id = job_id_override.unwrap_or_else(|| new_runtime_job_id(kind));
-    run_process_job(app, vault, id, kind, command, timeout_seconds, retry_count)
+    run_process_job_with_env(
+        app,
+        vault,
+        id,
+        kind,
+        command,
+        env_overrides,
+        timeout_seconds,
+        retry_count,
+    )
 }
 
 fn pdf_parse_command_args(
@@ -13351,6 +13614,9 @@ fn pdf_parse_command_args(
             layout_parsing_api_url.trim().to_string(),
         ]);
     }
+    if parser == "layout-api" && is_image_binary(source) {
+        args.extend(["--file-type".to_string(), "1".to_string()]);
+    }
     args
 }
 
@@ -13367,8 +13633,17 @@ fn parse_pdf_artifacts(
     retry_count: usize,
     job_id_override: Option<String>,
 ) -> Result<(Vec<String>, Vec<TaskLog>), String> {
-    let parser = selected_pdf_parser(pdf_parser)?;
-    if parser == "layout-api" && !cloud_parsing_allowed {
+    let selected_parser = selected_pdf_parser(pdf_parser)?;
+    let mut parser = selected_parser.clone();
+    let mut api_url = layout_parsing_api_url.trim().to_string();
+    let mut env_overrides: Vec<(String, String)> = Vec::new();
+    if selected_parser == PADDLEOCR_VL15_PROVIDER_ID {
+        let settings = load_desktop_settings(to_display(vault))?;
+        let (endpoint, api_key) = paddleocr_runtime_config(&settings)?;
+        parser = "layout-api".to_string();
+        api_url = endpoint;
+        env_overrides.push((PADDLEOCR_LAYOUT_TOKEN_ENV.to_string(), api_key));
+    } else if parser == "layout-api" && !cloud_parsing_allowed {
         return Err("layout-api parser requires explicit cloud parsing approval".to_string());
     }
     let scripts_dir = resolve_scripts_dir(vault, runtime_path)?;
@@ -13391,6 +13666,13 @@ fn parse_pdf_artifacts(
         if !is_parseable_binary(&source) {
             continue;
         }
+        if !parser_supports_source(&selected_parser, &source) {
+            return Err(format!(
+                "selected parser '{}' cannot parse {}; choose PaddleOCR-VL-1.5 or layout-api for image sources",
+                selected_parser,
+                rel_path(vault, &source)
+            ));
+        }
         let source_id = source_id_for_hash(vault, &entry.sha256);
         let job_id = job_id_for_source_id(source_id.as_deref(), &entry.sha256);
         if cancelled.contains(&job_id) {
@@ -13403,25 +13685,22 @@ fn parse_pdf_artifacts(
         let output_dir = artifact
             .parent()
             .ok_or_else(|| "artifact path has no parent".to_string())?;
-        ensure_inside(
-            &source,
-            vault,
-            "PDF parse source must stay inside the vault",
-        )?;
+        ensure_inside(&source, vault, "parser source must stay inside the vault")?;
         ensure_inside(
             output_dir,
             vault,
-            "PDF parse output must stay inside the vault",
+            "parser output must stay inside the vault",
         )?;
         let _ = update_ingest_job_record(vault, &job_id, "running", None, None);
-        let args = pdf_parse_command_args(&source, output_dir, &parser, layout_parsing_api_url);
-        let log = run_python_script_log(
+        let args = pdf_parse_command_args(&source, output_dir, &parser, &api_url);
+        let log = run_python_script_log_with_env(
             app,
             vault,
             "parse_pdfs",
             python_path,
             &script_path,
             &args,
+            &env_overrides,
             timeout_seconds,
             retry_count,
             next_job_id_override.take(),
@@ -13571,7 +13850,7 @@ fn run_ingest_pipeline(
                     .to_string(),
             );
         }
-        return Err("no unpublished ingest inputs are ready; parse blocked PDFs, extract archive packages, or import Markdown/txt".to_string());
+        return Err("no unpublished ingest inputs are ready; parse blocked PDFs/images, configure PaddleOCR if selected, extract archive packages, or import Markdown/txt".to_string());
     }
     let (parsed_artifacts, mut logs) = parse_pdf_artifacts(
         Some(&app),
@@ -14185,6 +14464,7 @@ mod tests {
         assert_eq!(PADDLEOCR_VL15_PROVIDER_ID, "paddleocr-vl15");
         assert_eq!(PADDLEOCR_VL15_API_KEY_ENV, "PADDLEOCR_API_KEY");
         assert_eq!(PADDLEOCR_VL15_DEFAULT_MODEL, "PaddleOCR-VL-1.5");
+        assert_eq!(default_pdf_parser(), PADDLEOCR_VL15_PROVIDER_ID);
         let settings = default_ocr_parser_settings();
         assert!(!settings.enabled);
         assert_eq!(settings.provider_id, PADDLEOCR_VL15_PROVIDER_ID);
@@ -14585,6 +14865,7 @@ mod tests {
             &source,
             &load_cached_ingest_hashes(&vault),
             &load_published_ingest_keys(&vault),
+            &DesktopSettings::default(),
         )
         .expect("plan changed source");
 
@@ -14686,11 +14967,14 @@ mod tests {
         .expect("write parser manifest");
 
         fs::write(&source, b"new pdf bytes").expect("write changed pdf");
+        let mut settings = DesktopSettings::default();
+        settings.default_pdf_parser = "auto".to_string();
         let entry = plan_entry_for_source(
             &vault,
             &source,
             &load_cached_ingest_hashes(&vault),
             &load_published_ingest_keys(&vault),
+            &settings,
         )
         .expect("plan changed pdf");
 
@@ -14729,16 +15013,16 @@ mod tests {
             .expect("pdf entry");
 
         assert_eq!(entry.status, "blocked");
-        assert_eq!(entry.current_state, "parse_required");
+        assert_eq!(entry.current_state, "paddleocr_config_required");
         assert_eq!(
             entry.next_action_label,
-            "Parse this source locally before ingest"
+            "Configure PaddleOCR-VL-1.5 before parsing, or choose an explicit local fallback parser"
         );
         assert_eq!(entry.inputs, vec!["raw/paper.pdf".to_string()]);
         assert!(entry
             .command
             .iter()
-            .any(|item| item.contains("pdf_to_markdown.py")));
+            .any(|item| item.contains("Settings -> OCR Parser")));
         assert!(entry
             .outputs
             .iter()
@@ -14750,6 +15034,45 @@ mod tests {
         assert!(!entry.requires_human_approval);
         assert!(!entry.uses_network);
 
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn ingest_plan_uses_paddleocr_parser_when_configured() {
+        let _guard = PADDLEOCR_ENV_LOCK.lock().expect("lock paddleocr env");
+        let previous = std::env::var_os(PADDLEOCR_VL15_API_KEY_ENV);
+        std::env::set_var(PADDLEOCR_VL15_API_KEY_ENV, "test-token");
+        let vault = test_vault("paddleocr-plan-ready");
+        let source = vault.join("raw").join("scan.png");
+        fs::write(&source, b"png bytes").expect("write image");
+        let mut settings = DesktopSettings::default();
+        settings.ocr_parser.enabled = true;
+        settings.ocr_parser.endpoint = "https://ocr.example.com/v1".to_string();
+        save_desktop_settings(to_display(&vault), settings).expect("save paddleocr settings");
+
+        let plan = plan_ingest(to_display(&vault)).expect("plan image");
+        let entry = plan
+            .entries
+            .iter()
+            .find(|entry| entry.file_name == "scan.png")
+            .expect("image entry");
+
+        assert_eq!(entry.status, "blocked");
+        assert_eq!(entry.current_state, "parse_required");
+        assert_eq!(
+            entry.next_action_label,
+            "Parse with PaddleOCR-VL-1.5, then run the ingest pipeline"
+        );
+        let hint = entry.parser_hint.as_deref().expect("parser hint");
+        assert!(hint.contains("--parser layout-api"));
+        assert!(hint.contains("--api-url \"https://ocr.example.com/v1\""));
+        assert!(hint.contains("--file-type 1"));
+        assert!(hint.contains(PADDLEOCR_VL15_API_KEY_ENV));
+        assert!(!hint.contains("test-token"));
+        assert!(entry.uses_network);
+        assert!(plan_entry_is_pipeline_runnable(entry));
+
+        restore_env_var(PADDLEOCR_VL15_API_KEY_ENV, previous);
         let _ = fs::remove_dir_all(vault);
     }
 

@@ -380,7 +380,12 @@ function NextAction({
 }
 
 function ingestPlanPriority(entry: IngestPlan["entries"][number]) {
-  if (entry.currentState === "parse_required" || entry.currentState === "stale_artifact") return 0;
+  if (
+    entry.currentState === "parse_required" ||
+    entry.currentState === "stale_artifact" ||
+    entry.currentState === "paddleocr_config_required" ||
+    entry.currentState === "cloud_parser_approval_required"
+  ) return 0;
   if (entry.currentState === "blocked_contract" || entry.status === "blocked") return 1;
   if (entry.currentState === "duplicate" || entry.currentState === "needs_review") return 2;
   if (entry.currentState === "imported" || entry.currentState === "staged") return 3;

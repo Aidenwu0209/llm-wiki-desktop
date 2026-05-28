@@ -2,26 +2,18 @@ import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   BookOpen,
-  Bot,
   BriefcaseBusiness,
   CheckCircle2,
-  Eye,
-  FileJson2,
-  FileUp,
   FolderOpen,
-  GitPullRequestDraft,
   GraduationCap,
   History,
   Library,
-  MessageSquareText,
-  Network,
   Plus,
-  ScanText,
   Sprout,
 } from "lucide-react";
 import type { DesktopAppState, VaultSuggestion } from "../../types";
 import { LogoMark } from "../brand/LogoMark";
-import { languageName, WELCOME_ONBOARDING_COPY, type UiLanguage } from "../../i18n";
+import { languageName, type UiLanguage } from "../../i18n";
 
 export type WikiProjectTemplate = "research" | "reading" | "personal-growth" | "business" | "general";
 
@@ -76,6 +68,9 @@ const welcomeCopy = {
     demoDetected: "Demo 和已检测项目",
     noSuggestions: "没有找到已生成的知识库建议。",
     openDemo: "打开 DeepSeek 演示知识库",
+    viewDemoTour: "查看 Demo Tour",
+    syntheticDemo: "合成示例",
+    demoDescription: "打开合成示例，不会导入真实资料。",
     createTitle: "创建新的 Wiki 项目",
     createSubtitle: "选择本地项目模板。运行时保持本地优先，写回保持先提案后写回。",
     projectName: "项目名称",
@@ -106,6 +101,9 @@ const welcomeCopy = {
     demoDetected: "Demo & Detected",
     noSuggestions: "No generated vault suggestions found.",
     openDemo: "Open DeepSeek demo vault",
+    viewDemoTour: "View Demo Tour",
+    syntheticDemo: "Synthetic demo",
+    demoDescription: "Open the synthetic tour without importing real material.",
     createTitle: "Create New Wiki Project",
     createSubtitle: "Choose a local project template. The runtime stays local-first and proposal-first.",
     projectName: "Project Name",
@@ -127,9 +125,6 @@ const welcomeCopy = {
     },
   },
 } as const;
-
-const onboardingStepIcons = [Library, FileUp, ScanText, MessageSquareText, GitPullRequestDraft] as const;
-const onboardingFlowIcons = [FileUp, ScanText, FileJson2, Bot, Network, MessageSquareText, GitPullRequestDraft] as const;
 
 function classNames(...items: Array<string | false | null | undefined>) {
   return items.filter(Boolean).join(" ");
@@ -179,7 +174,6 @@ export function WelcomePanel({
   onChooseParentDirectory,
 }: WelcomePanelProps) {
   const text = welcomeCopy[language];
-  const onboarding = WELCOME_ONBOARDING_COPY[language];
   const [internalCreateOpen, setInternalCreateOpen] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [template, setTemplate] = useState<WikiProjectTemplate>("research");
@@ -276,49 +270,6 @@ export function WelcomePanel({
         )}
       </div>
 
-      <section className="welcome-onboarding" aria-labelledby="welcome-onboarding-title">
-        <div className="welcome-onboarding-head">
-          <div>
-            <h2 id="welcome-onboarding-title">{onboarding.title}</h2>
-            <p>{onboarding.subtitle}</p>
-          </div>
-          {onViewDemoTour && (
-            <button type="button" className="demo-tour-button" onClick={onViewDemoTour}>
-              <Eye size={16} />
-              {onboarding.viewDemoTour}
-            </button>
-          )}
-        </div>
-
-        <ol className="welcome-onboarding-steps">
-          {onboarding.steps.map((step, index) => {
-            const Icon = onboardingStepIcons[index] ?? CheckCircle2;
-            return (
-              <li key={step} className="welcome-onboarding-step">
-                <span className="welcome-step-index">{index + 1}</span>
-                <Icon size={18} />
-                <strong>{step}</strong>
-              </li>
-            );
-          })}
-        </ol>
-
-        <div className="welcome-flow-diagram" aria-label={onboarding.title}>
-          {onboarding.flow.map((item, index) => {
-            const Icon = onboardingFlowIcons[index] ?? Network;
-            return (
-              <div className="welcome-flow-segment" key={item}>
-                <span className="welcome-flow-node">
-                  <Icon size={16} />
-                  {item}
-                </span>
-                {index < onboarding.flow.length - 1 && <span className="welcome-flow-arrow" aria-hidden="true">→</span>}
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
       <div className="welcome-projects">
         <section>
           <div className="section-head compact">
@@ -357,9 +308,9 @@ export function WelcomePanel({
           )}
           {!demoVault?.exists && onViewDemoTour && (
             <button type="button" onClick={onViewDemoTour}>
-              <strong>{onboarding.viewDemoTour}</strong>
-              <span className="inline-state ok">{onboarding.syntheticDemo}</span>
-              <code>{onboarding.demoDescription}</code>
+              <strong>{text.viewDemoTour}</strong>
+              <span className="inline-state ok">{text.syntheticDemo}</span>
+              <code>{text.demoDescription}</code>
             </button>
           )}
           {detectedProjects.map((item) => {

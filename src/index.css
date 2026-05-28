@@ -96,6 +96,7 @@ textarea {
 .app-shell.settings-mode {
   grid-template-columns: 168px minmax(0, 1fr);
   grid-template-areas: "nav workspace";
+  background: #f7f8f5;
 }
 
 .app-shell.settings-mode .icon-sidebar {
@@ -1167,6 +1168,35 @@ body[data-shell-panel-resizing="true"] * {
   padding: 16px 18px 22px;
 }
 
+.app-shell.settings-mode .workspace {
+  background: #f7f8f5;
+  padding: 24px min(32px, 2vw) 28px;
+}
+
+.app-shell.settings-mode .topbar,
+.app-shell.settings-mode .settings-center.view-section.visible {
+  width: min(1280px, 100%);
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.app-shell.settings-mode .topbar {
+  align-items: center;
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.app-shell.settings-mode .topbar-status {
+  flex: 0 1 auto;
+  justify-content: flex-end;
+}
+
+.app-shell.settings-mode .settings-center.panel {
+  border-color: #cfd8d2;
+  background: #ffffff;
+  box-shadow: 0 12px 34px rgba(23, 32, 29, 0.08);
+}
+
 .nashsu-aligned-shell .workspace {
   gap: 12px;
   padding: 12px 14px 18px;
@@ -1294,6 +1324,121 @@ body[data-shell-panel-resizing="true"] * {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.project-switcher {
+  position: relative;
+  min-width: min(280px, 100%);
+}
+
+.project-switcher-trigger {
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 34px;
+  max-width: 320px;
+  border-color: #aebcb4;
+  background: #ffffff;
+  padding: 0 10px;
+}
+
+.project-switcher-trigger > span {
+  display: grid;
+  min-width: 0;
+  text-align: left;
+}
+
+.project-switcher-trigger strong,
+.project-switcher-trigger em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-switcher-trigger strong {
+  color: #17201d;
+  font-size: 12px;
+}
+
+.project-switcher-trigger em {
+  margin-top: 1px;
+  color: #64706a;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.project-switcher-trigger svg:last-child {
+  margin-left: auto;
+  color: #64706a;
+}
+
+.project-switcher-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 70;
+  display: grid;
+  gap: 6px;
+  width: min(420px, calc(100vw - 240px));
+  max-height: min(520px, calc(100vh - 150px));
+  overflow: auto;
+  border: 1px solid #b8c5bc;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 8px;
+  box-shadow: 0 18px 46px rgba(23, 32, 29, 0.18);
+}
+
+.project-switcher-menu > button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "name meta"
+    "path path";
+  justify-items: start;
+  height: auto;
+  min-height: 54px;
+  padding: 8px 9px;
+  text-align: left;
+}
+
+.project-switcher-menu > button strong {
+  grid-area: name;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-switcher-menu > button span {
+  grid-area: meta;
+  color: #64706a;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.project-switcher-menu > button code {
+  grid-area: path;
+  max-width: 100%;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+  color: #40514a;
+  font-size: 10.5px;
+}
+
+.project-switcher-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  border-top: 1px solid #e2e8e3;
+  padding-top: 7px;
+}
+
+.project-switcher-actions button {
+  min-height: 32px;
+  font-size: 11px;
 }
 
 .command-palette-backdrop {
@@ -2221,7 +2366,9 @@ body[data-shell-panel-resizing="true"] * {
   color: #245b93;
 }
 
-.status-chip.blocked {
+.status-chip.blocked,
+.status-chip.paddleocr_config_required,
+.status-chip.cloud_parser_approval_required {
   background: #f8e8e8;
   color: #a43131;
 }

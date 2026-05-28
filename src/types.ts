@@ -155,7 +155,7 @@ export type RuntimeSettings = {
   pythonPath: string;
   obsidianProfile: "minimal" | "research" | "full";
   skipDownloads: boolean;
-  pdfParser: "auto" | "local-text" | "layout-api";
+  pdfParser: "paddleocr-vl15" | "auto" | "local-text" | "layout-api";
   cloudParsingAllowed: boolean;
   layoutParsingApiUrl: string;
   retryCount: number;
@@ -282,7 +282,7 @@ export type DesktopSettings = {
   layoutParsingApiUrl: string;
   layoutParsingTokenPresent: boolean;
   cloudParsingAllowed: boolean;
-  defaultPdfParser: "auto" | "local-text" | "layout-api" | string;
+  defaultPdfParser: "paddleocr-vl15" | "auto" | "local-text" | "layout-api" | string;
   defaultIngestMode: "inbox_only" | "enqueue_after_import" | string;
   defaultObsidianProfile: "minimal" | "research" | "full" | string;
   embeddingEnabled: boolean;
