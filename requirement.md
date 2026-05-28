@@ -2,8 +2,8 @@
 
 最后更新：2026-05-28  
 仓库：`Aidenwu0209/llm-wiki-desktop`  
-当前主线基线：`789c0c9 ui(shell): render nested vault file tree (#165)`  
-当前 Open PR：无  
+文档基线：`42939ba docs: update product parity matrix (#167)`，已包含 `#169` 的 parser artifact 契约门禁
+PR 队列：不在本文维护动态状态；以 GitHub 当前 PR 列表为准
 
 本文用于在时间不足时拆分工作：先看已经完成什么，再决定剩余项里哪一项优先做。
 
@@ -25,20 +25,21 @@
 - `#163`：新增 PaddleOCR-VL-1.5 设置入口、endpoint/model/API key 环境变量配置和 dry-run 检查。
 - `#164`：新增 Windows smoke 文档和脚本入口。
 - `#165`：新增嵌套 vault file tree，外壳更接近 Obsidian 文件树。
+- `#166`：收敛 Welcome 首页、增加项目切换器、压缩设置页状态展示，并把 PDF / 图片默认解析计划改为 PaddleOCR-VL-1.5 配置门禁。
+- `#167`：更新 R1 产品对齐矩阵，拆出后续外壳优先 PR。
+- `#169`：阻止 invalid parser artifact 进入 runtime ingest；`combined.md` 只有在 manifest/source hash/parser/artifact hash/chunks 契约有效时才会被标记为可 ingest。
 
-### 2. 本工作分支已处理，仍需验证和提交
+### 2. 当前仍需提交的文档分支
 
-- Welcome 首页已去掉外露的 OCR / ERNIE 链路说明；这些流程应在进入项目后展示。
-- 顶部增加明显的项目切换器，可看到当前项目、最近项目、已检测项目，并可新建或打开项目。
-- 设置页展示已收敛：设置页不再铺开过多运行状态 pill，背景和内容宽度更接近桌面设置页。
-- PDF / 图片 ingest plan 的默认解析方向已改为 PaddleOCR-VL-1.5，未配置 endpoint 或 `PADDLEOCR_API_KEY` 时会明确阻塞，不会假装可解析。
-- PaddleOCR-VL-1.5 会映射到 runtime layout parser 的受控调用，并通过环境变量传 key，避免把 key 写入 vault 或日志。
+- R4 runtime 策略说明已整理到 `docs/runtime-dependency-strategy.md`。
+- 本文档只记录 fork-first / upstream-first 决策、当前 detection 事实和下一步 runtime identity reporting，不改变 runtime 代码。
 
 ### 3. 已验证过的能力
 
 - Welcome 渲染测试通过。
 - TypeScript typecheck 通过。
-- 之前本地构建通过；完整 `npm test` 在本机曾卡在 Rust doctest SIGKILL，前端与 Rust lib 测试本身已分别通过，但仍需要在 CI 里确认。
+- `#166`、`#167`、`#169` 的 macOS / Windows CI 均通过。
+- `#169` 本地已通过 `npm test`、`npm run build`、`cargo test --manifest-path src-tauri/Cargo.toml --lib` 和 `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`。
 
 ## 三、仍未完成的需求
 
@@ -105,22 +106,20 @@
 ### R4. open-llm-wiki 内核依赖策略
 
 优先级：P0  
-状态：未最终确定
+状态：策略已在 `docs/runtime-dependency-strategy.md` 记录；代码只做现状梳理，未实现新的 runtime identity 检测
 
 还缺：
 
-- 决定桌面端 runtime 依赖走 fork-first 还是 upstream-first。
-- 如果走 fork-first，需要文档明确 pin 到 `Aidenwu0209/open-llm-wiki`。
-- 如果走 upstream-first，需要继续审查并合并剩余 core PR。
-- 桌面端 runtime detection 需要清楚显示当前使用的是哪个 runtime。
+- 当前建议采用 fork-first：桌面端 demo / smoke / release-readiness 优先 pin 到 `Aidenwu0209/open-llm-wiki`。
+- upstream-first 作为长期目标保留，但需要继续审查并合并剩余 core PR 后再作为默认 runtime。
+- 现有桌面端 detection 已能发现 vault-local `.open-llm-wiki/scripts/wiki_lint.py`、外部 `runtimePath` 的 `scripts/wiki_lint.py` 或直接 scripts 目录，并能读取 `VERSION` / `pyproject.toml` version。
+- 仍缺 runtime source / branch / commit / dirty state 检测；也缺外部 `runtimePath` readiness 与 vault-local runtime installed 的区分展示。
 
 验收标准：
 
-- `uv sync --dev --locked`
-- `uv run python scripts/check_quality.py`
-- `uv run python scripts/wiki_eval.py`
-- `uv run python scripts/wiki_lint.py examples/minimal-vault --fail-on p1`
-- 桌面端设置页显示 runtime source、commit 或版本。
+- 本 PR 验收：`npm test`、`npm run build`。
+- runtime fork 验收命令仍保留：`uv sync --dev --locked`、`uv run python scripts/check_quality.py`、`uv run python scripts/wiki_eval.py`、`uv run python scripts/wiki_lint.py examples/minimal-vault --fail-on p1`。
+- 下一 PR 验收：桌面端设置页或 Dashboard 显示 runtime source、commit 或版本，并区分 vault-local runtime 与 external runtime path。
 
 ### R5. ERNIE live answer 质量验证
 
