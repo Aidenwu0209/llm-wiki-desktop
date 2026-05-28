@@ -10248,9 +10248,9 @@ fn paddleocr_config_result(
         Err(err) => {
             return Ok(paddleocr_result(
                 model,
-                "connection_failed",
+                "missing_endpoint",
                 err,
-                Some("invalid_endpoint"),
+                Some("missing_endpoint"),
                 env_var,
                 endpoint.trim().to_string(),
                 None,
@@ -10258,6 +10258,18 @@ fn paddleocr_config_result(
             ))
         }
     };
+    if endpoint.is_empty() {
+        return Ok(paddleocr_result(
+            model,
+            "missing_endpoint",
+            "PaddleOCR service URL is required before parser tests or live calls.",
+            Some("missing_endpoint"),
+            env_var,
+            endpoint,
+            None,
+            parser_dry_run,
+        ));
+    }
     if read_llm_api_key(Some(&env_var))?.is_none() {
         return Ok(paddleocr_result(
             model,
@@ -10270,16 +10282,15 @@ fn paddleocr_config_result(
             parser_dry_run,
         ));
     }
+    let status = "artifact_valid";
     let message = if parser_dry_run {
         "PaddleOCR parser dry run passed; no raw document was uploaded. Real parsing runs only from an explicit parse/ingest action."
-    } else if endpoint.is_empty() {
-        "PaddleOCR API key is visible; add a service URL before testing a live connection."
     } else {
         "PaddleOCR configuration is present; use Test connection to check the service URL."
     };
     Ok(paddleocr_result(
         model,
-        "configured",
+        status,
         message,
         None,
         env_var,
@@ -10311,9 +10322,9 @@ async fn test_paddleocr_vl15_connection(
         Err(err) => {
             return Ok(paddleocr_result(
                 model,
-                "connection_failed",
+                "missing_endpoint",
                 err,
-                Some("invalid_endpoint"),
+                Some("missing_endpoint"),
                 env_var,
                 endpoint.trim().to_string(),
                 None,
@@ -10336,9 +10347,9 @@ async fn test_paddleocr_vl15_connection(
     if endpoint.is_empty() {
         return Ok(paddleocr_result(
             model,
-            "configured",
-            "PaddleOCR API key is visible; add a service URL before testing a live connection.",
-            None,
+            "missing_endpoint",
+            "PaddleOCR service URL is required before testing a live connection.",
+            Some("missing_endpoint"),
             env_var,
             endpoint,
             None,
@@ -14652,6 +14663,23 @@ mod tests {
     }
 
     #[test]
+    fn paddleocr_config_reports_missing_endpoint_without_failing() {
+        let _guard = PADDLEOCR_ENV_LOCK.lock().expect("lock paddleocr env");
+        let previous = std::env::var_os(PADDLEOCR_VL15_API_KEY_ENV);
+        std::env::set_var(PADDLEOCR_VL15_API_KEY_ENV, "1");
+        let result = check_paddleocr_vl15_config(
+            "   ".to_string(),
+            "IGNORED_ENV_VAR".to_string(),
+            String::new(),
+        )
+        .expect("check config");
+        restore_env_var(PADDLEOCR_VL15_API_KEY_ENV, previous);
+
+        assert_eq!(result.status, "missing_endpoint");
+        assert_eq!(result.error_code.as_deref(), Some("missing_endpoint"));
+    }
+
+    #[test]
     fn paddleocr_parser_dry_run_uses_env_without_network_or_document_upload() {
         let _guard = PADDLEOCR_ENV_LOCK.lock().expect("lock paddleocr env");
         let previous = std::env::var_os(PADDLEOCR_VL15_API_KEY_ENV);
@@ -14664,7 +14692,7 @@ mod tests {
         .expect("test parser");
         restore_env_var(PADDLEOCR_VL15_API_KEY_ENV, previous);
 
-        assert_eq!(result.status, "configured");
+        assert_eq!(result.status, "artifact_valid");
         assert!(result.parser_dry_run);
         assert_eq!(result.model, PADDLEOCR_VL15_DEFAULT_MODEL);
         assert!(result.message.contains("no raw document was uploaded"));

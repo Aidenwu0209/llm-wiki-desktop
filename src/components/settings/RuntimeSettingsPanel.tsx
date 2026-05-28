@@ -199,10 +199,13 @@ const settingsCopy = {
     testParser: "测试解析器",
     dryRun: "Dry run",
     noRawUpload: "Test parser 只验证配置和 key 可见性，不上传 raw document，也不会写回知识库。真实解析只会在启用 OCR Parser、配置 endpoint 且进程可见 PADDLEOCR_API_KEY 后运行。",
-    statusConfigured: "configured",
     statusMissingKey: "missing_key",
+    statusMissingEndpoint: "missing_endpoint",
     statusReady: "ready",
     statusConnectionFailed: "connection_failed",
+    statusParserFailed: "parser_failed",
+    statusArtifactValid: "artifact_valid",
+    statusArtifactInvalid: "artifact_invalid",
     aboutBoundary: "本地优先桌面外壳。运行时优先执行。证据支撑研究。先提案后写回，并保留审批门。",
     switchLanguage: "界面语言",
   },
@@ -283,10 +286,13 @@ const settingsCopy = {
     testParser: "Test parser",
     dryRun: "Dry run",
     noRawUpload: "Test parser only validates config and key visibility. It does not upload raw documents or write back to the vault. Real parsing runs only after OCR Parser is enabled, an endpoint is configured, and PADDLEOCR_API_KEY is visible to the desktop process.",
-    statusConfigured: "configured",
     statusMissingKey: "missing_key",
+    statusMissingEndpoint: "missing_endpoint",
     statusReady: "ready",
     statusConnectionFailed: "connection_failed",
+    statusParserFailed: "parser_failed",
+    statusArtifactValid: "artifact_valid",
+    statusArtifactInvalid: "artifact_invalid",
     aboutBoundary: "Local-first desktop shell. Runtime-first execution. Evidence-backed research. Proposal-first writeback with approval gate.",
     switchLanguage: "Interface language",
   },
@@ -531,7 +537,7 @@ export function RuntimeSettingsPanel({
           setOcrCheck({
             provider: PADDLEOCR_VL15_PROVIDER_ID,
             model: ocrParser.model || PADDLEOCR_VL15_DEFAULT_MODEL,
-            status: "connection_failed",
+            status: "parser_failed",
             checkedAt: new Date().toISOString(),
             message: String(err),
             errorCode: "config_error",
@@ -813,19 +819,19 @@ export function RuntimeSettingsPanel({
       return;
     }
     setOcrBusy(kind);
-    try {
-      const result = kind === "connection"
-        ? await testPaddleOcrVl15Connection(ocrParser)
-        : await testPaddleOcrVl15Parser(ocrParser);
-      setOcrCheck(result);
-    } catch (err) {
-      setOcrCheck({
-        provider: PADDLEOCR_VL15_PROVIDER_ID,
-        model: ocrParser.model || PADDLEOCR_VL15_DEFAULT_MODEL,
-        status: "connection_failed",
-        checkedAt: new Date().toISOString(),
-        message: String(err),
-        errorCode: "test_error",
+      try {
+        const result = kind === "connection"
+          ? await testPaddleOcrVl15Connection(ocrParser)
+          : await testPaddleOcrVl15Parser(ocrParser);
+        setOcrCheck(result);
+      } catch (err) {
+        setOcrCheck({
+          provider: PADDLEOCR_VL15_PROVIDER_ID,
+          model: ocrParser.model || PADDLEOCR_VL15_DEFAULT_MODEL,
+          status: kind === "parser" ? "parser_failed" : "connection_failed",
+          checkedAt: new Date().toISOString(),
+          message: String(err),
+          errorCode: "test_error",
         apiKeyEnv: PADDLEOCR_VL15_API_KEY_ENV,
         endpoint: ocrParser.endpoint || "",
         latencyMs: null,
@@ -842,12 +848,18 @@ export function RuntimeSettingsPanel({
 
   const ocrStatusLabel = (status?: OcrParserStatus | null) => {
     switch (status) {
-      case "configured":
-        return text.statusConfigured;
       case "ready":
         return text.statusReady;
       case "connection_failed":
         return text.statusConnectionFailed;
+      case "missing_endpoint":
+        return text.statusMissingEndpoint;
+      case "parser_failed":
+        return text.statusParserFailed;
+      case "artifact_valid":
+        return text.statusArtifactValid;
+      case "artifact_invalid":
+        return text.statusArtifactInvalid;
       case "missing_key":
       default:
         return text.statusMissingKey;
@@ -855,7 +867,7 @@ export function RuntimeSettingsPanel({
   };
 
   const ocrStatusTone = (status?: OcrParserStatus | null) => (
-    status === "configured" || status === "ready" ? "available" : "disabled"
+    status === "ready" || status === "artifact_valid" ? "available" : "disabled"
   );
 
   const renderSectionHead = (
@@ -1009,7 +1021,9 @@ export function RuntimeSettingsPanel({
         );
       case "ocr-parser": {
         const status = ocrBusy ? null : ocrCheck?.status ?? "missing_key";
-        const connectionNoticeDanger = ocrCheck?.status === "missing_key" || ocrCheck?.status === "connection_failed";
+        const connectionNoticeDanger = ["missing_key", "missing_endpoint", "connection_failed", "parser_failed", "artifact_invalid"].includes(
+          ocrCheck?.status ?? "missing_key",
+        );
         return (
           <div className="settings-section-page">
             {renderSectionHead(
