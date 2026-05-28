@@ -6589,6 +6589,71 @@ fn artifact_manifest(artifact: &Path) -> Option<serde_json::Value> {
     read_json_value(&artifact.parent()?.join("manifest.json"))
 }
 
+fn parser_artifact_contract_blocker(
+    vault: &Path,
+    source: &Path,
+    source_sha256: &str,
+    artifact: &Path,
+) -> Option<String> {
+    let parent = artifact.parent()?;
+    let manifest_path = parent.join("manifest.json");
+    let chunks_path = parent.join("chunks.jsonl");
+    let manifest = match read_json_value(&manifest_path) {
+        Some(value) => value,
+        None => {
+            return Some(
+                "parser artifact contract is invalid: manifest.json is missing or invalid JSON"
+                    .to_string(),
+            )
+        }
+    };
+    let source_rel = rel_path(vault, source);
+    let artifact_hash = sha256_file(artifact).ok()?;
+
+    let manifest_source_sha =
+        json_string(&manifest, "source_sha256").or_else(|| json_string(&manifest, "sha256"));
+    if manifest_source_sha.as_deref() != Some(source_sha256) {
+        return Some(
+            "parser artifact contract is invalid: manifest.source_sha256 does not match the current source"
+                .to_string(),
+        );
+    }
+
+    let manifest_source_path =
+        json_string(&manifest, "source_path").or_else(|| json_string(&manifest, "sourcePath"));
+    if manifest_source_path
+        .as_deref()
+        .is_none_or(|path| !same_vault_path(vault, path, &source_rel))
+    {
+        return Some(
+            "parser artifact contract is invalid: manifest.source_path does not point to the current source"
+                .to_string(),
+        );
+    }
+
+    if json_string(&manifest, "parser").is_none() {
+        return Some("parser artifact contract is invalid: manifest.parser is missing".to_string());
+    }
+
+    if json_string(&manifest, "artifact_sha256").as_deref() != Some(artifact_hash.as_str()) {
+        return Some(
+            "parser artifact contract is invalid: manifest.artifact_sha256 does not match combined.md"
+                .to_string(),
+        );
+    }
+
+    if !chunks_path.is_file() {
+        return Some("parser artifact contract is invalid: chunks.jsonl is missing".to_string());
+    }
+    if count_jsonl(&chunks_path) == 0 {
+        return Some(
+            "parser artifact contract is invalid: chunks.jsonl has no evidence chunks".to_string(),
+        );
+    }
+
+    None
+}
+
 fn manifest_limitations(manifest: &serde_json::Value) -> Vec<String> {
     manifest
         .get("limitations")
@@ -7237,6 +7302,9 @@ fn plan_entry_for_source(
         && manifest_source_hash
             .as_ref()
             .is_some_and(|manifest_hash| manifest_hash != &hash);
+    let invalid_artifact_contract = artifact_exists
+        .then(|| parser_artifact_contract_blocker(vault, source, &hash, &artifact))
+        .flatten();
     let cached = cached_hashes.contains(&hash);
     let published = artifact_hash.as_ref().is_some_and(|artifact_hash| {
         published_keys.contains(&(hash.clone(), artifact_hash.clone()))
@@ -7272,6 +7340,16 @@ fn plan_entry_for_source(
             "source text changed since combined.md was staged; regenerate the artifact before runtime ingest".to_string(),
             None,
         )
+    } else if text_source && invalid_artifact_contract.is_some() {
+        (
+            "stageable".to_string(),
+            "restage_text_artifact".to_string(),
+            invalid_artifact_contract.clone().unwrap_or_else(|| {
+                "staged text artifact contract is invalid; regenerate the artifact before runtime ingest"
+                    .to_string()
+            }),
+            None,
+        )
     } else if parsed_artifact_stale {
         (
             "blocked".to_string(),
@@ -7282,6 +7360,29 @@ fn plan_entry_for_source(
                     "source hash differs from the parsed artifact manifest; {}",
                     plan.reason
                 ),
+            ),
+            parser_plan.as_ref().map(|plan| plan.parser_hint.clone()),
+        )
+    } else if invalid_artifact_contract.is_some() {
+        (
+            "blocked".to_string(),
+            "parse_required".to_string(),
+            parser_plan.as_ref().map_or_else(
+                || {
+                    invalid_artifact_contract.clone().unwrap_or_else(|| {
+                        "parsed artifact contract is invalid; regenerate combined.md before runtime ingest"
+                            .to_string()
+                    })
+                },
+                |plan| {
+                    format!(
+                        "{}; {}",
+                        invalid_artifact_contract.as_deref().unwrap_or(
+                            "parsed artifact contract is invalid; regenerate combined.md before runtime ingest"
+                        ),
+                        plan.reason
+                    )
+                },
             ),
             parser_plan.as_ref().map(|plan| plan.parser_hint.clone()),
         )
@@ -14133,6 +14234,65 @@ mod tests {
         zip.finish().expect("finish zip");
     }
 
+    fn write_valid_parser_artifact(
+        vault: &Path,
+        source: &Path,
+        source_hash: &str,
+        artifact: &Path,
+        content: &str,
+    ) {
+        write_text(artifact, content).expect("write parser artifact");
+        let artifact_hash = sha256_file(artifact).expect("artifact hash");
+        let parent = artifact.parent().expect("artifact parent");
+        let chunks_path = parent.join("chunks.jsonl");
+        write_text(
+            &chunks_path,
+            &format!(
+                "{}\n",
+                serde_json::json!({
+                    "chunk_id": format!("{}:00001", source_uuid(source_hash)),
+                    "source_uuid": source_uuid(source_hash),
+                    "artifact_path": rel_path(vault, artifact),
+                    "line_start": 1,
+                    "line_end": 3,
+                    "char_start": 0,
+                    "char_end": content.len(),
+                    "kind": "paragraph",
+                    "text_hash": sha256_text(content),
+                    "token_count": token_count(content),
+                })
+            ),
+        )
+        .expect("write chunks");
+        write_text(
+            &parent.join("manifest.json"),
+            &format!(
+                "{}\n",
+                serde_json::json!({
+                    "schema_version": 1,
+                    "source_uuid": source_uuid(source_hash),
+                    "source_path": rel_path(vault, source),
+                    "source_sha256": source_hash,
+                    "artifact_sha256": artifact_hash,
+                    "combined": rel_path(vault, artifact),
+                    "chunks": rel_path(vault, &chunks_path),
+                    "parser": "test-parser",
+                    "parser_version": "test",
+                    "chunk_count": 1,
+                    "anchors": {
+                        "pages": true,
+                        "lines": true,
+                        "tables": false,
+                        "figures": false,
+                        "equations": false
+                    },
+                    "limitations": []
+                })
+            ),
+        )
+        .expect("write manifest");
+    }
+
     fn test_script_command(unix_script: &str, windows_script: &str) -> Vec<String> {
         if cfg!(target_os = "windows") {
             vec![
@@ -15169,19 +15329,13 @@ mod tests {
         let source_hash = sha256_file(&source).expect("source hash");
         let artifact_dir = corpus.join("DeepSeek_Test_2401.00001_markdown");
         fs::create_dir_all(&artifact_dir).expect("create artifact dir");
-        write_text(
+        write_valid_parser_artifact(
+            &vault,
+            &source,
+            &source_hash,
             &artifact_dir.join("combined.md"),
             "# DeepSeek Test\n\nParsed evidence.\n",
-        )
-        .expect("write combined artifact");
-        write_text(
-            &artifact_dir.join("manifest.json"),
-            &format!(
-                "{{\"source_path\":\"raw/deepseek_paper/DeepSeek_Test_2401.00001.pdf\",\"source_sha256\":\"{}\"}}\n",
-                source_hash
-            ),
-        )
-        .expect("write manifest");
+        );
         write_text(
             &corpus.join("索引.md"),
             "# deepseek_paper 中文转换索引\n\n- helper note, not evidence\n",
@@ -15234,6 +15388,49 @@ mod tests {
             let _ = fs::remove_dir_all(external_raw);
             let _ = fs::remove_dir_all(external_artifact);
         }
+    }
+
+    #[test]
+    fn ingest_plan_blocks_invalid_binary_artifact_contract() {
+        let vault = test_vault("invalid-binary-artifact-contract");
+        let source = vault.join("raw").join("paper.pdf");
+        fs::write(&source, b"pdf bytes").expect("write pdf");
+        let source_hash = sha256_file(&source).expect("source hash");
+        let artifact = artifact_for_source(&vault, &source, &source_hash);
+        write_text(&artifact, "# parsed without manifest\n").expect("write invalid artifact");
+        let mut settings = DesktopSettings::default();
+        settings.default_pdf_parser = "auto".to_string();
+        save_desktop_settings(to_display(&vault), settings).expect("save parser settings");
+
+        let plan = plan_ingest(to_display(&vault)).expect("plan invalid artifact");
+        let entry = plan
+            .entries
+            .iter()
+            .find(|entry| entry.file_name == "paper.pdf")
+            .expect("pdf entry");
+
+        assert_eq!(entry.status, "blocked");
+        assert_eq!(entry.action, "parse_required");
+        assert_eq!(entry.current_state, "parse_required");
+        assert!(entry.reason.contains("manifest.json is missing"));
+        assert!(!plan_entry_is_runtime_ready(entry));
+        assert!(plan.registry.iter().any(|entry| {
+            entry.status == "blocked"
+                && entry
+                    .last_error
+                    .as_deref()
+                    .is_some_and(|reason| reason.contains("manifest.json is missing"))
+        }));
+        assert!(plan
+            .lint_findings
+            .iter()
+            .any(|finding| finding.kind == "missing_manifest"));
+        assert!(plan
+            .jobs
+            .iter()
+            .any(|job| job.status == "blocked" && job.current_step == "parse_artifact"));
+
+        let _ = fs::remove_dir_all(vault);
     }
 
     #[test]
