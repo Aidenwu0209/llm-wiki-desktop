@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { buildVaultFileTree } from "../src/lib/vaultTree";
+import { findVaultFileForOpen, vaultRelativeOpenPath } from "../src/lib/vaultPath";
 import type { VaultFile } from "../src/types";
 
 function file(path: string, kind: VaultFile["kind"] = "note", title?: string): VaultFile {
@@ -45,5 +46,43 @@ assert.equal(raw.children[0]?.children[0]?.path, "raw/deepseek_paper/deepseek-v3
 const reviews = tree.find((node) => node.path === "reviews");
 assert.ok(reviews, "reviews folder should exist");
 assert.equal(reviews.children[0]?.path, "reviews/query-writeback");
+
+const vaultPath = "/Users/demo/DeepSeek LLM Wiki";
+const files = [
+  file("Home.md", "note"),
+  file("concepts/deepseek-research-strategy.md", "concept"),
+  file("\\sources\\LLM-0001-deepseek-v3.md", "source"),
+];
+
+assert.equal(
+  vaultRelativeOpenPath(vaultPath, "/Users/demo/DeepSeek LLM Wiki/concepts/deepseek-research-strategy.md#Evidence"),
+  "concepts/deepseek-research-strategy.md",
+  "vault-internal absolute links should resolve to vault-relative paths",
+);
+assert.equal(
+  vaultRelativeOpenPath(vaultPath, "sources%2FLLM-0001-deepseek-v3.md?view=preview"),
+  "sources/LLM-0001-deepseek-v3.md",
+  "encoded Markdown links should resolve before internal file lookup",
+);
+assert.equal(
+  findVaultFileForOpen(vaultPath, files, "/Users/demo/DeepSeek LLM Wiki/concepts/deepseek-research-strategy.md")?.kind,
+  "concept",
+  "opening a vault-internal absolute path should select the existing file",
+);
+assert.equal(
+  findVaultFileForOpen(vaultPath, files, "sources/LLM-0001-deepseek-v3.md")?.kind,
+  "source",
+  "opening a normalized path should match files stored with Windows separators",
+);
+assert.equal(
+  findVaultFileForOpen(vaultPath, files, "../outside.md"),
+  null,
+  "outside traversal paths should not match vault files",
+);
+assert.equal(
+  findVaultFileForOpen(vaultPath, [file("tmp/outside.md", "note")], "/tmp/outside.md"),
+  null,
+  "absolute paths outside the selected vault should not be treated as internal files",
+);
 
 console.log("Vault file tree checks passed.");
