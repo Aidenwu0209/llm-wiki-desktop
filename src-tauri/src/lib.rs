@@ -1893,7 +1893,10 @@ fn json_usize(value: &serde_json::Value, key: &str) -> Option<usize> {
 }
 
 fn json_u128(value: &serde_json::Value, key: &str) -> Option<u128> {
-    value.get(key).and_then(serde_json::Value::as_u64).map(u128::from)
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_u64)
+        .map(u128::from)
 }
 
 fn detect_mime(path: &Path) -> String {
@@ -6705,7 +6708,11 @@ fn parser_artifact_contract_blocker(
         );
     }
 
-    if manifest.get("limitations").and_then(serde_json::Value::as_array).is_none() {
+    if manifest
+        .get("limitations")
+        .and_then(serde_json::Value::as_array)
+        .is_none()
+    {
         return Some(
             "parser artifact contract is invalid: manifest.limitations is missing".to_string(),
         );
@@ -6750,7 +6757,11 @@ fn max_page_in_chunks(path: &Path) -> Option<usize> {
             max_page = page;
         }
     }
-    if max_page > 0 { Some(max_page) } else { None }
+    if max_page > 0 {
+        Some(max_page)
+    } else {
+        None
+    }
 }
 
 fn manifest_anchor(manifest: &serde_json::Value, key: &str) -> bool {
@@ -7631,15 +7642,17 @@ fn artifact_summary_for_entry(
     });
     let page_count = manifest
         .as_ref()
-        .and_then(|value| json_usize(value, "page_count").or_else(|| json_usize(value, "pageCount")))
+        .and_then(|value| {
+            json_usize(value, "page_count").or_else(|| json_usize(value, "pageCount"))
+        })
         .or_else(|| max_page_in_chunks(&chunks_path));
     let chunk_count = manifest
         .as_ref()
         .and_then(|value| json_usize(value, "chunk_count"))
         .unwrap_or_else(|| count_jsonl(&chunks_path));
-    let latency_ms = manifest
-        .as_ref()
-        .and_then(|value| json_u128(value, "latency_ms").or_else(|| json_u128(value, "duration_ms")));
+    let latency_ms = manifest.as_ref().and_then(|value| {
+        json_u128(value, "latency_ms").or_else(|| json_u128(value, "duration_ms"))
+    });
     let status = if manifest.is_none() {
         "legacy"
     } else if manifest_source_sha
@@ -7671,11 +7684,9 @@ fn artifact_summary_for_entry(
         parser: manifest
             .as_ref()
             .and_then(|value| json_string(value, "parser")),
-        parser_model: manifest
-            .as_ref()
-            .and_then(|value| {
-                json_string(value, "parser_model").or_else(|| json_string(value, "model"))
-            }),
+        parser_model: manifest.as_ref().and_then(|value| {
+            json_string(value, "parser_model").or_else(|| json_string(value, "model"))
+        }),
         parser_version: manifest
             .as_ref()
             .and_then(|value| json_string(value, "parser_version")),
@@ -13877,10 +13888,7 @@ fn parse_pdf_artifacts(
             PADDLEOCR_LAYOUT_TOKEN_ENV.to_string(),
             runtime_config.api_key,
         ));
-        env_overrides.push((
-            PADDLEOCR_LAYOUT_MODEL_ENV.to_string(),
-            runtime_config.model,
-        ));
+        env_overrides.push((PADDLEOCR_LAYOUT_MODEL_ENV.to_string(), runtime_config.model));
         env_overrides.push((
             PADDLEOCR_LAYOUT_ENDPOINT_ENV.to_string(),
             runtime_config.endpoint,
