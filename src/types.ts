@@ -163,10 +163,13 @@ export type RuntimeSettings = {
 };
 
 export type OcrParserStatus =
-  | "configured"
-  | "missing_key"
   | "ready"
-  | "connection_failed";
+  | "missing_key"
+  | "missing_endpoint"
+  | "connection_failed"
+  | "parser_failed"
+  | "artifact_valid"
+  | "artifact_invalid";
 
 export type OcrParserSettings = {
   enabled: boolean;
