@@ -88,7 +88,7 @@ import { WelcomePanel, type NewWikiProjectDraft } from "./components/dashboard/W
 import { RuntimeSettingsPanel } from "./components/settings/RuntimeSettingsPanel";
 import { BrandMark } from "./components/brand/BrandMark";
 import { buildVaultFileTree, type VaultFileTreeNode } from "./lib/vaultTree";
-import { findVaultFileForOpen } from "./lib/vaultPath";
+import { canPreviewVaultPath, createPreviewVaultFile, findVaultFileForOpen, vaultRelativeOpenPath } from "./lib/vaultPath";
 import type {
   ClaimLedgerItem,
   DashboardAction,
@@ -1823,7 +1823,7 @@ function App() {
   const copy = shellCopy[interfaceLanguage];
   const researchPanelLabel = interfaceLanguage === "zh" ? "深度研究" : "Deep Research";
   const previewSidebarTitle = detailDrawerOpen
-    ? (interfaceLanguage === "zh" ? "预览" : "Preview")
+    ? (interfaceLanguage === "zh" ? "阅读工作区" : "Reading workspace")
     : researchPanelLabel;
   const researchReadiness = useMemo(
     () => shellResearchReadiness(desktopSettings, interfaceLanguage),
@@ -1964,16 +1964,40 @@ function App() {
     if (path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path)) return path;
     return `${vaultPath}/${path}`;
   };
-  const openVaultItem = async (path?: string | null) => {
-    if (!vaultPath || !path) return;
+  const selectFileForDetails = (file: VaultFile) => {
+    setSelectedFile(file);
+    setDetailSelection({ kind: "source", file });
+  };
+  const focusVaultItem = (path?: string | null) => {
+    if (!vaultPath || !path) return false;
     const file = findVaultFileForOpen(vaultPath, status?.files, path);
     if (file) {
       selectFileForDetails(file);
       setDetailDrawerOpen(true);
-      return;
+      return true;
     }
+    const relativePath = vaultRelativeOpenPath(vaultPath, path, { allowRootedRelative: true });
+    if (!relativePath || !canPreviewVaultPath(relativePath)) return false;
+    const previewFile = createPreviewVaultFile(vaultPath, relativePath);
+    if (!previewFile) return false;
+    selectFileForDetails(previewFile);
+    setDetailDrawerOpen(true);
+    return true;
+  };
+  const openVaultItem = async (path?: string | null) => {
+    if (!vaultPath || !path) return;
+    if (focusVaultItem(path)) return;
     try {
       await openVaultPath(vaultPath, path);
+    } catch (err) {
+      setError(String(err));
+    }
+  };
+  const openWorkspacePath = async (path?: string | null) => {
+    if (!path) return;
+    if (focusVaultItem(path)) return;
+    try {
+      await openPath(vaultFilePath(path));
     } catch (err) {
       setError(String(err));
     }
@@ -1985,10 +2009,6 @@ function App() {
     } catch (err) {
       setRestoreError(`Reveal failed. Open or copy this path manually:\n${path}\n${String(err)}`);
     }
-  };
-  const selectFileForDetails = (file: VaultFile) => {
-    setSelectedFile(file);
-    setDetailSelection({ kind: "source", file });
   };
   const selectClaimForDetails = (claim: ClaimLedgerItem) => {
     setDetailSelection({
@@ -2768,7 +2788,7 @@ function App() {
     }
     setError(null);
     try {
-      await openPath(vaultFilePath(reportPath));
+      await openWorkspacePath(reportPath);
     } catch (err) {
       setError(String(err));
     }
@@ -3187,7 +3207,7 @@ function App() {
             <em>{focusedAction.body}</em>
             <code>{focusedAction.status} · {focusedAction.recommendedAction} · {interfaceLanguage === "zh" ? "影响对象" : "affected"} {focusedAction.affectedObjects.length} · {focusedAction.reason}</code>
             <div className="inline-actions">
-              <button title={interfaceLanguage === "zh" ? "打开关联文件" : "Open linked file"} onClick={() => focusedAction.links[0] && openPath(vaultFilePath(focusedAction.links[0].path))} disabled={!focusedAction.links[0]}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "打开" : "open"}</button>
+              <button title={interfaceLanguage === "zh" ? "打开关联文件" : "Open linked file"} onClick={() => focusedAction.links[0] && void openWorkspacePath(focusedAction.links[0].path)} disabled={!focusedAction.links[0]}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "打开" : "open"}</button>
               <button title={interfaceLanguage === "zh" ? "标记已解决" : "Mark resolved"} onClick={() => handleActionStatus(focusedAction.actionId, "resolved")} disabled={focusedAction.status === "resolved"}><Check size={14} />{interfaceLanguage === "zh" ? "解决" : "resolve"}</button>
               <button title={interfaceLanguage === "zh" ? "忽略该行动" : "Ignore action"} onClick={() => handleActionStatus(focusedAction.actionId, "ignored")} disabled={focusedAction.status === "ignored"}><XCircle size={14} />{interfaceLanguage === "zh" ? "忽略" : "ignore"}</button>
               <button title={interfaceLanguage === "zh" ? "重新打开行动" : "Reopen action"} onClick={() => handleActionStatus(focusedAction.actionId, "open")} disabled={focusedAction.status === "open"}><RotateCcw size={14} />{interfaceLanguage === "zh" ? "重开" : "reopen"}</button>
@@ -3248,7 +3268,7 @@ function App() {
             <code>{claim.evidenceHash || (interfaceLanguage === "zh" ? "无证据哈希" : "no evidence hash")} · {runtimeText(claim.evidenceQuote, interfaceLanguage) || (interfaceLanguage === "zh" ? "无引文" : "no quote")}</code>
             <div className="inline-actions">
               <button onClick={() => selectClaimForDetails(claim)}><PanelRightOpen size={14} />{interfaceLanguage === "zh" ? "详情" : "details"}</button>
-              <button onClick={() => openPath(vaultFilePath("claims/claims.jsonl"))}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "打开" : "open"}</button>
+              <button onClick={() => void openWorkspacePath("claims/claims.jsonl")}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "打开" : "open"}</button>
               <button onClick={() => handleClaimVerdict(claim.claimId, "supported")} disabled={claim.verdict === "supported"}><Check size={14} />{interfaceLanguage === "zh" ? "支持" : "support"}</button>
               <button onClick={() => handleClaimVerdict(claim.claimId, "needs_review")} disabled={claim.verdict === "needs_review"}><AlertTriangle size={14} />{interfaceLanguage === "zh" ? "待审" : "review"}</button>
               <button onClick={() => handleClaimVerdict(claim.claimId, "stale")} disabled={claim.verdict === "stale"}><RotateCcw size={14} />{interfaceLanguage === "zh" ? "失效" : "stale"}</button>
@@ -3281,7 +3301,7 @@ function App() {
             <em>{runtimeLabel(item.kind, interfaceLanguage)} · {runtimeLabel(item.status, interfaceLanguage)} · {runtimeLabel(item.recommendedAction, interfaceLanguage)}</em>
             <code>{runtimeText(item.body, interfaceLanguage)}</code>
             <div className="inline-actions">
-              <button onClick={() => item.targetPath && openPath(vaultFilePath(item.targetPath))} disabled={!item.targetPath}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "打开" : "open"}</button>
+              <button onClick={() => item.targetPath && void openWorkspacePath(item.targetPath)} disabled={!item.targetPath}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "打开" : "open"}</button>
               <button onClick={() => handleReviewStatus(item.itemId, "approved")} disabled={item.status === "approved"}><Check size={14} />{interfaceLanguage === "zh" ? "批准" : "approve"}</button>
               <button onClick={() => handleReviewStatus(item.itemId, "rejected")} disabled={item.status === "rejected"}><XCircle size={14} />{interfaceLanguage === "zh" ? "拒绝" : "reject"}</button>
               <button onClick={() => handleReviewStatus(item.itemId, "ignored")} disabled={item.status === "ignored"}><XCircle size={14} />{interfaceLanguage === "zh" ? "忽略" : "ignore"}</button>
@@ -3331,9 +3351,9 @@ function App() {
             <em>{item.concept || (interfaceLanguage === "zh" ? "无概念" : "no concept")} · {item.sourceId || item.sourceUuid || (interfaceLanguage === "zh" ? "无资料" : "no source")}</em>
             <code>{item.evidenceAnchor || (interfaceLanguage === "zh" ? "缺失锚点" : "missing anchor")} · {item.missing.map((entry) => runtimeLabel(entry, interfaceLanguage)).join(", ") || (interfaceLanguage === "zh" ? "证据链完整" : "chain complete")}</code>
             <div className="inline-actions">
-              <button onClick={() => item.sourcePage && openPath(vaultFilePath(item.sourcePage))} disabled={!item.sourcePage}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "资料" : "source"}</button>
-              <button onClick={() => item.artifactPath && openPath(vaultFilePath(item.artifactPath))} disabled={!item.artifactPath}><FileInput size={14} />{interfaceLanguage === "zh" ? "解析产物" : "artifact"}</button>
-              <button onClick={() => item.qaReportPath && openPath(vaultFilePath(item.qaReportPath))} disabled={!item.qaReportPath}><ShieldCheck size={14} />{interfaceLanguage === "zh" ? "质检" : "QA"}</button>
+              <button onClick={() => item.sourcePage && void openWorkspacePath(item.sourcePage)} disabled={!item.sourcePage}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "资料" : "source"}</button>
+              <button onClick={() => item.artifactPath && void openWorkspacePath(item.artifactPath)} disabled={!item.artifactPath}><FileInput size={14} />{interfaceLanguage === "zh" ? "解析产物" : "artifact"}</button>
+              <button onClick={() => item.qaReportPath && void openWorkspacePath(item.qaReportPath)} disabled={!item.qaReportPath}><ShieldCheck size={14} />{interfaceLanguage === "zh" ? "质检" : "QA"}</button>
             </div>
           </div>
         ))}
@@ -3818,7 +3838,7 @@ function App() {
           onImportFiles={handleImportFiles}
           onImportFolder={handleImportFolder}
           onPlanIngest={handlePlanIngest}
-          onOpenPath={openPath}
+          onOpenPath={openWorkspacePath}
           onRevealPath={revealResolvedPath}
           onOpenVaultItem={openVaultItem}
           onCopyText={copyText}
@@ -3923,7 +3943,7 @@ function App() {
             <div className="ingest-list">
               {importResults.length === 0 && <p className="empty">暂无本轮导入结果。</p>}
               {importResults.map((item) => (
-                <button key={`${item.sourcePath}-${item.sha256}`} onClick={() => item.targetPath && openPath(item.targetPath)}>
+                <button key={`${item.sourcePath}-${item.sha256}`} onClick={() => item.targetPath && void openWorkspacePath(item.targetPath)}>
                   <span className={classNames("status-chip", item.status)}>{runtimeLabel(item.status, interfaceLanguage)}</span>
                   <strong>{item.fileName}</strong>
                   <em>{item.mime} · {(item.sizeBytes / 1024).toFixed(1)} KB · {item.folderContext || (interfaceLanguage === "zh" ? "根目录" : "root")}</em>
@@ -3947,7 +3967,7 @@ function App() {
                   <em>{runtimeLabel(job.currentStep, interfaceLanguage)} · {runtimeLabel(job.nextAction, interfaceLanguage)} · {interfaceLanguage === "zh" ? "尝试" : "attempt"} {job.attempt}/{job.maxAttempts}</em>
                   <code>{runtimeText(job.lastError || job.reason, interfaceLanguage)}</code>
                   <div className="inline-actions">
-                    <button title={interfaceLanguage === "zh" ? "打开当前解析产物或原始资料" : "Open current artifact or raw source"} onClick={() => openPath(vaultFilePath(job.artifactPath || job.sourcePath))}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "打开" : "Open"}</button>
+                    <button title={interfaceLanguage === "zh" ? "打开当前解析产物或原始资料" : "Open current artifact or raw source"} onClick={() => void openWorkspacePath(job.artifactPath || job.sourcePath)}><FolderOpen size={14} />{interfaceLanguage === "zh" ? "打开" : "Open"}</button>
                     <button title="重新排队" onClick={() => handleJobStatus(job.jobId, "queued")} disabled={job.status === "queued"}><RotateCcw size={14} />重试</button>
                     <button title={interfaceLanguage === "zh" ? "取消本资料的处理流程" : "Cancel this source pipeline"} onClick={() => handleJobStatus(job.jobId, "cancelled")} disabled={job.status === "cancelled"}><XCircle size={14} />{interfaceLanguage === "zh" ? "取消" : "Cancel"}</button>
                     <button title={interfaceLanguage === "zh" ? "打开任务日志" : "Open job log"} onClick={() => job.logPath && openPath(vaultFilePath(job.logPath))} disabled={!job.logPath}><TerminalSquare size={14} />{interfaceLanguage === "zh" ? "日志" : "Log"}</button>
@@ -4058,7 +4078,7 @@ function App() {
             onSetWritebackStatus={handleWritebackStatus}
             onApplyWriteback={handleApplyWriteback}
             onSelectProposal={(proposal) => setDetailSelection({ kind: "proposal", proposal })}
-            onOpenPath={openPath}
+            onOpenPath={openWorkspacePath}
             resolveVaultPath={vaultFilePath}
         />
 
@@ -4077,7 +4097,7 @@ function App() {
           handoffTargetPath={chatHandoff?.targetPath}
           handoffKey={chatHandoff?.key}
           busy={busy}
-          onOpenPath={openPath}
+          onOpenPath={openWorkspacePath}
           resolveVaultPath={vaultFilePath}
           onCreateProposal={handleCreateQueryWritebackFromChat}
           onCreateAnswerProposal={handleCreateAnswerWritebackFromChat}
@@ -4099,7 +4119,7 @@ function App() {
           reviewItems={reviewItems}
           writebacks={writebacks}
           traceabilityWarnings={traceabilityWarnings}
-          onOpenPath={openPath}
+          onOpenPath={openWorkspacePath}
           onOpenVaultItem={openVaultItem}
           onRevealPath={revealPath}
           onCopyText={copyText}
@@ -4222,7 +4242,7 @@ function App() {
             <div className="registry-list compact">
               {registry.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无资料登记投影。" : "No registry projection yet."}</p>}
               {registry.map((entry) => (
-                <button key={`${entry.sourceUuid}-${entry.sourcePath}`} onClick={() => openPath(vaultFilePath(entry.sourcePath))}>
+                <button key={`${entry.sourceUuid}-${entry.sourcePath}`} onClick={() => void openWorkspacePath(entry.sourcePath)}>
                   <span className={classNames("status-chip", entry.status)}>{entry.status}</span>
                   <strong>{entry.sourceId || entry.sourceUuid}</strong>
                   <em>{entry.sourcePath}{entry.duplicateOf ? ` · ${interfaceLanguage === "zh" ? "重复于" : "duplicate of"} ${entry.duplicateOf}` : ""}</em>
@@ -4238,7 +4258,7 @@ function App() {
                 </div>
                 <div className="registry-list compact">
                   {sourceAliases.map((alias) => (
-                    <button key={alias.aliasId} onClick={() => openPath(vaultFilePath(alias.newSourcePath))}>
+                    <button key={alias.aliasId} onClick={() => void openWorkspacePath(alias.newSourcePath)}>
                       <span className={classNames("status-chip", alias.needsReview ? "blocked" : "published")}>{alias.status}</span>
                       <strong>{alias.sourceId || alias.newSourceUuid}</strong>
                       <em>{alias.matchReason} · {alias.oldSourcePath || (interfaceLanguage === "zh" ? "旧路径未知" : "unknown old path")} → {alias.newSourcePath}</em>
@@ -4276,7 +4296,7 @@ function App() {
             <div className="ingest-list">
               {!ingestPlan?.entries.length && <p className="empty">暂无可规划输入。</p>}
               {ingestPlan?.entries.map((entry) => (
-                <button key={`${entry.sourcePath}-${entry.sha256}`} onClick={() => openPath(entry.status === "blocked" ? entry.sourcePath : entry.artifactPath || entry.sourcePath)}>
+                <button key={`${entry.sourcePath}-${entry.sha256}`} onClick={() => void openWorkspacePath(entry.status === "blocked" ? entry.sourcePath : entry.artifactPath || entry.sourcePath)}>
                   <span className={classNames("status-chip", entry.currentState || entry.status)}>{entry.currentState || entry.status}</span>
                   <strong>{entry.fileName}</strong>
                   <em>{entry.nextActionLabel || entry.reason}</em>
@@ -4332,7 +4352,7 @@ function App() {
             <div className="contract-list">
               {artifacts.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无解析产物合约。" : "No artifact contracts yet."}</p>}
               {artifacts.map((artifact) => (
-                <button key={artifact.artifactPath} onClick={() => openPath(vaultFilePath(artifact.manifestPath || artifact.artifactPath))}>
+                <button key={artifact.artifactPath} onClick={() => void openWorkspacePath(artifact.manifestPath || artifact.artifactPath)}>
                   <span className={classNames("status-chip", artifact.status)}>{artifact.status}</span>
                   <strong>{artifact.artifactPath}</strong>
                   <em>
@@ -4356,7 +4376,7 @@ function App() {
             <div className="impact-list">
               {lintFindings.length === 0 && <p className="empty">暂无 contract finding。</p>}
               {lintFindings.map((finding) => (
-                <button key={finding.findingId} onClick={() => finding.path && openPath(vaultFilePath(finding.path))}>
+                <button key={finding.findingId} onClick={() => finding.path && void openWorkspacePath(finding.path)}>
                   <span className={classNames("status-chip", finding.severity)}>{finding.severity}</span>
                   <strong>{finding.title}</strong>
                   <em>{finding.objectType} · {finding.kind}</em>
@@ -4383,7 +4403,7 @@ function App() {
                 "_state/writeback-log.jsonl",
                 "_state/import-report.jsonl",
               ].map((path) => (
-                <button key={path} onClick={() => openPath(vaultFilePath(path))}>
+                <button key={path} onClick={() => void openWorkspacePath(path)}>
                   <span className="status-chip published">state</span>
                   <strong>{path}</strong>
                   <em>canonical desktop/runtime contract</em>
@@ -4419,7 +4439,7 @@ function App() {
               <span>{selectedFile.kind} · {selectedFile.status || "no status"} · {selectedFile.updated || "no updated date"} · QA {selectedFile.qaVerdict || "unknown"}</span>
               <code>{selectedFile.path}</code>
             </div>
-            <button onClick={() => openPath(selectedFile.path)}><FolderOpen size={16} />{interfaceLanguage === "zh" ? "打开" : "open"}</button>
+            <button onClick={() => void openWorkspacePath(selectedFile.path)}><FolderOpen size={16} />{interfaceLanguage === "zh" ? "打开" : "open"}</button>
           </section>
         )}
           </>
@@ -4443,7 +4463,7 @@ function App() {
             <div>
               <strong>{previewSidebarTitle}</strong>
               <span>{detailDrawerOpen
-                ? (interfaceLanguage === "zh" ? "文件预览 / 证据上下文" : "File preview / evidence context")
+                ? (interfaceLanguage === "zh" ? "Vault 页面阅读 / 证据上下文" : "Vault page reading / evidence context")
                 : (interfaceLanguage === "zh" ? "Wiki 证据优先 / 提案写回" : "Vault evidence / proposal writeback")}</span>
             </div>
             <button

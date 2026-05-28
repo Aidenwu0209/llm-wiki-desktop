@@ -3046,6 +3046,18 @@ body[data-shell-panel-resizing="true"] * {
   overflow-wrap: anywhere;
 }
 
+.details-source-header,
+.details-preview-document {
+  display: grid;
+  gap: 8px;
+}
+
+.details-source-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .details-empty p,
 .details-body p,
 .mini-job em {
@@ -3069,6 +3081,54 @@ body[data-shell-panel-resizing="true"] * {
   margin: 0;
   color: #17201d;
   font-size: 14px;
+}
+
+.details-property-card {
+  display: grid;
+  gap: 6px;
+  border: 1px solid #d8ded9;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 8px;
+}
+
+.details-property-card strong {
+  color: #26312d;
+  font-size: 11px;
+}
+
+.details-property-card p {
+  color: #64706a;
+  font-size: 11px;
+}
+
+.details-property-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.details-property-list div {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.details-property-list dt,
+.details-property-list dd {
+  margin: 0;
+  min-width: 0;
+  font-size: 11px;
+}
+
+.details-property-list dt {
+  color: #64706a;
+}
+
+.details-property-list dd {
+  overflow-wrap: anywhere;
+  color: #26312d;
+  font-weight: 700;
 }
 
 .details-body blockquote {
@@ -3245,7 +3305,7 @@ body[data-shell-panel-resizing="true"] * {
 }
 
 .details-markdown-preview {
-  max-height: 320px;
+  max-height: 420px;
   overflow: auto;
   min-width: 0;
   border: 1px solid #e1e6e2;

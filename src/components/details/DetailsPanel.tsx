@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import type { UiLanguage } from "../../i18n";
+import { canPreviewVaultPath } from "../../lib/vaultPath";
 import { isTauriAvailable, readVaultImageFile, readVaultTextFile } from "../../tauri";
 import type { ClaimLedgerItem, EvidencePathItem, TraceabilityWarning, VaultFile, VaultTextFilePreview, WritebackProposal } from "../../types";
 
@@ -82,6 +83,17 @@ const detailsCopy = {
     loadingPreview: "正在读取预览...",
     previewUnavailable: "无法读取预览",
     truncatedPreview: "内容较长，当前只显示前 64 KB。",
+    path: "路径",
+    kind: "类型",
+    updated: "更新",
+    qa: "QA",
+    reviewState: "审核状态",
+    reviewFlags: "待核对",
+    properties: "页面属性",
+    frontmatter: "Frontmatter",
+    pageStatus: "页面状态",
+    sourceId: "资料 ID",
+    noFrontmatter: "没有 frontmatter 属性。",
   },
   en: {
     title: "Details",
@@ -123,6 +135,17 @@ const detailsCopy = {
     loadingPreview: "Loading preview...",
     previewUnavailable: "Preview unavailable",
     truncatedPreview: "Long file: showing the first 64 KB only.",
+    path: "Path",
+    kind: "Kind",
+    updated: "Updated",
+    qa: "QA",
+    reviewState: "Review state",
+    reviewFlags: "Review flags",
+    properties: "Page properties",
+    frontmatter: "Frontmatter",
+    pageStatus: "Page status",
+    sourceId: "Source ID",
+    noFrontmatter: "No frontmatter properties.",
   },
 } as const;
 
@@ -173,6 +196,14 @@ type PreviewHeading = {
   text: string;
 };
 
+type FrontmatterValue = string | string[];
+type FrontmatterRecord = Record<string, FrontmatterValue>;
+
+type ParsedPreviewDocument = {
+  content: string;
+  frontmatter: FrontmatterRecord;
+};
+
 const WIKILINK_HREF_PREFIX = "#__llmwiki__=";
 const VAULT_ROOT_RELATIVE_PREFIXES = new Set([
   ".graph",
@@ -188,10 +219,6 @@ const VAULT_ROOT_RELATIVE_PREFIXES = new Set([
   "sources",
   "templates",
 ]);
-
-function canPreviewVaultText(path?: string | null) {
-  return Boolean(path && /\.(md|markdown|txt|json|jsonl|csv|tsv)$/i.test(path));
-}
 
 function metadataOnlyPreview(file: VaultFile, language: UiLanguage): VaultTextFilePreview {
   const lines = [
@@ -213,6 +240,90 @@ function metadataOnlyPreview(file: VaultFile, language: UiLanguage): VaultTextFi
     content: `${lines.join("\n")}\n`,
     truncated: false,
   };
+}
+
+function uniqueStrings(values: Array<string | null | undefined>) {
+  return Array.from(new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value))));
+}
+
+function firstHeadingText(markdown: string) {
+  const heading = extractPreviewHeadings(markdown).find((item) => item.level === 1);
+  return heading?.text || "";
+}
+
+function stripFrontmatterQuotes(value: string) {
+  if (
+    (value.startsWith("\"") && value.endsWith("\"")) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
+function parseFrontmatter(markdown: string): ParsedPreviewDocument {
+  if (!markdown.startsWith("---\n") && !markdown.startsWith("---\r\n")) {
+    return { content: markdown, frontmatter: {} };
+  }
+  const lines = markdown.split(/\r?\n/);
+  if (lines[0].trim() !== "---") return { content: markdown, frontmatter: {} };
+  const endIndex = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
+  if (endIndex <= 0) return { content: markdown, frontmatter: {} };
+
+  const frontmatter: FrontmatterRecord = {};
+  let activeKey = "";
+  for (const rawLine of lines.slice(1, endIndex)) {
+    const line = rawLine.replace(/\t/g, "  ");
+    const entryMatch = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);
+    if (entryMatch) {
+      activeKey = entryMatch[1];
+      const value = stripFrontmatterQuotes(entryMatch[2].trim());
+      frontmatter[activeKey] = value;
+      continue;
+    }
+    const listMatch = /^\s*-\s+(.*)$/.exec(line);
+    if (listMatch && activeKey) {
+      const value = stripFrontmatterQuotes(listMatch[1].trim());
+      const existing = frontmatter[activeKey];
+      frontmatter[activeKey] = Array.isArray(existing)
+        ? [...existing, value]
+        : existing
+          ? [existing, value]
+          : [value];
+      continue;
+    }
+    activeKey = "";
+  }
+
+  return {
+    content: lines.slice(endIndex + 1).join("\n").replace(/^\n+/, ""),
+    frontmatter,
+  };
+}
+
+function frontmatterValues(record: FrontmatterRecord, ...keys: string[]) {
+  return uniqueStrings(
+    keys.flatMap((key) => {
+      const value = record[key];
+      return Array.isArray(value) ? value : value ? [value] : [];
+    }),
+  );
+}
+
+function frontmatterPropertyLabel(key: string, text: DetailsText) {
+  const labels: Record<string, string> = {
+    title: "title",
+    status: text.pageStatus,
+    source_id: text.sourceId,
+    source_uuid: "source_uuid",
+    source_path: "source_path",
+    sources: text.sourceRefs,
+  };
+  return labels[key] || key.replace(/_/g, " ");
+}
+
+function frontmatterDisplayValue(value: FrontmatterValue) {
+  return Array.isArray(value) ? value.join(", ") : value;
 }
 
 function transformWikilinks(markdown: string) {
@@ -728,6 +839,33 @@ function RelationSummaryStrip({
   );
 }
 
+function PagePropertyList({
+  title,
+  items,
+  empty,
+}: {
+  title: string;
+  items: Array<{ label: string; value: string }>;
+  empty?: string;
+}) {
+  return (
+    <div className="details-property-card">
+      <strong>{title}</strong>
+      {items.length === 0 && empty && <p>{empty}</p>}
+      {items.length > 0 && (
+        <dl className="details-property-list">
+          {items.map((item) => (
+            <div key={`${title}-${item.label}`}>
+              <dt>{item.label}</dt>
+              <dd>{item.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </div>
+  );
+}
+
 function FocusedPreviewReader({
   title,
   path,
@@ -904,14 +1042,68 @@ export function DetailsPanel({
   const sourcePreviewPath = selection.kind === "source" ? selection.file.path : null;
   const [previewState, setPreviewState] = useState<PreviewState>({ status: "idle" });
   const [readerOpen, setReaderOpen] = useState(false);
-  const previewHeadings = useMemo(
-    () => (previewState.status === "ready" ? extractPreviewHeadings(previewState.preview.content, "details-preview-") : []),
+  const parsedPreview = useMemo(
+    () => (previewState.status === "ready" ? parseFrontmatter(previewState.preview.content) : null),
     [previewState],
+  );
+  const previewHeadings = useMemo(
+    () => (parsedPreview ? extractPreviewHeadings(parsedPreview.content, "details-preview-") : []),
+    [parsedPreview],
   );
   const readerHeadings = useMemo(
-    () => (previewState.status === "ready" ? extractPreviewHeadings(previewState.preview.content, "details-reader-") : []),
-    [previewState],
+    () => (parsedPreview ? extractPreviewHeadings(parsedPreview.content, "details-reader-") : []),
+    [parsedPreview],
   );
+  const sourceRefs = useMemo(
+    () => uniqueStrings([
+      ...(selection.kind === "source" ? selection.file.sourceRefs ?? [] : []),
+      ...(parsedPreview ? frontmatterValues(parsedPreview.frontmatter, "sources", "source_id", "source_path") : []),
+    ]),
+    [parsedPreview, selection],
+  );
+  const sourceDisplayTitle = useMemo(() => {
+    if (selection.kind !== "source") return "";
+    const frontmatterTitle = parsedPreview?.frontmatter.title;
+    const derivedHeading = parsedPreview ? firstHeadingText(parsedPreview.content) : "";
+    return (Array.isArray(frontmatterTitle) ? frontmatterTitle[0] : frontmatterTitle)
+      || selection.file.title
+      || derivedHeading
+      || selection.file.name;
+  }, [parsedPreview, selection]);
+  const sourceStatus = selection.kind === "source"
+    ? (
+      (Array.isArray(parsedPreview?.frontmatter.status) ? parsedPreview?.frontmatter.status[0] : parsedPreview?.frontmatter.status)
+      || selection.file.status
+      || selection.file.kind
+    )
+    : "";
+  const reviewState = selection.kind === "source"
+    ? (
+      (selection.file.needsReview ?? 0) > 0
+        ? (language === "zh" ? `${selection.file.needsReview} 项待核对` : `${selection.file.needsReview} review flags`)
+        : selection.file.qaVerdict
+          ? `QA ${selection.file.qaVerdict}`
+          : language === "zh" ? "未标记" : "unflagged"
+    )
+    : "";
+  const sourceProperties = useMemo(() => {
+    if (selection.kind !== "source") return [];
+    return [
+      { label: text.kind, value: selection.file.kind },
+      { label: text.pageStatus, value: String(sourceStatus || text.unknown) },
+      { label: text.updated, value: selection.file.updated || text.notUpdated },
+      { label: text.qa, value: selection.file.qaVerdict || text.unknown },
+      { label: text.reviewState, value: reviewState },
+      ...(selection.file.sourceId ? [{ label: text.sourceId, value: selection.file.sourceId }] : []),
+    ];
+  }, [reviewState, selection, sourceStatus, text]);
+  const frontmatterProperties = useMemo(() => {
+    if (!parsedPreview) return [];
+    return Object.entries(parsedPreview.frontmatter).map(([key, value]) => ({
+      label: frontmatterPropertyLabel(key, text),
+      value: frontmatterDisplayValue(value),
+    }));
+  }, [parsedPreview, text]);
 
   useEffect(() => {
     setReaderOpen(false);
@@ -927,7 +1119,7 @@ export function DetailsPanel({
   }, [readerOpen]);
 
   useEffect(() => {
-    if (!vaultPath || !canPreviewVaultText(sourcePreviewPath)) {
+    if (!vaultPath || !canPreviewVaultPath(sourcePreviewPath)) {
       setPreviewState({ status: "idle" });
       return;
     }
@@ -970,16 +1162,17 @@ export function DetailsPanel({
 
       {selection.kind === "source" && (
         <div className="details-body">
-          <span className={classNames("status-chip inline", selection.file.status || "unknown")}>{selection.file.status || selection.file.kind}</span>
-          <h3>{selection.file.title || selection.file.name}</h3>
-          <p>{selection.file.kind} · QA {selection.file.qaVerdict || text.unknown} · {selection.file.updated || text.notUpdated}</p>
-          <code>{selection.file.path}</code>
-          <RelationSummaryStrip
-            text={text}
-            outboundLinks={selection.file.outboundLinks}
-            inboundLinks={selection.file.inboundLinks}
-            sourceRefs={selection.file.sourceRefs}
-          />
+          <div className="details-source-header">
+            <div className="details-source-chips">
+              <span className={classNames("status-chip inline", selection.file.kind)}>{selection.file.kind}</span>
+              <span className={classNames("status-chip inline", sourceStatus || "unknown")}>{sourceStatus || text.unknown}</span>
+              {(selection.file.needsReview ?? 0) > 0 && (
+                <span className="status-chip inline needs_review">{selection.file.needsReview} {text.reviewFlags}</span>
+              )}
+            </div>
+            <h3>{sourceDisplayTitle}</h3>
+            <p>{selection.file.path}</p>
+          </div>
           <DetailActions
             text={text}
             path={selection.file.path}
@@ -991,30 +1184,7 @@ export function DetailsPanel({
             onCopy={onCopy}
             onOpenObsidian={onOpenObsidian}
           />
-          <div className="details-link-grid">
-            <LinkList
-              title={text.outboundLinks}
-              links={selection.file.outboundLinks}
-              empty={text.noLinks}
-              moreLabel={text.moreLinks}
-              onOpenVaultPath={onOpenVaultPath}
-            />
-            <LinkList
-              title={text.inboundLinks}
-              links={selection.file.inboundLinks}
-              empty={text.noLinks}
-              moreLabel={text.moreLinks}
-              onOpenVaultPath={onOpenVaultPath}
-            />
-            <LinkList
-              title={text.sourceRefs}
-              links={selection.file.sourceRefs}
-              empty={text.noSourceRefs}
-              moreLabel={text.moreLinks}
-              onOpenVaultPath={onOpenVaultPath}
-            />
-          </div>
-          {canPreviewVaultText(selection.file.path) && (
+          {canPreviewVaultPath(selection.file.path) && (
             <div className="details-preview">
               <div className="section-head compact">
                 <h3>{text.preview}</h3>
@@ -1035,14 +1205,47 @@ export function DetailsPanel({
               )}
               {previewState.status === "ready" && (
                 <>
+                  <div className="details-preview-document">
+                    <PagePropertyList items={sourceProperties} title={text.properties} />
+                    <PagePropertyList empty={text.noFrontmatter} items={frontmatterProperties} title={text.frontmatter} />
+                  </div>
                   <PreviewOutline headings={previewHeadings} title={text.outline} />
                   <div className="details-markdown-preview">
                     <MarkdownPreview
-                      content={previewState.preview.content}
+                      content={parsedPreview?.content || previewState.preview.content}
                       currentPath={previewState.preview.path || selection.file.path}
                       headingIdPrefix="details-preview-"
                       vaultPath={vaultPath}
                       outboundLinks={selection.file.outboundLinks}
+                      onOpenVaultPath={onOpenVaultPath}
+                    />
+                  </div>
+                  <RelationSummaryStrip
+                    text={text}
+                    outboundLinks={selection.file.outboundLinks}
+                    inboundLinks={selection.file.inboundLinks}
+                    sourceRefs={sourceRefs}
+                  />
+                  <div className="details-link-grid">
+                    <LinkList
+                      title={text.outboundLinks}
+                      links={selection.file.outboundLinks}
+                      empty={text.noLinks}
+                      moreLabel={text.moreLinks}
+                      onOpenVaultPath={onOpenVaultPath}
+                    />
+                    <LinkList
+                      title={text.inboundLinks}
+                      links={selection.file.inboundLinks}
+                      empty={text.noLinks}
+                      moreLabel={text.moreLinks}
+                      onOpenVaultPath={onOpenVaultPath}
+                    />
+                    <LinkList
+                      title={text.sourceRefs}
+                      links={sourceRefs}
+                      empty={text.noSourceRefs}
+                      moreLabel={text.moreLinks}
                       onOpenVaultPath={onOpenVaultPath}
                     />
                   </div>
@@ -1054,15 +1257,15 @@ export function DetailsPanel({
           {readerOpen && previewState.status === "ready" && (
             <FocusedPreviewReader
               closeLabel={text.closeReader}
-              content={previewState.preview.content}
+              content={parsedPreview?.content || previewState.preview.content}
               currentPath={previewState.preview.path || selection.file.path}
               headings={readerHeadings}
               inboundLinks={selection.file.inboundLinks}
               outlineTitle={text.outline}
               path={selection.file.path}
-              sourceRefs={selection.file.sourceRefs}
+              sourceRefs={sourceRefs}
               text={text}
-              title={selection.file.title || selection.file.name}
+              title={sourceDisplayTitle}
               vaultPath={vaultPath}
               outboundLinks={selection.file.outboundLinks}
               onClose={() => setReaderOpen(false)}
