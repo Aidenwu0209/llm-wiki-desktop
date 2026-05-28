@@ -514,6 +514,8 @@ export type ProviderAnswerDraft = {
 export type ProviderAnswerRequest = {
   question: string;
   model: string;
+  apiKeyEnvVar: string;
+  baseUrl: string;
   language: "zh" | "en" | string;
   evidence: LlmAnswerEvidenceRef[];
 };

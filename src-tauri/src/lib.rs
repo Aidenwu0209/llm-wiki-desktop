@@ -752,6 +752,10 @@ struct LlmAnswerResult {
 struct ProviderAnswerRequest {
     question: String,
     model: String,
+    #[serde(default = "default_ernie_api_key_env_var")]
+    api_key_env_var: String,
+    #[serde(default = "default_ernie_base_url")]
+    base_url: String,
     language: String,
     #[serde(default)]
     evidence: Vec<LlmAnswerEvidenceRef>,
@@ -1338,6 +1342,14 @@ fn default_paddleocr_api_key_env_var() -> String {
 
 fn default_paddleocr_model() -> String {
     PADDLEOCR_VL15_DEFAULT_MODEL.to_string()
+}
+
+fn default_ernie_api_key_env_var() -> String {
+    ERNIE_AI_STUDIO_API_KEY_ENV.to_string()
+}
+
+fn default_ernie_base_url() -> String {
+    ERNIE_AI_STUDIO_BASE_URL.to_string()
 }
 
 fn default_ocr_parser_settings() -> OcrParserSettings {
@@ -10026,11 +10038,16 @@ fn validate_desktop_settings(settings: &DesktopSettings) -> Result<(), String> {
 fn normalize_ocr_parser_settings(settings: OcrParserSettings) -> Result<OcrParserSettings, String> {
     let endpoint = validate_paddleocr_endpoint(&settings.endpoint)?;
     let model = settings.model.trim();
+    let api_key_env_var = if settings.api_key_env_var.trim().is_empty() {
+        default_paddleocr_api_key_env_var()
+    } else {
+        sanitize_env_var_name(&settings.api_key_env_var)?
+    };
     Ok(OcrParserSettings {
         enabled: settings.enabled,
         provider_id: PADDLEOCR_VL15_PROVIDER_ID.to_string(),
         endpoint,
-        api_key_env_var: default_paddleocr_api_key_env_var(),
+        api_key_env_var,
         model: if model.is_empty() {
             default_paddleocr_model()
         } else {
@@ -10200,6 +10217,8 @@ fn check_llm_api_key(
 }
 
 fn ernie_result(
+    api_key_env: String,
+    base_url: String,
     model: Option<String>,
     status: &str,
     latency_ms: Option<u128>,
@@ -10217,31 +10236,15 @@ fn ernie_result(
         checked_at: Local::now().to_rfc3339(),
         message: redact_provider_error(&message.into()),
         error_code: error_code.map(ToString::to_string),
-        api_key_env: ERNIE_AI_STUDIO_API_KEY_ENV.to_string(),
-        base_url: ERNIE_AI_STUDIO_BASE_URL.to_string(),
+        api_key_env,
+        base_url,
         models,
     }
 }
 
 fn redact_provider_error(value: &str) -> String {
     let mut text = value.replace('\n', " ");
-    for separator in ["=", ":"] {
-        let marker = format!("{ERNIE_AI_STUDIO_API_KEY_ENV}{separator}");
-        let mut search_from = 0;
-        while let Some(relative_index) = text[search_from..].find(&marker) {
-            let value_start = search_from + relative_index + marker.len();
-            let value_len = text[value_start..]
-                .find(|ch: char| ch.is_whitespace() || matches!(ch, ',' | '&' | ';'))
-                .unwrap_or_else(|| text[value_start..].len());
-            if value_len == 0 {
-                break;
-            }
-            if &text[value_start..value_start + value_len] != "[redacted]" {
-                text.replace_range(value_start..value_start + value_len, "[redacted]");
-            }
-            search_from = value_start + "[redacted]".len();
-        }
-    }
+    redact_secret_assignment_markers(&mut text);
     let mut search_from = 0;
     while let Some(relative_index) = text[search_from..].to_ascii_lowercase().find("bearer ") {
         let index = search_from + relative_index;
@@ -10262,8 +10265,46 @@ fn redact_provider_error(value: &str) -> String {
     short_error_body(&text)
 }
 
-fn ernie_models_url() -> String {
-    format!("{ERNIE_AI_STUDIO_BASE_URL}/models")
+fn redact_secret_assignment_markers(text: &mut String) {
+    for separator in ["=", ":"] {
+        let mut search_from = 0;
+        while search_from < text.len() {
+            let Some(relative_index) = text[search_from..].find(separator) else {
+                break;
+            };
+            let separator_index = search_from + relative_index;
+            let key_start = text[..separator_index]
+                .rfind(|ch: char| !(ch == '_' || ch.is_ascii_uppercase() || ch.is_ascii_digit()))
+                .map(|index| index + 1)
+                .unwrap_or(0);
+            let key = &text[key_start..separator_index];
+            let is_secret_key = key.len() >= 3
+                && key
+                    .chars()
+                    .all(|ch| ch == '_' || ch.is_ascii_uppercase() || ch.is_ascii_digit())
+                && (key.contains("KEY") || key.contains("TOKEN") || key.contains("SECRET"));
+            if !is_secret_key {
+                search_from = separator_index + separator.len();
+                continue;
+            }
+            let value_start = separator_index + separator.len();
+            let value_len = text[value_start..]
+                .find(|ch: char| ch.is_whitespace() || matches!(ch, ',' | '&' | ';'))
+                .unwrap_or_else(|| text[value_start..].len());
+            if value_len == 0 {
+                search_from = value_start;
+                continue;
+            }
+            if &text[value_start..value_start + value_len] != "[redacted]" {
+                text.replace_range(value_start..value_start + value_len, "[redacted]");
+            }
+            search_from = value_start + "[redacted]".len();
+        }
+    }
+}
+
+fn ernie_models_url(base_url: &str) -> String {
+    format!("{}/models", base_url.trim_end_matches('/'))
 }
 
 fn parse_openai_model_ids(value: &serde_json::Value) -> Vec<String> {
@@ -10313,10 +10354,11 @@ fn classify_provider_http_error(status: reqwest::StatusCode, body: &str) -> (&'s
 async fn fetch_ernie_models(
     client: &reqwest::Client,
     api_key: &str,
+    base_url: &str,
 ) -> Result<(Vec<String>, u128), (&'static str, String, u128)> {
     let started = Instant::now();
     let response = client
-        .get(ernie_models_url())
+        .get(ernie_models_url(base_url))
         .header("Authorization", format!("Bearer {api_key}"))
         .send()
         .await
@@ -10361,6 +10403,7 @@ async fn fetch_ernie_models(
 async fn send_ernie_minimal_chat(
     client: &reqwest::Client,
     api_key: &str,
+    base_url: &str,
     model: &str,
 ) -> Result<(serde_json::Value, u128), (&'static str, String, u128)> {
     let started = Instant::now();
@@ -10373,7 +10416,7 @@ async fn send_ernie_minimal_chat(
         "stream": false
     });
     let response = client
-        .post(openai_chat_completions_url(ERNIE_AI_STUDIO_BASE_URL))
+        .post(openai_chat_completions_url(base_url))
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Content-Type", "application/json")
         .json(&body)
@@ -10418,8 +10461,12 @@ async fn send_ernie_minimal_chat(
 
 #[tauri::command]
 async fn check_ernie_provider() -> Result<LlmProviderTestResult, String> {
+    let env_var = default_ernie_api_key_env_var();
+    let base_url = default_ernie_base_url();
     let Some(api_key) = read_llm_api_key(Some(ERNIE_AI_STUDIO_API_KEY_ENV))? else {
         return Ok(ernie_result(
+            env_var,
+            base_url,
             None,
             "missing_key",
             None,
@@ -10433,8 +10480,10 @@ async fn check_ernie_provider() -> Result<LlmProviderTestResult, String> {
         .timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| format!("failed to create HTTP client: {e}"))?;
-    match fetch_ernie_models(&client, &api_key).await {
+    match fetch_ernie_models(&client, &api_key, ERNIE_AI_STUDIO_BASE_URL).await {
         Ok((models, latency)) => Ok(ernie_result(
+            default_ernie_api_key_env_var(),
+            default_ernie_base_url(),
             None,
             "ready",
             Some(latency),
@@ -10444,6 +10493,8 @@ async fn check_ernie_provider() -> Result<LlmProviderTestResult, String> {
             models,
         )),
         Err((status, message, latency)) => Ok(ernie_result(
+            default_ernie_api_key_env_var(),
+            default_ernie_base_url(),
             None,
             status,
             Some(latency),
@@ -10456,14 +10507,30 @@ async fn check_ernie_provider() -> Result<LlmProviderTestResult, String> {
 }
 
 #[tauri::command]
-async fn test_ernie_chat(model: String) -> Result<LlmProviderTestResult, String> {
-    let Some(api_key) = read_llm_api_key(Some(ERNIE_AI_STUDIO_API_KEY_ENV))? else {
+async fn test_ernie_chat(
+    model: String,
+    api_key_env_var: String,
+    base_url: String,
+) -> Result<LlmProviderTestResult, String> {
+    let env_var = if api_key_env_var.trim().is_empty() {
+        default_ernie_api_key_env_var()
+    } else {
+        sanitize_env_var_name(&api_key_env_var)?
+    };
+    let base_url = if base_url.trim().is_empty() {
+        default_ernie_base_url()
+    } else {
+        validate_llm_base_url(&base_url)?
+    };
+    let Some(api_key) = read_llm_api_key(Some(&env_var))? else {
         return Ok(ernie_result(
+            env_var.clone(),
+            base_url.clone(),
             None,
             "missing_key",
             None,
             None,
-            format!("{ERNIE_AI_STUDIO_API_KEY_ENV} is not visible to this desktop process"),
+            format!("{env_var} is not visible to this desktop process"),
             Some("missing_key"),
             Vec::new(),
         ));
@@ -10478,10 +10545,12 @@ async fn test_ernie_chat(model: String) -> Result<LlmProviderTestResult, String>
         .timeout(Duration::from_secs(45))
         .build()
         .map_err(|e| format!("failed to create HTTP client: {e}"))?;
-    let (models, model_latency) = match fetch_ernie_models(&client, &api_key).await {
+    let (models, model_latency) = match fetch_ernie_models(&client, &api_key, &base_url).await {
         Ok(value) => value,
         Err((status, message, latency)) => {
             return Ok(ernie_result(
+                env_var,
+                base_url,
                 Some(requested.to_string()),
                 status,
                 Some(latency),
@@ -10503,6 +10572,8 @@ async fn test_ernie_chat(model: String) -> Result<LlmProviderTestResult, String>
         .find(|candidate| models.iter().any(|item| item == candidate));
     let Some(selected) = selected else {
         return Ok(ernie_result(
+            env_var,
+            base_url,
             Some(requested.to_string()),
             "model_not_found",
             Some(model_latency),
@@ -10514,8 +10585,10 @@ async fn test_ernie_chat(model: String) -> Result<LlmProviderTestResult, String>
             models,
         ));
     };
-    match send_ernie_minimal_chat(&client, &api_key, &selected).await {
+    match send_ernie_minimal_chat(&client, &api_key, &base_url, &selected).await {
         Ok((value, chat_latency)) => Ok(ernie_result(
+            env_var,
+            base_url,
             Some(selected),
             "ready",
             Some(model_latency + chat_latency),
@@ -10525,6 +10598,8 @@ async fn test_ernie_chat(model: String) -> Result<LlmProviderTestResult, String>
             models,
         )),
         Err((status, message, chat_latency)) => Ok(ernie_result(
+            env_var,
+            base_url,
             Some(selected),
             status,
             Some(model_latency + chat_latency),
@@ -10571,11 +10646,15 @@ fn paddleocr_result(
 
 fn paddleocr_config_result(
     endpoint: String,
-    _api_key_env_var: String,
+    api_key_env_var: String,
     model: String,
     parser_dry_run: bool,
 ) -> Result<OcrParserTestResult, String> {
-    let env_var = default_paddleocr_api_key_env_var();
+    let env_var = if api_key_env_var.trim().is_empty() {
+        default_paddleocr_api_key_env_var()
+    } else {
+        sanitize_env_var_name(&api_key_env_var)?
+    };
     let model = paddleocr_model(&model);
     let endpoint = match validate_paddleocr_endpoint(&endpoint) {
         Ok(value) => value,
@@ -10646,10 +10725,14 @@ fn check_paddleocr_vl15_config(
 #[tauri::command]
 async fn test_paddleocr_vl15_connection(
     endpoint: String,
-    _api_key_env_var: String,
+    api_key_env_var: String,
     model: String,
 ) -> Result<OcrParserTestResult, String> {
-    let env_var = default_paddleocr_api_key_env_var();
+    let env_var = if api_key_env_var.trim().is_empty() {
+        default_paddleocr_api_key_env_var()
+    } else {
+        sanitize_env_var_name(&api_key_env_var)?
+    };
     let model = paddleocr_model(&model);
     let endpoint = match validate_paddleocr_endpoint(&endpoint) {
         Ok(value) => value,
@@ -11285,6 +11368,16 @@ async fn generate_ernie_evidence_answer(
     } else {
         request.model.trim().to_string()
     };
+    let env_var = if request.api_key_env_var.trim().is_empty() {
+        default_ernie_api_key_env_var()
+    } else {
+        sanitize_env_var_name(&request.api_key_env_var)?
+    };
+    let base_url = if request.base_url.trim().is_empty() {
+        default_ernie_base_url()
+    } else {
+        validate_llm_base_url(&request.base_url)?
+    };
     let (system_prompt, user_prompt, evidence_ids) =
         build_evidence_first_answer_prompt(&request.question, &request.evidence, &request.language);
     if evidence_ids.is_empty() {
@@ -11298,14 +11391,12 @@ async fn generate_ernie_evidence_answer(
             None,
         ));
     }
-    let Some(api_key) = read_llm_api_key(Some(ERNIE_AI_STUDIO_API_KEY_ENV))? else {
+    let Some(api_key) = read_llm_api_key(Some(&env_var))? else {
         return Ok(provider_answer_insufficient(
             request.question,
             model,
             evidence_ids,
-            vec![format!(
-                "{ERNIE_AI_STUDIO_API_KEY_ENV} is not visible to this desktop process"
-            )],
+            vec![format!("{env_var} is not visible to this desktop process")],
             "missing_key",
             None,
             None,
@@ -11325,7 +11416,7 @@ async fn generate_ernie_evidence_answer(
         "stream": false
     });
     let response = client
-        .post(openai_chat_completions_url(ERNIE_AI_STUDIO_BASE_URL))
+        .post(openai_chat_completions_url(&base_url))
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Content-Type", "application/json")
         .json(&body)
@@ -14981,7 +15072,7 @@ mod tests {
             "https://api.deepseek.com/v1/chat/completions"
         );
         assert_eq!(
-            ernie_models_url(),
+            ernie_models_url(ERNIE_AI_STUDIO_BASE_URL),
             "https://aistudio.baidu.com/llm/lmapi/v3/models"
         );
         assert_eq!(
@@ -15014,6 +15105,27 @@ mod tests {
     }
 
     #[test]
+    fn ernie_test_uses_configured_key_source_before_network() {
+        let _guard = PADDLEOCR_ENV_LOCK.lock().expect("lock env");
+        let env_var = "CUSTOM_ERNIE_API_KEY";
+        let previous = std::env::var_os(env_var);
+        std::env::remove_var(env_var);
+
+        let result = tauri::async_runtime::block_on(test_ernie_chat(
+            String::new(),
+            env_var.to_string(),
+            "https://custom-ernie.example.com/v1".to_string(),
+        ))
+        .expect("test ernie missing key");
+        restore_env_var(env_var, previous);
+
+        assert_eq!(result.status, "missing_key");
+        assert_eq!(result.api_key_env, env_var);
+        assert_eq!(result.base_url, "https://custom-ernie.example.com/v1");
+        assert!(result.message.contains(env_var));
+    }
+
+    #[test]
     fn paddleocr_provider_contract_defaults_are_stable() {
         assert_eq!(PADDLEOCR_VL15_PROVIDER_ID, "paddleocr-vl15");
         assert_eq!(PADDLEOCR_VL15_API_KEY_ENV, "PADDLEOCR_API_KEY");
@@ -15030,18 +15142,19 @@ mod tests {
     #[test]
     fn paddleocr_config_reports_missing_key_without_failing() {
         let _guard = PADDLEOCR_ENV_LOCK.lock().expect("lock paddleocr env");
-        let previous = std::env::var_os(PADDLEOCR_VL15_API_KEY_ENV);
-        std::env::remove_var(PADDLEOCR_VL15_API_KEY_ENV);
+        let env_var = "CUSTOM_PADDLEOCR_API_KEY";
+        let previous = std::env::var_os(env_var);
+        std::env::remove_var(env_var);
         let result = check_paddleocr_vl15_config(
             "https://ocr.example.com/v1".to_string(),
-            "IGNORED_ENV_VAR".to_string(),
+            env_var.to_string(),
             String::new(),
         )
         .expect("check config");
-        restore_env_var(PADDLEOCR_VL15_API_KEY_ENV, previous);
+        restore_env_var(env_var, previous);
 
         assert_eq!(result.status, "missing_key");
-        assert_eq!(result.api_key_env, PADDLEOCR_VL15_API_KEY_ENV);
+        assert_eq!(result.api_key_env, env_var);
         assert_eq!(result.model, PADDLEOCR_VL15_DEFAULT_MODEL);
     }
 
@@ -15052,7 +15165,7 @@ mod tests {
         std::env::set_var(PADDLEOCR_VL15_API_KEY_ENV, "1");
         let result = check_paddleocr_vl15_config(
             "   ".to_string(),
-            "IGNORED_ENV_VAR".to_string(),
+            PADDLEOCR_VL15_API_KEY_ENV.to_string(),
             String::new(),
         )
         .expect("check config");
@@ -15065,17 +15178,19 @@ mod tests {
     #[test]
     fn paddleocr_parser_dry_run_uses_env_without_network_or_document_upload() {
         let _guard = PADDLEOCR_ENV_LOCK.lock().expect("lock paddleocr env");
-        let previous = std::env::var_os(PADDLEOCR_VL15_API_KEY_ENV);
-        std::env::set_var(PADDLEOCR_VL15_API_KEY_ENV, "1");
+        let env_var = "CUSTOM_PADDLEOCR_API_KEY";
+        let previous = std::env::var_os(env_var);
+        std::env::set_var(env_var, "1");
         let result = test_paddleocr_vl15_parser(
             "https://ocr.example.com/v1".to_string(),
-            "IGNORED_ENV_VAR".to_string(),
+            env_var.to_string(),
             String::new(),
         )
         .expect("test parser");
-        restore_env_var(PADDLEOCR_VL15_API_KEY_ENV, previous);
+        restore_env_var(env_var, previous);
 
         assert_eq!(result.status, "artifact_valid");
+        assert_eq!(result.api_key_env, env_var);
         assert!(result.parser_dry_run);
         assert_eq!(result.model, PADDLEOCR_VL15_DEFAULT_MODEL);
         assert!(result.message.contains("no raw document was uploaded"));
@@ -15383,6 +15498,8 @@ mod tests {
         let request = ProviderAnswerRequest {
             question: "What does the vault prove?".to_string(),
             model: ERNIE_AI_STUDIO_DEFAULT_MODEL.to_string(),
+            api_key_env_var: ERNIE_AI_STUDIO_API_KEY_ENV.to_string(),
+            base_url: ERNIE_AI_STUDIO_BASE_URL.to_string(),
             language: "zh".to_string(),
             evidence: Vec::new(),
         };

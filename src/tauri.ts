@@ -116,8 +116,8 @@ export function checkErnieProvider(): Promise<LlmProviderTestResult> {
   return invoke("check_ernie_provider");
 }
 
-export function testErnieChat(model: string): Promise<LlmProviderTestResult> {
-  return invoke("test_ernie_chat", { model });
+export function testErnieChat(model: string, apiKeyEnvVar: string, baseUrl: string): Promise<LlmProviderTestResult> {
+  return invoke("test_ernie_chat", { model, apiKeyEnvVar, baseUrl });
 }
 
 export function checkPaddleOcrVl15Config(settings: OcrParserSettings): Promise<OcrParserTestResult> {

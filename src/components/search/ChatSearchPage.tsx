@@ -26,7 +26,7 @@ import type {
 } from "../../types";
 import { runtimeLabel, runtimeText, type UiLanguage } from "../../i18n";
 import { isLoopbackHttpEndpoint } from "../../lib/local-endpoints";
-import { ERNIE_AI_STUDIO_DEFAULT_MODEL } from "../../lib/providers/catalog";
+import { ERNIE_AI_STUDIO_API_KEY_ENV, ERNIE_AI_STUDIO_BASE_URL, ERNIE_AI_STUDIO_DEFAULT_MODEL } from "../../lib/providers/catalog";
 import { buildEvidenceFirstAnswerPrompt } from "../../lib/evidence/answerPrompt";
 import { generateErnieEvidenceAnswer } from "../../tauri";
 
@@ -124,7 +124,7 @@ const chatCopy = {
     localDraftAnswer: "生成本地证据草稿",
     generateWithErnie: "使用 ERNIE 生成",
     generatingAnswer: "正在调用模型",
-    ernieNotConfigured: "ERNIE 未配置：请到 Settings / LLM Models 配置 AI_STUDIO_API_KEY。",
+    ernieNotConfigured: "ERNIE 未配置：请到 Settings / LLM Models 配置 API key 环境变量。",
     createProposalFromAnswer: "从此回答创建写回提案",
     evidenceCitations: "证据引用",
     unsupportedClaims: "无证据结论",
@@ -207,7 +207,7 @@ const chatCopy = {
     localDraftAnswer: "Generate local evidence draft",
     generateWithErnie: "Generate with ERNIE",
     generatingAnswer: "calling model",
-    ernieNotConfigured: "ERNIE is not configured. Open Settings / LLM Models and configure AI_STUDIO_API_KEY.",
+    ernieNotConfigured: "ERNIE is not configured. Open Settings / LLM Models and configure the API key environment variable.",
     createProposalFromAnswer: "Create writeback proposal from this answer",
     evidenceCitations: "Evidence citations",
     unsupportedClaims: "Unsupported claims",
@@ -1070,8 +1070,10 @@ function toLlmAnswerEvidence(items: SearchResult[]): LlmAnswerEvidenceRef[] {
 function ernieProviderStatus(center?: LlmProviderCenterSettings | null) {
   const config = center?.providers?.["ernie-ai-studio"] ?? null;
   const model = config?.customModel?.trim() || config?.selectedModel || ERNIE_AI_STUDIO_DEFAULT_MODEL;
+  const apiKeyEnvVar = config?.apiKeyEnvVar?.trim() || ERNIE_AI_STUDIO_API_KEY_ENV;
+  const baseUrl = config?.apiBaseUrl?.trim() || ERNIE_AI_STUDIO_BASE_URL;
   const configured = Boolean(config?.apiKeyConfigured && (config.apiBaseUrl || "").trim());
-  return { config, model, configured };
+  return { config, model, apiKeyEnvVar, baseUrl, configured };
 }
 
 function answerProposalTarget(value: string) {
@@ -1336,6 +1338,8 @@ export function ChatSearchPage({
       const result = await generateErnieEvidenceAnswer(vaultPath, {
         question,
         model: ernieProvider.model,
+        apiKeyEnvVar: ernieProvider.apiKeyEnvVar,
+        baseUrl: ernieProvider.baseUrl,
         language,
         evidence: evidence.filter((item) => prompt.evidenceIds.includes(item.id)),
       });
