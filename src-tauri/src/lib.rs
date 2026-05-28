@@ -5670,7 +5670,15 @@ fn extract_archive_import_candidates(
                 continue;
             }
         };
-        if entry.is_dir() || entry.is_symlink() {
+        if entry.is_dir() {
+            continue;
+        }
+        if entry.is_symlink() {
+            errors.push(format!(
+                "skipped symlink archive entry `{}` from {}",
+                entry.name(),
+                archive_display
+            ));
             continue;
         }
         let Some(rel_path) = archive_entry_path(entry.name(), entry.name_raw()) else {
@@ -16139,6 +16147,61 @@ mod tests {
             .parent()
             .unwrap_or_else(|| Path::new(""))
             .join("escape.md")
+            .exists());
+
+        let _ = fs::remove_dir_all(vault);
+        let _ = fs::remove_dir_all(incoming);
+    }
+
+    #[test]
+    fn archive_zip_import_rejects_symlink_entries_before_extraction() {
+        let vault = test_vault("archive-zip-symlink");
+        let incoming = test_vault("external-archive-symlink");
+        let archive = incoming.join("symlink-escape.zip");
+        if let Some(parent) = archive.parent() {
+            fs::create_dir_all(parent).expect("create zip parent");
+        }
+        let file = fs::File::create(&archive).expect("create zip file");
+        let mut zip = ZipWriter::new(file);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        zip.add_symlink(
+            "safe/external-link.md",
+            "../../archive-symlink-escape.md",
+            options,
+        )
+        .expect("add symlink entry");
+        zip.start_file("safe/DeepSeek-safe.md", options)
+            .expect("start safe zip file");
+        zip.write_all(b"# Safe\n").expect("write safe zip entry");
+        zip.finish().expect("finish zip");
+
+        let batch = import_sources_impl(&vault, vec![to_display(&archive)], false, false)
+            .expect("import archive with symlink entry");
+
+        assert_eq!(batch.imported.len(), 1);
+        assert_eq!(batch.imported[0].file_name, "DeepSeek-safe.md");
+        assert!(batch
+            .errors
+            .iter()
+            .any(|error| error.contains("skipped symlink archive entry")));
+        assert!(vault
+            .join("raw")
+            .join("inbox")
+            .join("safe")
+            .join("DeepSeek-safe.md")
+            .exists());
+        assert!(!vault
+            .join("raw")
+            .join("inbox")
+            .join("safe")
+            .join("external-link.md")
+            .exists());
+        assert!(!vault.join("_state").join("archive-import").exists());
+        assert!(!vault
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .join("archive-symlink-escape.md")
             .exists());
 
         let _ = fs::remove_dir_all(vault);
