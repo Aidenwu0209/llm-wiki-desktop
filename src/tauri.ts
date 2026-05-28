@@ -112,12 +112,12 @@ export function checkLlmApiKey(providerId: string, apiKeyEnvVar: string): Promis
   return invoke("check_llm_api_key", { providerId, apiKeyEnvVar });
 }
 
-export function checkErnieProvider(): Promise<LlmProviderTestResult> {
-  return invoke("check_ernie_provider");
+export function checkErnieProvider(apiKeyEnvVar?: string, baseUrl?: string): Promise<LlmProviderTestResult> {
+  return invoke("check_ernie_provider", { apiKeyEnvVar: apiKeyEnvVar || null, baseUrl: baseUrl || null });
 }
 
-export function testErnieChat(model: string): Promise<LlmProviderTestResult> {
-  return invoke("test_ernie_chat", { model });
+export function testErnieChat(model: string, apiKeyEnvVar?: string, baseUrl?: string): Promise<LlmProviderTestResult> {
+  return invoke("test_ernie_chat", { model, apiKeyEnvVar: apiKeyEnvVar || null, baseUrl: baseUrl || null });
 }
 
 export function checkPaddleOcrVl15Config(settings: OcrParserSettings): Promise<OcrParserTestResult> {

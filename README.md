@@ -17,6 +17,8 @@
 
 Agent / API 集成必须先通过只读 readiness gate；当前契约见 [`docs/agent-skill.md`](docs/agent-skill.md)。通过 gate 后可在 Settings -> Agent API 启动 `127.0.0.1` token-protected read API；在 gate 未通过前，不应启动 localhost API，也不应向 Codex/Claude Code 暴露写入、删除、apply 或后台 ingest 能力。
 
+Product planning and submission scoring docs: [`docs/PRD.md`](docs/PRD.md), [`docs/scoring-mapping.md`](docs/scoring-mapping.md).
+
 ## 软件使用教程
 
 ### 1. 启动桌面端
@@ -70,7 +72,7 @@ PDF / Image -> PaddleOCR-VL-1.5 -> Markdown / JSON Artifact
 3. 点击 `规划 ingest` 检查哪些资料可解析、哪些已发布、哪些被阻塞。
 4. 选中任一资料，可以在中间预览 artifact，并在右侧查看 path、hash、parser、claims、concepts 和 traceability。
 
-桌面端会按 SHA-256 跳过重复资料。PDF / 图片默认优先使用 PaddleOCR-VL-1.5；未启用 OCR Parser、未配置 endpoint 或 `PADDLEOCR_API_KEY` 不可见时，ingest plan 会明确阻塞且不会上传 raw document。用户也可以显式切回 `auto/local-text` 本地 fallback。
+桌面端会按 SHA-256 跳过重复资料。PDF / 图片默认优先使用 PaddleOCR-VL-1.5；未启用 OCR Parser、未配置 endpoint 或所选 API key 环境变量（默认 `PADDLEOCR_API_KEY`）不可见时，ingest plan 会明确阻塞且不会上传 raw document。用户也可以显式切回 `auto/local-text` 本地 fallback。
 
 ### 4. 运行处理流程
 
@@ -119,7 +121,7 @@ log-archive/desktop/
 - 文件夹导入会保留目录上下文，但不会跟随 symlink，避免把未显式选择的外部文件复制进 raw evidence。
 - 生成桌面端 ingest plan：递归扫描 `raw/` 下的显式 evidence 文件与嵌套 `*_markdown/combined.md`，按 SHA-256 标记 desktop-only 的 `ready`、`stageable`、`blocked`、`cached`、`published`，并写入 `_state/desktop-ingest-plan.json`。
 - 对 Markdown / txt 输入执行本地 staging，生成 `raw/<source>_markdown/combined.md`、`manifest.json` 和 `chunks.jsonl`，再交给 open-llm-wiki runtime。
-- 对 PDF / 图片输入默认走 `paddleocr-vl15` 计划状态；配置齐全后由桌面端把 `PADDLEOCR_API_KEY` 作为子进程环境变量传给 runtime `pdf_to_markdown.py --parser layout-api --api-url <PaddleOCR endpoint>`。未配置时不上传 raw document；用户显式切回 `auto/local-text` 才走本地 selectable-text fallback。
+- 对 PDF / 图片输入默认走 `paddleocr-vl15` 计划状态；配置齐全后由桌面端读取设置中选择的 API key 环境变量（默认 `PADDLEOCR_API_KEY`），再作为子进程环境覆盖传给 runtime `pdf_to_markdown.py --parser layout-api --api-url <PaddleOCR endpoint>`。未配置时不上传 raw document；用户显式切回 `auto/local-text` 才走本地 selectable-text fallback。
 - 一键运行串行 ingest pipeline：PDF parse -> source discovery -> corpus ingest -> claims -> normalize -> semantic QA -> contradictions -> science review -> concept revision -> lint -> dashboard refresh。
 - 成功完成 pipeline 后写入 `_state/desktop-ingest-registry.jsonl`，避免未变化输入反复触发整条 ingest 链路。
 - 规划时生成桌面侧核心 contract：`desktop-source-registry.jsonl`、`desktop-artifacts.jsonl`、`desktop-ingest-jobs.jsonl`、`desktop-actions.jsonl`、`desktop-impact-graph.jsonl`。
@@ -151,7 +153,7 @@ log-archive/desktop/
 - 桌面端不重写历史 QA report。
 - 桌面端不默认上传 raw documents。
 - 桌面端不静默应用 query writeback；默认写入 `reviews/query-writeback/` proposal artifact，写入 `concepts/` 必须先审批。
-- 桌面端只对 Markdown / txt 做可审计 staging；PDF / 图片通过 runtime parser 生成 parsed Markdown artifact。默认 `paddleocr-vl15` 只有在 OCR Parser 已启用、endpoint 已配置且 `PADDLEOCR_API_KEY` 可见时才会上传到该 endpoint；`auto/local-text` fallback 不上传文档。
+- 桌面端只对 Markdown / txt 做可审计 staging；PDF / 图片通过 runtime parser 生成 parsed Markdown artifact。默认 `paddleocr-vl15` 只有在 OCR Parser 已启用、endpoint 已配置且所选 API key 环境变量可见时才会上传到该 endpoint；`auto/local-text` fallback 不上传文档。
 - 所有 source page、claim、QA、contradiction、concept 写入都通过 open-llm-wiki 脚本完成，桌面端只保存任务日志、ingest plan、staging manifest、桌面 ingest registry、桌面 action/queue/impact contract 和 `raw/inbox/` 导入结果。
 
 ## Ingest 编排

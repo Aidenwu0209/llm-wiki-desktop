@@ -43,6 +43,8 @@ npm run build:app
 
 For the scripted clean workspace build/test/package path and result template, see [`docs/smoke-test-macos-clean-profile.md`](smoke-test-macos-clean-profile.md).
 
+Latest recorded run: the 2026-05-28 CST scripted macOS smoke passed on commit `e3005080248ee7ad920a9ac4d874d42aeedcd511`; the manual temporary-vault workflow remained partial because Finder picker automation lost macOS Accessibility permission. See [`artifacts/smoke/macos/smoke-macos-clean-profile-20260528-summary.md`](../artifacts/smoke/macos/smoke-macos-clean-profile-20260528-summary.md).
+
 Run this after the automated checks on a fresh macOS user profile or a profile that has not previously opened LLM Wiki Desktop.
 
 1. Copy the local `.app` bundle into the profile and launch it from Finder.
@@ -67,7 +69,7 @@ Clean-profile pass criteria:
 
 ## Windows Desktop Smoke
 
-Windows is not covered by the current GitHub Actions runner, so the macOS CI must be paired with a targeted helper-contract check and a manual Windows smoke before calling a Windows build ready.
+GitHub Actions currently runs the npm install, test, and frontend build path on both `macos-latest` and `windows-latest`. That CI coverage does not produce or validate a packaged Windows desktop bundle, does not prove Obsidian protocol handling, and does not replace the manual Windows smoke before calling a Windows build ready.
 
 Required Windows behaviors:
 
