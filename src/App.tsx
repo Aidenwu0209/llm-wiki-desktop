@@ -87,6 +87,7 @@ import { DashboardOverview } from "./components/dashboard/DashboardOverview";
 import { WelcomePanel, type NewWikiProjectDraft } from "./components/dashboard/WelcomePanel";
 import { RuntimeSettingsPanel } from "./components/settings/RuntimeSettingsPanel";
 import { BrandMark } from "./components/brand/BrandMark";
+import { buildVaultFileTree, type VaultFileTreeNode } from "./lib/vaultTree";
 import type {
   ClaimLedgerItem,
   DashboardAction,
@@ -1756,34 +1757,6 @@ function pipelineState(index: number, status: VaultStatus | null, plan: IngestPl
   return status?.schemaValid ? "available" : "blocked";
 }
 
-function fileTreeGroups(files: VaultFile[]) {
-  const groups = new Map<string, VaultFile[]>();
-  const rootLabel = "Vault root";
-  for (const file of files) {
-    const normalizedPath = file.path.replace(/\\/g, "/").replace(/^\/+/, "");
-    const folder = normalizedPath.includes("/") ? normalizedPath.split("/")[0] : rootLabel;
-    const current = groups.get(folder) ?? [];
-    current.push(file);
-    groups.set(folder, current);
-  }
-  const folderRank = new Map([
-    [rootLabel, 0],
-    ["concepts", 1],
-    ["sources", 2],
-    ["drafts", 3],
-    ["claims", 4],
-    ["reviews", 5],
-    ["reports", 6],
-    ["raw", 7],
-  ]);
-  return Array.from(groups.entries())
-    .sort(([a], [b]) => (folderRank.get(a) ?? 99) - (folderRank.get(b) ?? 99) || a.localeCompare(b))
-    .map(([folder, folderFiles]) => ({
-      folder,
-      files: [...folderFiles].sort((a, b) => a.path.localeCompare(b.path)),
-    }));
-}
-
 function App() {
   const shellRef = useRef<HTMLElement | null>(null);
   const [interfaceLanguage, setInterfaceLanguage] = useState<UiLanguage>(() =>
@@ -3328,7 +3301,7 @@ function App() {
     const primarySources = [...grouped.source, ...grouped.draft].slice(0, 12);
     const primaryNotes = grouped.note.slice(0, 8);
     const primaryReports = grouped.report.slice(0, 8);
-    const fileGroups = fileTreeGroups(status?.files ?? []);
+    const fileTree = buildVaultFileTree(status?.files ?? []);
     const runnableCount = runnableIngestCount(ingestPlan);
     const reviewCount = openReviewCount + (status?.counts.claimsNeedingReview ?? 0);
     const traceabilityCount = traceabilityWarnings.length + brokenEvidence + contractP0P1;
@@ -3427,8 +3400,9 @@ function App() {
             </>
           ) : (
             <ShellFileTree
-              groups={fileGroups}
+              nodes={fileTree}
               empty={interfaceLanguage === "zh" ? "暂无 vault 文件" : "No vault files"}
+              language={interfaceLanguage}
               selectedPath={selectedPath}
               onSelect={selectFileForDetails}
             />
@@ -4591,23 +4565,26 @@ function ShellTreeSection({
 }
 
 function ShellFileTree({
-  groups,
+  nodes,
   empty,
+  language,
   selectedPath,
   onSelect,
 }: {
-  groups: Array<{ folder: string; files: VaultFile[] }>;
+  nodes: VaultFileTreeNode[];
   empty: string;
+  language: UiLanguage;
   selectedPath?: string;
   onSelect: (file: VaultFile) => void;
 }) {
-  if (groups.length === 0) return <p className="empty">{empty}</p>;
+  if (nodes.length === 0) return <p className="empty">{empty}</p>;
   return (
-    <div className="shell-file-tree">
-      {groups.map((group) => (
-        <ShellFileTreeGroup
-          key={group.folder}
-          group={group}
+    <div className="shell-file-tree" role="tree">
+      {nodes.map((node) => (
+        <ShellFileTreeNodeView
+          key={node.id}
+          node={node}
+          language={language}
           selectedPath={selectedPath}
           onSelect={onSelect}
         />
@@ -4616,39 +4593,72 @@ function ShellFileTree({
   );
 }
 
-function ShellFileTreeGroup({
-  group,
+function nodeContainsSelected(node: VaultFileTreeNode, selectedPath?: string): boolean {
+  if (!selectedPath) return false;
+  if (node.path === selectedPath) return true;
+  return node.children.some((child) => nodeContainsSelected(child, selectedPath));
+}
+
+function ShellFileTreeNodeView({
+  node,
+  language,
   selectedPath,
   onSelect,
 }: {
-  group: { folder: string; files: VaultFile[] };
+  node: VaultFileTreeNode;
+  language: UiLanguage;
   selectedPath?: string;
   onSelect: (file: VaultFile) => void;
 }) {
+  const selectedInside = nodeContainsSelected(node, selectedPath);
   const [expanded, setExpanded] = useState(true);
-  return (
-    <section className="shell-tree-section shell-folder-section">
+  const depthStyle = { "--tree-depth": node.depth } as CSSProperties;
+
+  if (node.kind === "file") {
+    if (!node.file) return null;
+    const file = node.file;
+    return (
       <button
         type="button"
-        className="shell-tree-title shell-tree-toggle"
+        role="treeitem"
+        aria-selected={selectedPath === node.path}
+        className={classNames("shell-tree-item", "file-tree-item", selectedPath === node.path && "selected")}
+        onClick={() => onSelect(file)}
+        title={node.path}
+        style={depthStyle}
+      >
+        <strong>{file.title || node.name}</strong>
+        <span>{fileStatusLabel(file, language)} · {node.path}</span>
+      </button>
+    );
+  }
+
+  return (
+    <section className={classNames("shell-tree-section", "shell-folder-section", selectedInside && "contains-selected")}>
+      <button
+        type="button"
+        role="treeitem"
+        className="shell-tree-title shell-tree-toggle shell-folder-toggle"
         aria-expanded={expanded}
         onClick={() => setExpanded((open) => !open)}
+        style={depthStyle}
       >
-        <span>{expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}<FolderOpen size={14} />{group.folder}</span>
-        <em>{group.files.length}</em>
+        <span>{expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}<FolderOpen size={14} />{node.name}</span>
+        <em>{node.fileCount}</em>
       </button>
-      {expanded && group.files.map((file) => (
-        <button
-          key={file.path}
-          type="button"
-          className={classNames("shell-tree-item", "file-tree-item", selectedPath === file.path && "selected")}
-          onClick={() => onSelect(file)}
-          title={file.path}
-        >
-          <strong>{file.name}</strong>
-          <span>{file.path}</span>
-        </button>
-      ))}
+      {expanded && (
+        <div className="shell-folder-children" role="group">
+          {node.children.map((child) => (
+            <ShellFileTreeNodeView
+              key={child.id}
+              node={child}
+              language={language}
+              selectedPath={selectedPath}
+              onSelect={onSelect}
+            />
+          ))}
+        </div>
+      )}
     </section>
   );
 }
