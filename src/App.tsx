@@ -88,6 +88,7 @@ import { WelcomePanel, type NewWikiProjectDraft } from "./components/dashboard/W
 import { RuntimeSettingsPanel } from "./components/settings/RuntimeSettingsPanel";
 import { BrandMark } from "./components/brand/BrandMark";
 import { buildVaultFileTree, type VaultFileTreeNode } from "./lib/vaultTree";
+import { findVaultFileForOpen } from "./lib/vaultPath";
 import type {
   ClaimLedgerItem,
   DashboardAction,
@@ -1965,6 +1966,12 @@ function App() {
   };
   const openVaultItem = async (path?: string | null) => {
     if (!vaultPath || !path) return;
+    const file = findVaultFileForOpen(vaultPath, status?.files, path);
+    if (file) {
+      selectFileForDetails(file);
+      setDetailDrawerOpen(true);
+      return;
+    }
     try {
       await openVaultPath(vaultPath, path);
     } catch (err) {
