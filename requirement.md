@@ -2,7 +2,7 @@
 
 最后更新：2026-05-28  
 仓库：`Aidenwu0209/llm-wiki-desktop`  
-文档基线：`42939ba docs: update product parity matrix (#167)`，已包含 `#169` 的 parser artifact 契约门禁
+文档基线：`cc9ed40 docs(product): document runtime dependency strategy (#168)`，已包含 `#169` 的 parser artifact 契约门禁
 PR 队列：不在本文维护动态状态；以 GitHub 当前 PR 列表为准
 
 本文用于在时间不足时拆分工作：先看已经完成什么，再决定剩余项里哪一项优先做。
@@ -27,12 +27,15 @@ PR 队列：不在本文维护动态状态；以 GitHub 当前 PR 列表为准
 - `#165`：新增嵌套 vault file tree，外壳更接近 Obsidian 文件树。
 - `#166`：收敛 Welcome 首页、增加项目切换器、压缩设置页状态展示，并把 PDF / 图片默认解析计划改为 PaddleOCR-VL-1.5 配置门禁。
 - `#167`：更新 R1 产品对齐矩阵，拆出后续外壳优先 PR。
+- `#168`：记录 runtime dependency strategy，明确短期 fork-first、长期 upstream-first 的 runtime 策略。
 - `#169`：阻止 invalid parser artifact 进入 runtime ingest；`combined.md` 只有在 manifest/source hash/parser/artifact hash/chunks 契约有效时才会被标记为可 ingest。
 
-### 2. 当前仍需提交的文档分支
+### 2. DeepSeek 全流程复验进展
 
-- R4 runtime 策略说明已整理到 `docs/runtime-dependency-strategy.md`。
-- 本文档只记录 fork-first / upstream-first 决策、当前 detection 事实和下一步 runtime identity reporting，不改变 runtime 代码。
+- open-llm-wiki `#14` 已修复 batch PDF corpus 默认走 layout API 的问题，`pdf_corpus_to_markdown.py` 现在支持 `--parser {auto,local-text,layout-api}`，默认可本地解析。
+- 已用 `deepseek_paper/` 的 22 篇 PDF 跑完独立 vault 流程：local parse、ingest、source discovery、claims、metric normalize、semantic QA、science review queue、contradiction scan、concept revision、wiki grow、graph export、lint、eval。
+- run report 位于：`/Users/wu/Desktop/wu/AAaabaidu/LLM-Wiki /runs/20260528-130635-deepseek-fullflow/validation-summary.md`。
+- query writeback 已验证：existing concept 可以生成 diff-only proposal；无明确 approval 时 `--apply` 被拒绝；未静默写回。
 
 ### 3. 已验证过的能力
 
@@ -40,6 +43,8 @@ PR 队列：不在本文维护动态状态；以 GitHub 当前 PR 列表为准
 - TypeScript typecheck 通过。
 - `#166`、`#167`、`#169` 的 macOS / Windows CI 均通过。
 - `#169` 本地已通过 `npm test`、`npm run build`、`cargo test --manifest-path src-tauri/Cargo.toml --lib` 和 `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`。
+- `#168` 已合并，desktop `main` 当前为 `cc9ed40`。
+- DeepSeek full-flow 的 open-llm-wiki 验证通过：`check_quality.py`、`wiki_eval.py`、`wiki_lint.py --fail-on p1`、22 PDF local parse、post-writeback lint/eval。
 
 ## 三、仍未完成的需求
 
@@ -86,27 +91,33 @@ PR 队列：不在本文维护动态状态；以 GitHub 当前 PR 列表为准
 ### R3. DeepSeek 论文全流程复验
 
 优先级：P0  
-状态：未在最新主线完整重跑
+状态：已完成一轮真实 full-flow，仍有产品缺口
+
+已完成：
+
+- `deepseek_paper/` 真实 PDF 数量：22。
+- 全流程：ingest、parse、source discovery、claims、normalize、semantic QA、science review queue、contradiction scan、concept revision、grow、graph、lint、eval。
+- query：已生成 DeepSeek research-strategy answer，明确区分 evidence / inference / hypothesis / forecast。
+- writeback：已生成 proposal，未获得 approval 时没有实际写回；`--apply` 无 approval 会失败。
+- 所有输出保持在 `LLM-Wiki/` 工作区内，未修改 `deepseek_paper/`。
 
 还缺：
 
-- 重新记录 `deepseek_paper/` 真实 PDF 数量。
-- 跑完整流程：ingest、parse、source discovery、claims、normalize、semantic QA、science review queue、contradiction scan、concept revision、lint、eval。
-- 用 Obsidian 打开生成 vault 并保存 first-screen screenshot。
-- 运行 DeepSeek research-strategy query，验证 evidence / inference / hypothesis / forecast 区分。
-- 验证 query writeback 只生成 proposal，不静默写回。
+- Obsidian GUI first-screen screenshot 本次捕获为全黑，只能记录为 attempted but not observable，不能声称已完成第一感受评分。
+- graph canvas 已生成，但 lint 提示没有从 source/concept 页面引用。
+- query writeback 只能对已存在 concept 生成 proposal，不能直接为 `concepts/deepseek-research-strategy.md` 生成 new-file proposal。
 
 验收标准：
 
 - 生成本地 run report。
-- 记录 Obsidian first impression 评分。
+- 记录 Obsidian first impression 评分，或在无法观察 GUI 时给出明确原因和手动复验命令。
 - 所有输出保持在 `LLM-Wiki/` 工作区内。
 - 不修改 `deepseek_paper/`。
 
 ### R4. open-llm-wiki 内核依赖策略
 
 优先级：P0  
-状态：策略已在 `docs/runtime-dependency-strategy.md` 记录；代码只做现状梳理，未实现新的 runtime identity 检测
+状态：策略文档已合并；runtime identity 检测未实现
 
 还缺：
 
@@ -120,6 +131,24 @@ PR 队列：不在本文维护动态状态；以 GitHub 当前 PR 列表为准
 - 本 PR 验收：`npm test`、`npm run build`。
 - runtime fork 验收命令仍保留：`uv sync --dev --locked`、`uv run python scripts/check_quality.py`、`uv run python scripts/wiki_eval.py`、`uv run python scripts/wiki_lint.py examples/minimal-vault --fail-on p1`。
 - 下一 PR 验收：桌面端设置页或 Dashboard 显示 runtime source、commit 或版本，并区分 vault-local runtime 与 external runtime path。
+
+### R4.1 query writeback new-file proposal
+
+优先级：P1
+状态：DeepSeek full-flow 暴露出的 runtime/product gap
+
+还缺：
+
+- `wiki_writeback.py` proposal mode 需要支持 missing `concepts/*.md` target，生成 reviewable new-file diff。
+- `--apply` 仍必须要求 explicit approval note。
+- 新页面 proposal 必须继续要求 source citation，不能接受无证据 body。
+
+验收标准：
+
+- 对 `concepts/deepseek-research-strategy.md` 这类新 target 可生成 proposal diff。
+- 未加 `--apply` 时不写入 vault。
+- `--apply` 无 approval note 时失败。
+- `wiki_eval.py`、`wiki_lint.py --fail-on p1` 通过。
 
 ### R5. ERNIE live answer 质量验证
 
@@ -178,7 +207,8 @@ PR 队列：不在本文维护动态状态；以 GitHub 当前 PR 列表为准
 
 ## 四、建议下一步优先顺序
 
-1. 先合并本分支的外壳修复和 PaddleOCR plan 修复，因为这会直接改善你现在看到的产品效果。
-2. 接着做 R2：真实 PaddleOCR-VL-1.5 service 闭环。
-3. 再做 R3：DeepSeek 论文全流程复验，生成可展示报告。
-4. 最后做 R1 的深层阅读体验和图谱交互，不要一次性把所有 Obsidian 功能塞进一个 PR。
+1. 先做 R1 外壳体验：按 nashsu / Obsidian 工作区继续补主阅读区、图谱入口、project switcher、settings 布局和 provider/plugin 使用路径。
+2. 同步推进 R2：真实 PaddleOCR-VL-1.5 service 闭环，重点是 key/endpoint 配置、connection test、parser dry-run、artifact contract。
+3. 做 R4.1：query writeback 支持新 concept proposal，这能直接增强“从问答沉淀成 wiki insight”的演示链路。
+4. 做 R5：ERNIE live answer 质量验证，公共 CI 继续用 mock，本地/演示环境用真实 key。
+5. 最后补 R6/R7：中文 zip 导入和跨平台发布稳定性。
