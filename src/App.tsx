@@ -1009,6 +1009,13 @@ const initialDesktopSettings: DesktopSettings = {
   autoRunLintAfterWrites: true,
   autoOpenReportsAfterFailures: false,
   skipObsidianPluginDownloads: true,
+  ocrParser: {
+    enabled: false,
+    providerId: "paddleocr-vl15",
+    endpoint: "",
+    apiKeyEnvVar: "PADDLEOCR_API_KEY",
+    model: "PaddleOCR-VL-1.5",
+  },
   llmProviderCenter: {
     activeProviderId: null,
     providers: {},

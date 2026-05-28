@@ -16,6 +16,8 @@ import type {
   LlmCliCheckResult,
   LlmProviderTestResult,
   IngestPlan,
+  OcrParserSettings,
+  OcrParserTestResult,
   ProviderAnswerDraft,
   ProviderAnswerRequest,
   QueryWritebackDraft,
@@ -116,6 +118,30 @@ export function checkErnieProvider(): Promise<LlmProviderTestResult> {
 
 export function testErnieChat(model: string): Promise<LlmProviderTestResult> {
   return invoke("test_ernie_chat", { model });
+}
+
+export function checkPaddleOcrVl15Config(settings: OcrParserSettings): Promise<OcrParserTestResult> {
+  return invoke("check_paddleocr_vl15_config", {
+    endpoint: settings.endpoint,
+    apiKeyEnvVar: settings.apiKeyEnvVar,
+    model: settings.model,
+  });
+}
+
+export function testPaddleOcrVl15Connection(settings: OcrParserSettings): Promise<OcrParserTestResult> {
+  return invoke("test_paddleocr_vl15_connection", {
+    endpoint: settings.endpoint,
+    apiKeyEnvVar: settings.apiKeyEnvVar,
+    model: settings.model,
+  });
+}
+
+export function testPaddleOcrVl15Parser(settings: OcrParserSettings): Promise<OcrParserTestResult> {
+  return invoke("test_paddleocr_vl15_parser", {
+    endpoint: settings.endpoint,
+    apiKeyEnvVar: settings.apiKeyEnvVar,
+    model: settings.model,
+  });
 }
 
 export function generateLlmAnswer(vaultPath: string, request: LlmAnswerRequest): Promise<LlmAnswerResult> {
