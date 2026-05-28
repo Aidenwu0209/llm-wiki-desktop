@@ -67,7 +67,7 @@ Clean-profile pass criteria:
 
 ## Windows Desktop Smoke
 
-Windows is not covered by the current GitHub Actions runner, so the macOS CI must be paired with a targeted helper-contract check and a manual Windows smoke before calling a Windows build ready.
+GitHub Actions currently runs the npm install, test, and frontend build path on both `macos-latest` and `windows-latest`. That CI coverage does not produce or validate a packaged Windows desktop bundle, does not prove Obsidian protocol handling, and does not replace the manual Windows smoke before calling a Windows build ready.
 
 Required Windows behaviors:
 
