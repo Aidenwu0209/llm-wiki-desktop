@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Copy, ExternalLink, FolderOpen, GitCompare, Lightbulb, Maximize, Network, RotateCcw, Search, ShieldAlert, SquareStack, ZoomIn, ZoomOut } from "lucide-react";
 import type { UiLanguage } from "../../i18n";
+import { radialGraphPositions, radialGraphRadii } from "../../lib/graphLayout";
 import type {
   ClaimLedgerItem,
   DesktopRegistryEntry,
@@ -152,7 +153,7 @@ const edgeTypes: Array<ResearchEdgeType | "all"> = [
 
 const VISUAL_NODE_LIMIT = 96;
 const VISUAL_EDGE_LIMIT = 120;
-const GRAPH_VIEWBOX = { width: 860, height: 360, centerX: 430, centerY: 180 };
+const GRAPH_VIEWBOX = { width: 860, height: 560, centerX: 430, centerY: 280 };
 const GRAPH_ZOOM_MIN = 1;
 const GRAPH_ZOOM_MAX = 2.2;
 const GRAPH_ZOOM_STEP = 0.25;
@@ -1423,25 +1424,6 @@ function edgeSearchText(
   ].join("\n").toLowerCase();
 }
 
-function graphPositions(nodes: ResearchGraphNode[]) {
-  const grouped = nodes.reduce<Record<number, ResearchGraphNode[]>>((acc, node) => {
-    const column = typeOrder[node.type];
-    acc[column] = [...(acc[column] || []), node];
-    return acc;
-  }, {});
-  const positions = new Map<string, { x: number; y: number }>();
-  const columns = [0, 1, 2, 3];
-  for (const column of columns) {
-    const columnNodes = grouped[column] || [];
-    const x = 70 + column * 245;
-    columnNodes.forEach((node, index) => {
-      const y = 48 + ((index + 1) * 300) / (columnNodes.length + 1);
-      positions.set(node.id, { x, y });
-    });
-  }
-  return positions;
-}
-
 function graphSummaryText(graph: ResearchGraph, language: UiLanguage) {
   const concepts = graph.summary.keyConcepts.map((node) => node.label).join(", ") || (language === "zh" ? "暂无概念连接" : "no concept links yet");
   const reviewPressure = graph.summary.reviewNodes + graph.summary.traceabilityBreaks;
@@ -1597,7 +1579,8 @@ export function ResearchGraphPage({
   const visualNodeIds = new Set(visualNodes.map((node) => node.id));
   const visualEdges = visibleEdges.filter((edge) => visualNodeIds.has(edge.from) && visualNodeIds.has(edge.to)).slice(0, VISUAL_EDGE_LIMIT);
   const graphIsTruncated = visualNodes.length < filteredNodes.length || visualEdges.length < visibleEdges.length;
-  const positions = graphPositions(visualNodes);
+  const positions = radialGraphPositions(visualNodes, visualEdges, GRAPH_VIEWBOX, typeOrder);
+  const orbitRadii = radialGraphRadii(GRAPH_VIEWBOX);
   const communityByNodeId = useMemo(() => {
     const result = new Map<string, { community: ResearchGraphCommunity; color: string }>();
     graph.summary.communities.forEach((community, index) => {
@@ -1955,6 +1938,15 @@ export function ResearchGraphPage({
                     <path d="M 0 0 L 10 5 L 0 10 z" />
                   </marker>
                 </defs>
+                {[orbitRadii.inner, orbitRadii.middle, orbitRadii.outer].map((radius) => (
+                  <circle
+                    key={radius}
+                    className="graph-orbit"
+                    cx={GRAPH_VIEWBOX.centerX}
+                    cy={GRAPH_VIEWBOX.centerY}
+                    r={radius}
+                  />
+                ))}
                 {visualEdges.map((edge) => {
                   const from = positions.get(edge.from);
                   const to = positions.get(edge.to);
@@ -1978,6 +1970,7 @@ export function ResearchGraphPage({
                   const active = selected?.id === node.id;
                   const hovered = hoveredId === node.id;
                   const related = focusedNeighborhood.nodeIds.has(node.id);
+                  const labelOnRight = position.x >= GRAPH_VIEWBOX.centerX;
                   return (
                     <g
                       key={node.id}
@@ -2004,7 +1997,13 @@ export function ResearchGraphPage({
                     >
                       <title>{node.label}</title>
                       <circle cx={position.x} cy={position.y} r={active ? 13 : 10} fill={nodeFillColor(node)} />
-                      <text x={position.x + 15} y={position.y + 4}>{node.label.slice(0, 32)}</text>
+                      <text
+                        x={position.x + (labelOnRight ? 15 : -15)}
+                        y={position.y + 4}
+                        textAnchor={labelOnRight ? "start" : "end"}
+                      >
+                        {node.label.slice(0, 32)}
+                      </text>
                     </g>
                   );
                 })}

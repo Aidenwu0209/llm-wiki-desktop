@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { radialGraphPositions, radialGraphRadii } from "../src/lib/graphLayout";
 import { buildVaultFileTree } from "../src/lib/vaultTree";
 import { findVaultFileForOpen, vaultRelativeOpenPath } from "../src/lib/vaultPath";
 import type { VaultFile } from "../src/types";
@@ -84,5 +85,40 @@ assert.equal(
   null,
   "absolute paths outside the selected vault should not be treated as internal files",
 );
+
+const graphViewBox = { width: 860, height: 560, centerX: 430, centerY: 280 };
+const graphNodes = [
+  { id: "concept:strategy", type: "concept", label: "DeepSeek Research Strategy" },
+  { id: "source:v3", type: "source", label: "DeepSeek-V3 Technical Report" },
+  { id: "source:r1", type: "source", label: "DeepSeek-R1 Reasoning Report" },
+  { id: "claim:efficiency", type: "claim", label: "Efficiency claim" },
+  { id: "review:forecast", type: "review", label: "Review forecast" },
+  { id: "proposal:writeback", type: "proposal", label: "Writeback proposal" },
+];
+const graphEdges = [
+  { from: "source:v3", to: "claim:efficiency" },
+  { from: "claim:efficiency", to: "concept:strategy" },
+  { from: "source:r1", to: "concept:strategy" },
+  { from: "review:forecast", to: "concept:strategy" },
+  { from: "proposal:writeback", to: "concept:strategy" },
+];
+const graphPositions = radialGraphPositions(graphNodes, graphEdges, graphViewBox, {
+  source: 0,
+  claim: 1,
+  concept: 2,
+  review: 3,
+  proposal: 3,
+});
+const radii = radialGraphRadii(graphViewBox);
+const distanceFromCenter = (id: string) => {
+  const position = graphPositions.get(id);
+  assert.ok(position, `missing graph position for ${id}`);
+  return Math.hypot(position.x - graphViewBox.centerX, position.y - graphViewBox.centerY);
+};
+
+assert.equal(graphPositions.size, graphNodes.length, "radial graph should position every visible node");
+assert.ok(distanceFromCenter("concept:strategy") <= radii.inner + 1, "highest-degree concept should anchor the graph center");
+assert.ok(distanceFromCenter("source:v3") >= radii.middle - 1, "linked evidence nodes should be arranged on a circular ring");
+assert.ok(distanceFromCenter("review:forecast") >= radii.outer - 1, "review/proposal nodes should stay on the outer evidence ring");
 
 console.log("Vault file tree checks passed.");

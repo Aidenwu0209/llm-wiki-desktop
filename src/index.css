@@ -4969,14 +4969,10 @@ body[data-shell-panel-resizing="true"] * {
 
 .research-graph-svg {
   width: 100%;
-  min-height: 380px;
+  min-height: 520px;
   border: 1px solid #d8ded9;
   border-radius: 8px;
-  background:
-    linear-gradient(90deg, rgba(35, 65, 83, 0.04) 1px, transparent 1px),
-    linear-gradient(rgba(35, 65, 83, 0.04) 1px, transparent 1px),
-    #ffffff;
-  background-size: 24px 24px;
+  background: #fbfcfa;
 }
 
 .graph-zoom-controls {
@@ -5010,6 +5006,14 @@ body[data-shell-panel-resizing="true"] * {
   stroke: #aeb8b2;
   stroke-width: 1.2;
   transition: opacity 140ms ease, stroke-width 140ms ease;
+}
+
+.research-graph-svg .graph-orbit {
+  fill: none;
+  stroke: rgba(76, 96, 86, 0.14);
+  stroke-width: 1.1;
+  stroke-dasharray: 3 8;
+  pointer-events: none;
 }
 
 .research-graph-svg marker path {
