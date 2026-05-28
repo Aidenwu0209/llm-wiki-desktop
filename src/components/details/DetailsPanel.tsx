@@ -1204,53 +1204,57 @@ export function DetailsPanel({
                 <p>{text.previewUnavailable}: {previewState.error}</p>
               )}
               {previewState.status === "ready" && (
-                <>
-                  <div className="details-preview-document">
-                    <PagePropertyList items={sourceProperties} title={text.properties} />
-                    <PagePropertyList empty={text.noFrontmatter} items={frontmatterProperties} title={text.frontmatter} />
-                  </div>
-                  <PreviewOutline headings={previewHeadings} title={text.outline} />
-                  <div className="details-markdown-preview">
-                    <MarkdownPreview
-                      content={parsedPreview?.content || previewState.preview.content}
-                      currentPath={previewState.preview.path || selection.file.path}
-                      headingIdPrefix="details-preview-"
-                      vaultPath={vaultPath}
+                <div className="details-reading-layout">
+                  <aside className="details-reading-pane">
+                    <RelationSummaryStrip
+                      text={text}
                       outboundLinks={selection.file.outboundLinks}
-                      onOpenVaultPath={onOpenVaultPath}
+                      inboundLinks={selection.file.inboundLinks}
+                      sourceRefs={sourceRefs}
                     />
+                    <div className="details-link-grid">
+                      <LinkList
+                        title={text.outboundLinks}
+                        links={selection.file.outboundLinks}
+                        empty={text.noLinks}
+                        moreLabel={text.moreLinks}
+                        onOpenVaultPath={onOpenVaultPath}
+                      />
+                      <LinkList
+                        title={text.inboundLinks}
+                        links={selection.file.inboundLinks}
+                        empty={text.noLinks}
+                        moreLabel={text.moreLinks}
+                        onOpenVaultPath={onOpenVaultPath}
+                      />
+                      <LinkList
+                        title={text.sourceRefs}
+                        links={sourceRefs}
+                        empty={text.noSourceRefs}
+                        moreLabel={text.moreLinks}
+                        onOpenVaultPath={onOpenVaultPath}
+                      />
+                    </div>
+                    <PreviewOutline headings={previewHeadings} title={text.outline} />
+                  </aside>
+                  <div className="details-reading-main">
+                    <div className="details-preview-document">
+                      <PagePropertyList items={sourceProperties} title={text.properties} />
+                      <PagePropertyList empty={text.noFrontmatter} items={frontmatterProperties} title={text.frontmatter} />
+                    </div>
+                    <div className="details-markdown-preview">
+                      <MarkdownPreview
+                        content={parsedPreview?.content || previewState.preview.content}
+                        currentPath={previewState.preview.path || selection.file.path}
+                        headingIdPrefix="details-preview-"
+                        vaultPath={vaultPath}
+                        outboundLinks={selection.file.outboundLinks}
+                        onOpenVaultPath={onOpenVaultPath}
+                      />
+                    </div>
+                    {previewState.preview.truncated && <p>{text.truncatedPreview}</p>}
                   </div>
-                  <RelationSummaryStrip
-                    text={text}
-                    outboundLinks={selection.file.outboundLinks}
-                    inboundLinks={selection.file.inboundLinks}
-                    sourceRefs={sourceRefs}
-                  />
-                  <div className="details-link-grid">
-                    <LinkList
-                      title={text.outboundLinks}
-                      links={selection.file.outboundLinks}
-                      empty={text.noLinks}
-                      moreLabel={text.moreLinks}
-                      onOpenVaultPath={onOpenVaultPath}
-                    />
-                    <LinkList
-                      title={text.inboundLinks}
-                      links={selection.file.inboundLinks}
-                      empty={text.noLinks}
-                      moreLabel={text.moreLinks}
-                      onOpenVaultPath={onOpenVaultPath}
-                    />
-                    <LinkList
-                      title={text.sourceRefs}
-                      links={sourceRefs}
-                      empty={text.noSourceRefs}
-                      moreLabel={text.moreLinks}
-                      onOpenVaultPath={onOpenVaultPath}
-                    />
-                  </div>
-                  {previewState.preview.truncated && <p>{text.truncatedPreview}</p>}
-                </>
+                </div>
               )}
             </div>
           )}

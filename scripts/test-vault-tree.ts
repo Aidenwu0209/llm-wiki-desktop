@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { radialGraphPositions, radialGraphRadii } from "../src/lib/graphLayout";
 import { buildVaultFileTree } from "../src/lib/vaultTree";
-import { findVaultFileForOpen, vaultRelativeOpenPath } from "../src/lib/vaultPath";
+import { canPreviewVaultPath, createPreviewVaultFile, findVaultFileForOpen, vaultRelativeOpenPath } from "../src/lib/vaultPath";
 import type { VaultFile } from "../src/types";
 
 function file(path: string, kind: VaultFile["kind"] = "note", title?: string): VaultFile {
@@ -51,7 +51,7 @@ assert.equal(reviews.children[0]?.path, "reviews/query-writeback");
 const vaultPath = "/Users/demo/DeepSeek LLM Wiki";
 const files = [
   file("Home.md", "note"),
-  file("concepts/deepseek-research-strategy.md", "concept"),
+  file("concepts/deepseek-research-strategy.md", "concept", "DeepSeek research strategy"),
   file("\\sources\\LLM-0001-deepseek-v3.md", "source"),
 ];
 
@@ -74,6 +74,29 @@ assert.equal(
   findVaultFileForOpen(vaultPath, files, "sources/LLM-0001-deepseek-v3.md")?.kind,
   "source",
   "opening a normalized path should match files stored with Windows separators",
+);
+assert.equal(
+  findVaultFileForOpen(vaultPath, files, "LLM-0001-deepseek-v3")?.kind,
+  "source",
+  "reading workspace links should resolve by basename without requiring an exact extension",
+);
+assert.equal(
+  findVaultFileForOpen(vaultPath, files, "DeepSeek research strategy")?.kind,
+  "concept",
+  "reading workspace links should resolve by title when a source ref or graph label omits the path",
+);
+assert.ok(
+  canPreviewVaultPath("reviews/query-writeback/deepseek-research-insights.md"),
+  "review/proposal markdown should stay in the desktop reading workspace",
+);
+assert.ok(
+  canPreviewVaultPath("_state/source-registry.jsonl"),
+  "runtime-owned state text files should stay previewable in the desktop reading workspace",
+);
+assert.equal(
+  createPreviewVaultFile(vaultPath, "_state/source-registry.jsonl")?.kind,
+  "note",
+  "preview fallback files should remain safe read-only note-like entries",
 );
 assert.equal(
   findVaultFileForOpen(vaultPath, files, "../outside.md"),

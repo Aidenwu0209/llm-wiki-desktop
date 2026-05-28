@@ -1787,6 +1787,8 @@ function App() {
   const [importResults, setImportResults] = useState<ImportPreview[]>([]);
   const [selectedFile, setSelectedFile] = useState<VaultFile | null>(null);
   const [detailSelection, setDetailSelection] = useState<DetailSelection>({ kind: "empty" });
+  const [readingHistory, setReadingHistory] = useState<VaultFile[]>([]);
+  const [readingHistoryIndex, setReadingHistoryIndex] = useState(-1);
   const [actionFilter, setActionFilter] = useState("open");
   const [claimFilter, setClaimFilter] = useState("needs_review");
   const [reviewFilter, setReviewFilter] = useState("open");
@@ -1825,6 +1827,9 @@ function App() {
   const previewSidebarTitle = detailDrawerOpen
     ? (interfaceLanguage === "zh" ? "阅读工作区" : "Reading workspace")
     : researchPanelLabel;
+  const readingHistoryRef = useRef<VaultFile[]>([]);
+  const readingHistoryIndexRef = useRef(-1);
+  const previousVaultPathRef = useRef(vaultPath);
   const researchReadiness = useMemo(
     () => shellResearchReadiness(desktopSettings, interfaceLanguage),
     [desktopSettings, interfaceLanguage],
@@ -1870,6 +1875,7 @@ function App() {
   const progressDone = jobs.filter((job) => job.status === "succeeded").length;
   const activePageCopy = copy.pages[activePage];
   const pageVisible = (...pages: ShellPage[]) => pages.includes(activePage);
+  const activeReadingPath = detailSelection.kind === "source" ? detailSelection.file.path : (readingHistory[readingHistoryIndex]?.path || "");
   const shellLayoutStyle = activePage !== "settings"
     ? ({
       "--knowledge-sidebar-width": `${knowledgeSidebarWidth}px`,
@@ -1930,6 +1936,14 @@ function App() {
   }, [detailSelection]);
 
   useEffect(() => {
+    readingHistoryRef.current = readingHistory;
+  }, [readingHistory]);
+
+  useEffect(() => {
+    readingHistoryIndexRef.current = readingHistoryIndex;
+  }, [readingHistoryIndex]);
+
+  useEffect(() => {
     if (activePage === "settings") {
       setDetailDrawerOpen(false);
       setResearchPanelOpen(false);
@@ -1959,14 +1973,49 @@ function App() {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  useEffect(() => {
+    if (previousVaultPathRef.current === vaultPath) return;
+    previousVaultPathRef.current = vaultPath;
+    if (detailSelection.kind === "source") {
+      setReadingHistory([detailSelection.file]);
+      setReadingHistoryIndex(0);
+      return;
+    }
+    setReadingHistory([]);
+    setReadingHistoryIndex(-1);
+  }, [detailSelection, vaultPath]);
+
   const vaultFilePath = (path?: string | null) => {
     if (!path) return vaultPath;
     if (path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path)) return path;
     return `${vaultPath}/${path}`;
   };
-  const selectFileForDetails = (file: VaultFile) => {
+  const selectFileForDetails = (file: VaultFile, options?: { pushHistory?: boolean }) => {
     setSelectedFile(file);
     setDetailSelection({ kind: "source", file });
+    if (options?.pushHistory === false) return;
+    const currentHistory = readingHistoryRef.current;
+    const currentIndex = readingHistoryIndexRef.current;
+    const current = currentHistory[currentIndex];
+    if (current?.path === file.path) return;
+    const truncated = currentHistory.slice(0, currentIndex + 1).filter((item) => item.path !== file.path);
+    const nextHistory = [...truncated, file].slice(-8);
+    const nextIndex = nextHistory.length - 1;
+    setReadingHistory(nextHistory);
+    setReadingHistoryIndex(nextIndex);
+  };
+  const stepReadingHistory = (delta: -1 | 1) => {
+    const nextIndex = readingHistoryIndexRef.current + delta;
+    const next = readingHistoryRef.current[nextIndex];
+    if (!next) return;
+    setReadingHistoryIndex(nextIndex);
+    selectFileForDetails(next, { pushHistory: false });
+  };
+  const openReadingHistoryItem = (index: number) => {
+    const next = readingHistoryRef.current[index];
+    if (!next) return;
+    setReadingHistoryIndex(index);
+    selectFileForDetails(next, { pushHistory: false });
   };
   const focusVaultItem = (path?: string | null) => {
     if (!vaultPath || !path) return false;
@@ -2077,6 +2126,8 @@ function App() {
     setVaultSuggestions([{ label: "DeepSeek Shell Demo", path: shellDemoVaultPath, kind: "deepseek", exists: true }]);
     setDetailSelection({ kind: "claim", claim: shellDemoClaims[0], evidence: shellDemoEvidencePaths[0] });
     setSelectedFile(shellDemoFiles[1]);
+    setReadingHistory([shellDemoFiles[1]]);
+    setReadingHistoryIndex(0);
     setActivePage("dashboard");
     setRestoreError(null);
     setError(null);
@@ -3369,7 +3420,7 @@ function App() {
     const runnableCount = runnableIngestCount(ingestPlan);
     const reviewCount = openReviewCount + (status?.counts.claimsNeedingReview ?? 0);
     const traceabilityCount = traceabilityWarnings.length + brokenEvidence + contractP0P1;
-    const selectedPath = selectedFile?.path || (detailSelection.kind === "source" ? detailSelection.file.path : "");
+    const selectedPath = activeReadingPath;
     return (
       <aside className="knowledge-sidebar" aria-label={interfaceLanguage === "zh" ? "知识树和文件树" : "Knowledge and file tree"}>
         <div className="knowledge-project">
@@ -4479,6 +4530,17 @@ function App() {
               <XCircle size={15} />
             </button>
           </div>
+          {detailDrawerOpen && readingHistory.length > 0 && (
+            <ReadingHistoryBar
+              activeIndex={readingHistoryIndex}
+              activePath={activeReadingPath}
+              history={readingHistory}
+              language={interfaceLanguage}
+              onBack={() => stepReadingHistory(-1)}
+              onForward={() => stepReadingHistory(1)}
+              onSelect={openReadingHistoryItem}
+            />
+          )}
           {detailDrawerOpen && (
             <DetailsPanel
               language={interfaceLanguage}
@@ -4486,7 +4548,7 @@ function App() {
               vaultPath={vaultPath}
               obsidianUri={entryNote?.obsidianUri}
               resolveVaultPath={vaultFilePath}
-              onOpenPath={openPath}
+              onOpenPath={openWorkspacePath}
               onRevealPath={revealResolvedPath}
               onOpenVaultPath={openVaultItem}
               onCopy={copyText}
@@ -4643,6 +4705,58 @@ function CommandPalette({
   );
 }
 
+function ReadingHistoryBar({
+  history,
+  activeIndex,
+  activePath,
+  language,
+  onBack,
+  onForward,
+  onSelect,
+}: {
+  history: VaultFile[];
+  activeIndex: number;
+  activePath?: string;
+  language: UiLanguage;
+  onBack: () => void;
+  onForward: () => void;
+  onSelect: (index: number) => void;
+}) {
+  const canGoBack = activeIndex > 0;
+  const canGoForward = activeIndex >= 0 && activeIndex < history.length - 1;
+  const title = language === "zh" ? "最近页面" : "Recent pages";
+  const back = language === "zh" ? "上一个页面" : "Previous page";
+  const forward = language === "zh" ? "下一个页面" : "Next page";
+  return (
+    <div className="reading-history-bar" aria-label={title}>
+      <div className="reading-history-controls">
+        <button type="button" onClick={onBack} disabled={!canGoBack} title={back} aria-label={back}>
+          <ChevronLeft size={14} />
+        </button>
+        <button type="button" onClick={onForward} disabled={!canGoForward} title={forward} aria-label={forward}>
+          <ChevronRight size={14} />
+        </button>
+      </div>
+      <div className="reading-history-tabs" role="tablist" aria-label={title}>
+        {history.map((file, index) => (
+          <button
+            key={`${file.path}-${index}`}
+            type="button"
+            role="tab"
+            aria-selected={activeIndex === index}
+            className={classNames("reading-history-tab", activePath === file.path && "active")}
+            onClick={() => onSelect(index)}
+            title={file.path}
+          >
+            <span>{file.title || file.name}</span>
+            <em>{file.kind}</em>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ShellTreeSection({
   title,
   meta,
@@ -4663,6 +4777,17 @@ function ShellTreeSection({
   onSelect: (file: VaultFile) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
+  const selectedRef = useRef<HTMLButtonElement | null>(null);
+  const selectedInside = files.some((file) => file.path === selectedPath);
+
+  useEffect(() => {
+    if (selectedInside) setExpanded(true);
+  }, [selectedInside]);
+
+  useEffect(() => {
+    selectedRef.current?.scrollIntoView({ block: "nearest" });
+  }, [selectedPath]);
+
   return (
     <section className="shell-tree-section">
       <button
@@ -4684,6 +4809,7 @@ function ShellTreeSection({
               className={classNames("shell-tree-item", selectedPath === file.path && "selected")}
               onClick={() => onSelect(file)}
               title={file.path}
+              ref={selectedPath === file.path ? selectedRef : undefined}
             >
               <strong>{file.title || file.name}</strong>
               <span>{fileStatusLabel(file, language)}</span>
@@ -4743,7 +4869,18 @@ function ShellFileTreeNodeView({
 }) {
   const selectedInside = nodeContainsSelected(node, selectedPath);
   const [expanded, setExpanded] = useState(true);
+  const selectedRef = useRef<HTMLButtonElement | null>(null);
   const depthStyle = { "--tree-depth": node.depth } as CSSProperties;
+
+  useEffect(() => {
+    if (selectedInside) setExpanded(true);
+  }, [selectedInside]);
+
+  useEffect(() => {
+    if (selectedPath === node.path) {
+      selectedRef.current?.scrollIntoView({ block: "nearest" });
+    }
+  }, [node.path, selectedPath]);
 
   if (node.kind === "file") {
     if (!node.file) return null;
@@ -4757,6 +4894,7 @@ function ShellFileTreeNodeView({
         onClick={() => onSelect(file)}
         title={node.path}
         style={depthStyle}
+        ref={selectedPath === node.path ? selectedRef : undefined}
       >
         <strong>{file.title || node.name}</strong>
         <span>{fileStatusLabel(file, language)} · {node.path}</span>
