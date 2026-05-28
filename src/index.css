@@ -1097,25 +1097,59 @@ body[data-shell-panel-resizing="true"] * {
   background: #64706a;
 }
 
-.rail-status {
-  width: 14px;
-  height: 14px;
-  align-self: center;
+.rail-project-switcher {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
   margin-top: auto;
-  border-radius: 999px;
-  background: #8b9690;
-  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.08);
 }
 
-.rail-status.ok {
+.rail-project-switcher-trigger {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  min-height: 38px;
+  border-color: rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: #20302a;
+  color: #dbe7df;
+  padding: 0;
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.07);
+}
+
+.rail-project-switcher-trigger:hover:not(:disabled),
+.rail-project-switcher-trigger[aria-expanded="true"] {
+  border-color: rgba(255, 255, 255, 0.28);
+  background: #eef6f0;
+  color: #17201d;
+}
+
+.rail-project-switcher-trigger span {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 10px;
+  height: 10px;
+  border: 2px solid #17201d;
+  border-radius: 999px;
+  background: #8b9690;
+}
+
+.rail-project-switcher-trigger:hover:not(:disabled) span,
+.rail-project-switcher-trigger[aria-expanded="true"] span {
+  border-color: #eef6f0;
+}
+
+.rail-project-switcher-trigger.ok span {
   background: #6fb082;
 }
 
-.rail-status.warn {
+.rail-project-switcher-trigger.warn span {
   background: #d6aa54;
 }
 
-.rail-status.danger {
+.rail-project-switcher-trigger.danger span {
   background: #d07878;
 }
 
@@ -1444,7 +1478,7 @@ body[data-shell-panel-resizing="true"] * {
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
-  z-index: 70;
+  z-index: 160;
   display: grid;
   gap: 6px;
   width: min(420px, calc(100vw - 240px));
@@ -1463,6 +1497,8 @@ body[data-shell-panel-resizing="true"] * {
   grid-template-areas:
     "name meta"
     "path path";
+  column-gap: 10px;
+  align-items: start;
   justify-items: start;
   height: auto;
   min-height: 54px;
@@ -1471,15 +1507,22 @@ body[data-shell-panel-resizing="true"] * {
 }
 
 .project-switcher-menu > button strong {
+  display: block;
   grid-area: name;
+  max-width: 100%;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1.35;
 }
 
 .project-switcher-menu > button span {
+  display: block;
   grid-area: meta;
+  max-width: 108px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: #64706a;
   font-size: 11px;
   font-weight: 800;
@@ -1487,12 +1530,15 @@ body[data-shell-panel-resizing="true"] * {
 }
 
 .project-switcher-menu > button code {
+  display: block;
   grid-area: path;
   max-width: 100%;
   margin-top: 3px;
+  overflow: hidden;
   overflow-wrap: anywhere;
   color: #40514a;
   font-size: 10.5px;
+  line-height: 1.35;
 }
 
 .project-switcher-actions {

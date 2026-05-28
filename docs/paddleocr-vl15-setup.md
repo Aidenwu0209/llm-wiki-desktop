@@ -1,8 +1,8 @@
 # PaddleOCR-VL-1.5 Provider Setup
 
-LLM Wiki Desktop uses PaddleOCR-VL-1.5 as the default PDF / image parser plan. The app reads the credential from `PADDLEOCR_API_KEY`; it does not save or display the key.
+LLM Wiki Desktop uses PaddleOCR-VL-1.5 as the default PDF / image parser plan. The app reads the credential from the API key environment variable configured in Settings -> OCR Parser; the default is `PADDLEOCR_API_KEY`. It does not save or display the key value.
 
-When OCR Parser is enabled, the service URL is configured, and `PADDLEOCR_API_KEY` is visible to the desktop process, the desktop parse action routes PDF / image inputs through the runtime `pdf_to_markdown.py --parser layout-api --api-url <PaddleOCR endpoint>` wire format. The desktop process passes the secret only as a child-process environment override and never writes the key value into logs, settings, or vault state.
+When OCR Parser is enabled, the service URL is configured, and the selected API key environment variable is visible to the desktop process, the desktop parse action routes PDF / image inputs through the runtime `pdf_to_markdown.py --parser layout-api --api-url <PaddleOCR endpoint>` wire format. The desktop process passes the secret only as a child-process environment override and never writes the key value into logs, settings, or vault state.
 
 If any of those requirements are missing, ingest planning blocks with `paddleocr_config_required` and does not upload raw documents.
 
@@ -23,14 +23,14 @@ $env:PADDLEOCR_API_KEY = Read-Host "PADDLEOCR_API_KEY"
 npm run desktop:dev
 ```
 
-For packaged app testing, launch the app from a shell or OS-level secure environment where `PADDLEOCR_API_KEY` is visible to the desktop process.
+For packaged app testing, launch the app from a shell or OS-level secure environment where the configured API key environment variable is visible to the desktop process.
 
 ## Configure The Service URL
 
 Open Settings -> OCR Parser and set:
 
 - Endpoint / Service URL: your PaddleOCR-VL-1.5 service endpoint
-- API key source: `PADDLEOCR_API_KEY`
+- API key environment variable: `PADDLEOCR_API_KEY` by default, or a custom uppercase env var name
 - Model: `PaddleOCR-VL-1.5`
 
 The service URL must use HTTPS unless it is a localhost HTTP URL for a local test service.
@@ -41,7 +41,7 @@ For a real parse action, the desktop process sends configuration to the runtime 
 
 - command argument: `--api-url <PaddleOCR endpoint>`
 - child-process environment overrides:
-  - `OPEN_LLM_WIKI_LAYOUT_TOKEN=<value from PADDLEOCR_API_KEY>`
+  - `OPEN_LLM_WIKI_LAYOUT_TOKEN=<value from the configured API key env var>`
   - `OPEN_LLM_WIKI_LAYOUT_MODEL=<configured OCR model>`
   - `OPEN_LLM_WIKI_LAYOUT_ENDPOINT=<configured OCR endpoint>`
 
@@ -49,7 +49,7 @@ The desktop settings file stores the endpoint, model, and API-key environment-va
 
 ## Status Values
 
-- `missing_key`: `PADDLEOCR_API_KEY` is not visible to the desktop process.
+- `missing_key`: the configured API key environment variable is not visible to the desktop process.
 - `missing_endpoint`: endpoint / service URL is empty or invalid.
 - `ready`: Test connection reached the configured service URL successfully.
 - `connection_failed`: the endpoint is invalid or did not respond successfully.
@@ -83,7 +83,7 @@ The desktop shell treats missing or mismatched contract metadata as `artifact_in
 
 ## Ingest Plan Behavior
 
-- `paddleocr_config_required`: PaddleOCR-VL-1.5 is selected but OCR Parser is disabled, endpoint is empty, or `PADDLEOCR_API_KEY` is not visible.
+- `paddleocr_config_required`: PaddleOCR-VL-1.5 is selected but OCR Parser is disabled, endpoint is empty, or the configured API key environment variable is not visible.
 - `parse_required`: PaddleOCR-VL-1.5 config is ready and the next parse action will run the runtime parser against the configured endpoint.
 - `cloud_parser_approval_required`: `layout-api` was selected directly, but cloud parsing approval is off.
 

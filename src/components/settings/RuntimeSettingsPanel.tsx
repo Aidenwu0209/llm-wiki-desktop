@@ -153,7 +153,7 @@ const settingsCopy = {
     notConfigured: "未配置",
     lastChecked: "上次检查",
     errorDetails: "错误详情",
-    apiKeySource: "API key 来源",
+    apiKeySource: "API key 环境变量",
     apiKeyHint: "请把密钥放在系统环境变量、本地运行时或启动脚本中；桌面设置只保存变量名。",
     local: "本地",
     activeKeyHidden: "已选择，未保存密钥",
@@ -190,7 +190,7 @@ const settingsCopy = {
     allowCloudParser: "允许 layout-api 使用云解析器",
     ocrProvider: "OCR Provider",
     ocrTitle: "OCR 解析器",
-    ocrSubtitle: "配置 PaddleOCR-VL-1.5 的服务地址、模型和环境变量。真实 parse 会把 endpoint 作为 runtime `--api-url` 参数传入，并通过子进程环境覆盖传递 token / model；桌面端不会保存 key 明文。PDF / 图片默认优先使用该 parser；未配置时 ingest plan 会明确阻塞，不会上传 raw document。",
+    ocrSubtitle: "配置 PaddleOCR-VL-1.5 的服务地址、模型和 API key 环境变量。真实 parse 会把 endpoint 作为 runtime `--api-url` 参数传入，并通过子进程环境覆盖传递 token / model；桌面端不会保存 key 明文。PDF / 图片默认优先使用该 parser；未配置时 ingest plan 会明确阻塞，不会上传 raw document。",
     ocrEnable: "启用 PaddleOCR-VL-1.5 配置",
     ocrEndpoint: "Endpoint / Service URL",
     ocrEndpointPlaceholder: "https://your-paddleocr-service.example.com/v1",
@@ -198,7 +198,7 @@ const settingsCopy = {
     ocrStatus: "状态",
     testParser: "测试解析器",
     dryRun: "Dry run",
-    noRawUpload: "Test parser 只验证配置和 key 可见性，不上传 raw document，也不会写回知识库。真实解析只会在启用 OCR Parser、配置 endpoint 且进程可见 PADDLEOCR_API_KEY 后运行，并由 runtime 生成可校验的 artifact contract 元数据。",
+    noRawUpload: "Test parser 只验证配置和 key 可见性，不上传 raw document，也不会写回知识库。真实解析只会在启用 OCR Parser、配置 endpoint 且进程可见所选 API key 环境变量后运行，并由 runtime 生成可校验的 artifact contract 元数据。",
     statusMissingKey: "missing_key",
     statusMissingEndpoint: "missing_endpoint",
     statusReady: "ready",
@@ -240,7 +240,7 @@ const settingsCopy = {
     notConfigured: "Not configured",
     lastChecked: "Last checked",
     errorDetails: "Error details",
-    apiKeySource: "API key source",
+    apiKeySource: "API key environment variable",
     apiKeyHint: "Put the secret in an environment variable, local runtime config, or launch script. Desktop settings only save the variable name.",
     local: "Local",
     activeKeyHidden: "Selected, key not stored",
@@ -277,7 +277,7 @@ const settingsCopy = {
     allowCloudParser: "Allow cloud parser for layout-api",
     ocrProvider: "OCR provider",
     ocrTitle: "OCR Parser",
-    ocrSubtitle: "Configure the PaddleOCR-VL-1.5 service URL, model, and environment variable. Real parse passes the endpoint as the runtime `--api-url` argument and passes token / model through child-process environment overrides; the desktop app never stores the key value. PDF / image parsing defaults to this parser; the ingest plan blocks clearly until it is configured and never uploads raw documents while unconfigured.",
+    ocrSubtitle: "Configure the PaddleOCR-VL-1.5 service URL, model, and API key environment variable. Real parse passes the endpoint as the runtime `--api-url` argument and passes token / model through child-process environment overrides; the desktop app never stores the key value. PDF / image parsing defaults to this parser; the ingest plan blocks clearly until it is configured and never uploads raw documents while unconfigured.",
     ocrEnable: "Enable PaddleOCR-VL-1.5 config",
     ocrEndpoint: "Endpoint / Service URL",
     ocrEndpointPlaceholder: "https://your-paddleocr-service.example.com/v1",
@@ -285,7 +285,7 @@ const settingsCopy = {
     ocrStatus: "Status",
     testParser: "Test parser",
     dryRun: "Dry run",
-    noRawUpload: "Test parser only validates config and key visibility. It does not upload raw documents or write back to the vault. Real parsing runs only after OCR Parser is enabled, an endpoint is configured, and PADDLEOCR_API_KEY is visible to the desktop process, then the runtime must emit verifiable artifact-contract metadata.",
+    noRawUpload: "Test parser only validates config and key visibility. It does not upload raw documents or write back to the vault. Real parsing runs only after OCR Parser is enabled, an endpoint is configured, and the selected API key environment variable is visible to the desktop process, then the runtime must emit verifiable artifact-contract metadata.",
     statusMissingKey: "missing_key",
     statusMissingEndpoint: "missing_endpoint",
     statusReady: "ready",
@@ -310,6 +310,10 @@ function classNames(...items: Array<string | false | null | undefined>) {
 
 function apiProviderReady(config: LlmProviderConfig) {
   return Boolean(config.apiKeyConfigured || isLoopbackHttpEndpoint(config.apiBaseUrl));
+}
+
+function sanitizeEnvVarName(value: string) {
+  return value.toUpperCase().replace(/[^A-Z0-9_]/g, "");
 }
 
 function defaultProviderConfig(providerId: string): LlmProviderConfig {
@@ -347,20 +351,21 @@ function normalizeOcrParserSettings(settings: DesktopSettings): OcrParserSetting
   return {
     ...defaultOcrParserSettings(),
     ...(settings.ocrParser || {}),
-    apiKeyEnvVar: PADDLEOCR_VL15_API_KEY_ENV,
+    apiKeyEnvVar: settings.ocrParser?.apiKeyEnvVar?.trim() || PADDLEOCR_VL15_API_KEY_ENV,
     model: settings.ocrParser?.model?.trim() || PADDLEOCR_VL15_DEFAULT_MODEL,
   };
 }
 
 function desktopShellUnavailableOcrResult(ocrParser: OcrParserSettings, parserDryRun: boolean): OcrParserTestResult {
+  const apiKeyEnv = ocrParser.apiKeyEnvVar || PADDLEOCR_VL15_API_KEY_ENV;
   return {
     provider: PADDLEOCR_VL15_PROVIDER_ID,
     model: ocrParser.model || PADDLEOCR_VL15_DEFAULT_MODEL,
     status: "missing_key",
     checkedAt: new Date().toISOString(),
-    message: "Desktop shell unavailable; PADDLEOCR_API_KEY can only be checked inside the Tauri desktop process.",
+    message: `Desktop shell unavailable; ${apiKeyEnv} can only be checked inside the Tauri desktop process.`,
     errorCode: "desktop_unavailable",
-    apiKeyEnv: PADDLEOCR_VL15_API_KEY_ENV,
+    apiKeyEnv,
     endpoint: ocrParser.endpoint || "",
     latencyMs: null,
     parserDryRun,
@@ -541,7 +546,7 @@ export function RuntimeSettingsPanel({
             checkedAt: new Date().toISOString(),
             message: String(err),
             errorCode: "config_error",
-            apiKeyEnv: PADDLEOCR_VL15_API_KEY_ENV,
+            apiKeyEnv: ocrParser.apiKeyEnvVar || PADDLEOCR_VL15_API_KEY_ENV,
             endpoint: ocrParser.endpoint || "",
             latencyMs: null,
             parserDryRun: false,
@@ -651,7 +656,7 @@ export function RuntimeSettingsPanel({
       setCheckingApi(providerId);
       try {
         const model = config.customModel.trim() || config.selectedModel || "ernie-5.1";
-        const result = await testErnieChat(model);
+        const result = await testErnieChat(model, config.apiKeyEnvVar, config.apiBaseUrl);
         setProviderTests((current) => ({ ...current, [providerId]: result }));
         const available = result.status === "ready";
         setApiChecks((current) => ({
@@ -702,7 +707,7 @@ export function RuntimeSettingsPanel({
             checkedAt: new Date().toISOString(),
             message,
             errorCode: "unknown",
-            apiKeyEnv: "AI_STUDIO_API_KEY",
+            apiKeyEnv: config.apiKeyEnvVar || "AI_STUDIO_API_KEY",
             baseUrl: config.apiBaseUrl || "https://aistudio.baidu.com/llm/lmapi/v3",
             models: [],
           },
@@ -802,7 +807,6 @@ export function RuntimeSettingsPanel({
       ocrParser: {
         ...ocrParser,
         ...patch,
-        apiKeyEnvVar: PADDLEOCR_VL15_API_KEY_ENV,
       },
     });
   };
@@ -832,7 +836,7 @@ export function RuntimeSettingsPanel({
           checkedAt: new Date().toISOString(),
           message: String(err),
           errorCode: "test_error",
-        apiKeyEnv: PADDLEOCR_VL15_API_KEY_ENV,
+        apiKeyEnv: ocrParser.apiKeyEnvVar || PADDLEOCR_VL15_API_KEY_ENV,
         endpoint: ocrParser.endpoint || "",
         latencyMs: null,
         parserDryRun: kind === "parser",
@@ -939,8 +943,8 @@ export function RuntimeSettingsPanel({
         <div className={ocrParser.enabled ? "settings-notice" : "settings-notice danger"}>
           {ocrParser.enabled
             ? (isZh
-              ? "PaddleOCR 会使用 OCR Parser 分区的 endpoint 和 PADDLEOCR_API_KEY；未通过配置检查时 ingest plan 会保持阻塞。"
-              : "PaddleOCR uses the endpoint and PADDLEOCR_API_KEY from the OCR Parser section; the ingest plan remains blocked until the config is checkable.")
+              ? `PaddleOCR 会使用 OCR Parser 分区的 endpoint 和 ${ocrParser.apiKeyEnvVar || PADDLEOCR_VL15_API_KEY_ENV}；未通过配置检查时 ingest plan 会保持阻塞。`
+              : `PaddleOCR uses the endpoint and ${ocrParser.apiKeyEnvVar || PADDLEOCR_VL15_API_KEY_ENV} from the OCR Parser section; the ingest plan remains blocked until the config is checkable.`)
             : (isZh
               ? "已选择 PaddleOCR 默认解析器，但 OCR Parser 还未启用。请到 OCR Parser 分区配置，或显式切回 auto/local-text。"
               : "PaddleOCR is selected as the default parser, but OCR Parser is not enabled. Configure OCR Parser or explicitly switch back to auto/local-text.")}
@@ -1048,7 +1052,11 @@ export function RuntimeSettingsPanel({
                 </label>
                 <label>
                   {text.apiKeySource}
-                  <input value={ocrParser.apiKeyEnvVar} readOnly />
+                  <input
+                    value={ocrParser.apiKeyEnvVar}
+                    onChange={(event) => updateOcrParser({ apiKeyEnvVar: sanitizeEnvVarName(event.target.value) })}
+                    placeholder={PADDLEOCR_VL15_API_KEY_ENV}
+                  />
                 </label>
                 <label>
                   {text.ocrModel}
@@ -1612,18 +1620,16 @@ export function RuntimeSettingsPanel({
                                 {text.apiBaseUrl}
                                 <input
                                   value={config.apiBaseUrl || ""}
-                                  onChange={(event) => updateProvider(provider.id, { apiBaseUrl: event.target.value })}
+                                  onChange={(event) => updateProvider(provider.id, { apiBaseUrl: event.target.value, apiKeyConfigured: false })}
                                   placeholder={"defaultApiBaseUrl" in provider ? provider.defaultApiBaseUrl : "https://api.example.com/v1"}
-                                  readOnly={isErnie}
                                 />
                               </label>
                               <label className="field-label">
                                 {isErnie ? text.apiKeySource : text.apiKeyEnvVar}
                                 <input
                                   value={config.apiKeyEnvVar || ""}
-                                  onChange={(event) => updateProvider(provider.id, { apiKeyEnvVar: event.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "") })}
+                                  onChange={(event) => updateProvider(provider.id, { apiKeyEnvVar: sanitizeEnvVarName(event.target.value), apiKeyConfigured: false })}
                                   placeholder={"defaultApiKeyEnvVar" in provider ? provider.defaultApiKeyEnvVar : "PROVIDER_API_KEY"}
-                                  readOnly={isErnie}
                                 />
                               </label>
                               <button

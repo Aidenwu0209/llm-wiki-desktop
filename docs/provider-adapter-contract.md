@@ -2,6 +2,8 @@
 
 LLM Wiki Desktop keeps provider configuration as a desktop orchestration concern. The desktop app may store provider id, base URL, model choice, protocol, and the name of the environment variable that contains a credential. It must not store or print raw API keys.
 
+Default credential environment variables such as `AI_STUDIO_API_KEY` and `PADDLEOCR_API_KEY` are only defaults. The Settings UI must allow users to change the environment variable name and the runtime/test paths must honor that saved source.
+
 Core knowledge generation, QA, review queue handling, and writeback approval remain owned by the `open-llm-wiki` runtime or an explicit adapter contract. Provider calls from the desktop UI are limited to user-approved answer generation or connection tests and must not silently upload raw documents.
 
 ## Adapter Fields
