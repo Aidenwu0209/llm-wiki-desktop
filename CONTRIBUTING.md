@@ -83,4 +83,4 @@ Do not bypass:
 
 ## License Note
 
-This repository currently includes an MIT license placeholder because maintainers have not specified another license in the tracked project files. Maintainers should confirm the license choice before public release or broad external contribution.
+This repository does not yet declare a project license. Maintainers must choose and commit a real license before public release, redistribution, or broad external contribution.
