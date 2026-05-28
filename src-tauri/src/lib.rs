@@ -10232,6 +10232,7 @@ fn ernie_result(
 
 fn redact_provider_error(value: &str) -> String {
     let mut text = value.replace('\n', " ");
+    text = redact_secret_assignment_values(text);
     for separator in ["=", ":"] {
         let marker = format!("{ERNIE_AI_STUDIO_API_KEY_ENV}{separator}");
         let mut search_from = 0;
@@ -10267,6 +10268,50 @@ fn redact_provider_error(value: &str) -> String {
         }
     }
     short_error_body(&text)
+}
+
+fn redact_secret_assignment_values(mut text: String) -> String {
+    let mut search_from = 0;
+    while let Some(relative_index) = text[search_from..].find(['=', ':']) {
+        let separator_index = search_from + relative_index;
+        let marker_start = text[..separator_index]
+            .rfind(|ch: char| !(ch == '_' || ch.is_ascii_uppercase() || ch.is_ascii_digit()))
+            .map(|index| index + 1)
+            .unwrap_or(0);
+        let marker = &text[marker_start..separator_index];
+        let secret_like_marker = marker.len() >= 3
+            && marker
+                .chars()
+                .all(|ch| ch == '_' || ch.is_ascii_uppercase() || ch.is_ascii_digit())
+            && ["KEY", "TOKEN", "SECRET", "PASSWORD", "AUTH"]
+                .iter()
+                .any(|needle| marker.contains(needle));
+        if !secret_like_marker {
+            search_from = separator_index + 1;
+            continue;
+        }
+
+        let mut value_start = separator_index + 1;
+        while text
+            .as_bytes()
+            .get(value_start)
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            value_start += 1;
+        }
+        let value_len = text[value_start..]
+            .find(|ch: char| ch.is_whitespace() || matches!(ch, ',' | '&' | ';'))
+            .unwrap_or_else(|| text[value_start..].len());
+        if value_len == 0 {
+            search_from = value_start;
+            continue;
+        }
+        if &text[value_start..value_start + value_len] != "[redacted]" {
+            text.replace_range(value_start..value_start + value_len, "[redacted]");
+        }
+        search_from = value_start + "[redacted]".len();
+    }
+    text
 }
 
 fn ernie_models_url(base_url: &str) -> String {
@@ -15259,6 +15304,16 @@ mod tests {
         let redacted = redact_provider_error("Authorization: Bearer secret-token-value");
         assert!(!redacted.contains("secret-token-value"));
         assert!(redacted.contains("[redacted]"));
+    }
+
+    #[test]
+    fn provider_errors_redact_custom_secret_env_markers() {
+        let redacted = redact_provider_error(
+            "CUSTOM_OCR_SECRET=secret-one CUSTOM_AI_STUDIO_KEY: secret-two NORMAL_FIELD=visible",
+        );
+        assert!(!redacted.contains("secret-one"));
+        assert!(!redacted.contains("secret-two"));
+        assert!(redacted.contains("NORMAL_FIELD=visible"));
     }
 
     #[test]
