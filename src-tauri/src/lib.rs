@@ -214,16 +214,43 @@ struct VaultStatus {
     path: String,
     schema_valid: bool,
     runtime_installed: bool,
+    vault_local_runtime_installed: bool,
+    external_runtime_ready: bool,
     obsidian_enabled: bool,
     dashboard_available: bool,
     runtime_scripts_path: Option<String>,
     runtime_version: Option<String>,
+    runtime_identity: Option<RuntimeIdentity>,
+    vault_local_runtime: Option<RuntimeIdentity>,
+    external_runtime: Option<RuntimeIdentity>,
     last_updated: Option<String>,
     counts: VaultCounts,
     reading_quality: Option<ReadingQualitySummary>,
     product_scorecard: Option<ProductScorecardSummary>,
     files: Vec<VaultFile>,
     errors: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeGitIdentity {
+    remote_url: Option<String>,
+    branch: Option<String>,
+    commit: Option<String>,
+    dirty: bool,
+    repository_kind: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeIdentity {
+    source: String,
+    path: String,
+    scripts_path: Option<String>,
+    version: Option<String>,
+    ready: bool,
+    git: Option<RuntimeGitIdentity>,
+    warnings: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -4842,8 +4869,7 @@ fn runtime_scripts_path(vault: &Path) -> Option<PathBuf> {
     }
 }
 
-fn runtime_version_for_scripts(scripts: &Path) -> Option<String> {
-    let root = scripts.parent().unwrap_or(scripts);
+fn runtime_version_for_root(root: &Path) -> Option<String> {
     let version_file = root.join("VERSION");
     if version_file.is_file() {
         let version = read_text(&version_file).trim().to_string();
@@ -4853,7 +4879,9 @@ fn runtime_version_for_scripts(scripts: &Path) -> Option<String> {
     }
     for candidate in [
         root.join("pyproject.toml"),
-        root.parent()?.join("pyproject.toml"),
+        root.parent()
+            .map(|parent| parent.join("pyproject.toml"))
+            .unwrap_or_else(|| root.join("pyproject.toml")),
     ] {
         let text = read_text(&candidate);
         for line in text.lines() {
@@ -4869,6 +4897,145 @@ fn runtime_version_for_scripts(scripts: &Path) -> Option<String> {
         }
     }
     Some(format!("desktop-adapter {}", env!("CARGO_PKG_VERSION")))
+}
+
+fn runtime_version_for_scripts(scripts: &Path) -> Option<String> {
+    let root = scripts.parent().unwrap_or(scripts);
+    runtime_version_for_root(root)
+}
+
+fn external_runtime_scripts_path(root: &Path) -> Option<PathBuf> {
+    let direct = root.join("scripts");
+    if direct.join("wiki_lint.py").is_file() {
+        return Some(direct);
+    }
+    if root.join("wiki_lint.py").is_file() {
+        return Some(root.to_path_buf());
+    }
+    None
+}
+
+fn runtime_root_for_scripts(scripts: &Path) -> PathBuf {
+    if scripts
+        .file_name()
+        .and_then(OsStr::to_str)
+        .is_some_and(|name| name == "scripts")
+    {
+        scripts.parent().unwrap_or(scripts).to_path_buf()
+    } else {
+        scripts.to_path_buf()
+    }
+}
+
+fn git_output(root: &Path, args: &[&str]) -> Option<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+fn runtime_repository_kind(remote_url: Option<&str>) -> String {
+    let Some(remote) = remote_url else {
+        return "unknown".to_string();
+    };
+    let normalized = remote
+        .trim()
+        .trim_end_matches(".git")
+        .replace(':', "/")
+        .to_ascii_lowercase();
+    if normalized.contains("aidenwu0209/open-llm-wiki") {
+        "fork".to_string()
+    } else if normalized.contains("nashsu/llm_wiki") || normalized.contains("nashsu/open-llm-wiki")
+    {
+        "upstream".to_string()
+    } else {
+        "unknown".to_string()
+    }
+}
+
+fn runtime_git_identity(root: &Path) -> Option<RuntimeGitIdentity> {
+    if git_output(root, &["rev-parse", "--is-inside-work-tree"]).as_deref() != Some("true") {
+        return None;
+    }
+    let remote_url = git_output(root, &["config", "--get", "remote.origin.url"]);
+    let branch =
+        git_output(root, &["rev-parse", "--abbrev-ref", "HEAD"]).filter(|value| value != "HEAD");
+    let commit = git_output(root, &["rev-parse", "--short=12", "HEAD"]);
+    let dirty =
+        git_output(root, &["status", "--porcelain"]).is_some_and(|value| !value.trim().is_empty());
+    let repository_kind = runtime_repository_kind(remote_url.as_deref());
+    Some(RuntimeGitIdentity {
+        remote_url,
+        branch,
+        commit,
+        dirty,
+        repository_kind,
+    })
+}
+
+fn runtime_identity_for_path(
+    source: &str,
+    root: &Path,
+    scripts: Option<PathBuf>,
+) -> RuntimeIdentity {
+    let git_root = scripts
+        .as_deref()
+        .map(runtime_root_for_scripts)
+        .unwrap_or_else(|| root.to_path_buf());
+    let git = runtime_git_identity(&git_root);
+    let ready = scripts.is_some();
+    let version = scripts
+        .as_deref()
+        .and_then(runtime_version_for_scripts)
+        .or_else(|| runtime_version_for_root(root));
+    let mut warnings = Vec::new();
+    if !ready {
+        warnings.push(
+            "missing runtime scripts; command execution may fail until wiki_lint.py is available"
+                .to_string(),
+        );
+    }
+    match git.as_ref() {
+        Some(identity) => {
+            match identity.repository_kind.as_str() {
+                "fork" => {}
+                "upstream" => warnings.push(
+                    "runtime remote is upstream; fork-first remains recommended for demo/release validation"
+                        .to_string(),
+                ),
+                _ => warnings.push(
+                    "runtime remote is unknown; verify the desktop/runtime script contract before validation"
+                        .to_string(),
+                ),
+            }
+            if identity.dirty {
+                warnings.push(
+                    "runtime checkout has uncommitted changes; record this before release validation"
+                        .to_string(),
+                );
+            }
+        }
+        None => warnings.push(
+            "runtime path is not a Git checkout; remote, branch, and commit are unavailable"
+                .to_string(),
+        ),
+    }
+    RuntimeIdentity {
+        source: source.to_string(),
+        path: to_display(root),
+        scripts_path: scripts.as_ref().map(|path| to_display(path)),
+        version,
+        ready,
+        git,
+        warnings,
+    }
 }
 
 fn latest_modified_time(root: &Path) -> Option<String> {
@@ -5141,16 +5308,53 @@ fn inspect_vault(vault_path: String) -> Result<VaultStatus, String> {
         .flatten()
         .map(|report| report.summary);
     let runtime = runtime_scripts_path(&vault);
+    let vault_runtime_root = vault.join(".open-llm-wiki");
+    let vault_local_runtime = vault_runtime_root
+        .is_dir()
+        .then(|| runtime_identity_for_path("vault-local", &vault_runtime_root, runtime.clone()));
+    let external_runtime = load_desktop_settings(to_display(&vault))
+        .ok()
+        .map(|settings| settings.runtime_path.trim().to_string())
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .map(|path| {
+            let scripts = path
+                .exists()
+                .then(|| external_runtime_scripts_path(&path))
+                .flatten();
+            runtime_identity_for_path("external", &path, scripts)
+        });
+    let runtime_identity = vault_local_runtime
+        .as_ref()
+        .filter(|identity| identity.ready)
+        .cloned()
+        .or_else(|| external_runtime.clone())
+        .or_else(|| vault_local_runtime.clone());
     Ok(VaultStatus {
         path: to_display(&vault),
         schema_valid: errors.is_empty(),
         runtime_installed: runtime.is_some(),
+        vault_local_runtime_installed: runtime.is_some(),
+        external_runtime_ready: external_runtime
+            .as_ref()
+            .is_some_and(|identity| identity.ready),
         obsidian_enabled: vault.join(".obsidian").is_dir(),
         dashboard_available: vault.join("_dashboard.md").is_file(),
-        runtime_scripts_path: runtime.as_ref().map(|path| to_display(path)),
-        runtime_version: runtime
+        runtime_scripts_path: runtime_identity
             .as_ref()
-            .and_then(|path| runtime_version_for_scripts(path)),
+            .and_then(|identity| identity.scripts_path.clone())
+            .or_else(|| runtime.as_ref().map(|path| to_display(path))),
+        runtime_version: runtime_identity
+            .as_ref()
+            .and_then(|identity| identity.version.clone())
+            .or_else(|| {
+                runtime
+                    .as_ref()
+                    .and_then(|path| runtime_version_for_scripts(path))
+            }),
+        runtime_identity,
+        vault_local_runtime,
+        external_runtime,
         last_updated: latest_modified_time(&vault),
         counts: VaultCounts {
             inbox: files.iter().filter(|item| item.kind == "inbox").count(),
@@ -5599,7 +5803,7 @@ fn is_archive_metadata_path(path: &Path) -> bool {
     }
     parts
         .pop()
-        .is_some_and(|file_name| file_name.starts_with("._"))
+        .is_some_and(|file_name| file_name == ".DS_Store" || file_name.starts_with("._"))
 }
 
 fn join_folder_context(base: Option<&str>, rel_parent: Option<&Path>) -> Option<String> {
@@ -14253,6 +14457,44 @@ mod tests {
         zip.finish().expect("finish zip");
     }
 
+    fn run_git(root: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn write_runtime_script(runtime: &Path) {
+        write_text(
+            &runtime.join("scripts").join("wiki_lint.py"),
+            "# test runtime script\n",
+        )
+        .expect("write runtime script");
+    }
+
+    fn init_git_runtime(runtime: &Path, remote: &str, with_scripts: bool) {
+        fs::create_dir_all(runtime).expect("create runtime root");
+        if with_scripts {
+            write_runtime_script(runtime);
+        }
+        write_text(&runtime.join("VERSION"), "9.8.7-test\n").expect("write version");
+        run_git(runtime, &["init"]);
+        run_git(runtime, &["config", "user.email", "desktop@example.test"]);
+        run_git(runtime, &["config", "user.name", "Desktop Test"]);
+        run_git(runtime, &["checkout", "-b", "desktop-test"]);
+        run_git(runtime, &["add", "."]);
+        run_git(runtime, &["commit", "-m", "runtime fixture"]);
+        run_git(runtime, &["remote", "add", "origin", remote]);
+    }
+
     fn write_valid_parser_artifact(
         vault: &Path,
         source: &Path,
@@ -16073,6 +16315,132 @@ mod tests {
     }
 
     #[test]
+    fn runtime_identity_detects_external_fork_checkout() {
+        let vault = test_vault("runtime-identity-fork");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        let runtime = test_vault("runtime-identity-fork-checkout");
+        init_git_runtime(
+            &runtime,
+            "https://github.com/Aidenwu0209/open-llm-wiki.git",
+            true,
+        );
+        let mut settings = DesktopSettings::default();
+        settings.runtime_path = to_display(&runtime);
+        save_desktop_settings(to_display(&vault), settings).expect("save settings");
+
+        let status = inspect_vault(to_display(&vault)).expect("inspect vault");
+        let identity = status.runtime_identity.expect("runtime identity");
+        let git = identity.git.expect("git identity");
+        assert!(!status.vault_local_runtime_installed);
+        assert!(status.external_runtime_ready);
+        assert_eq!(identity.source, "external");
+        assert_eq!(identity.version.as_deref(), Some("9.8.7-test"));
+        assert!(identity
+            .scripts_path
+            .as_deref()
+            .is_some_and(|path| path.ends_with("scripts")));
+        assert_eq!(git.repository_kind, "fork");
+        assert_eq!(git.branch.as_deref(), Some("desktop-test"));
+        assert!(git
+            .commit
+            .as_deref()
+            .is_some_and(|commit| commit.len() == 12));
+        assert!(!git.dirty);
+
+        let _ = fs::remove_dir_all(vault);
+        let _ = fs::remove_dir_all(runtime);
+    }
+
+    #[test]
+    fn runtime_identity_warns_for_upstream_dirty_checkout() {
+        let vault = test_vault("runtime-identity-upstream");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        let runtime = test_vault("runtime-identity-upstream-checkout");
+        init_git_runtime(&runtime, "https://github.com/nashsu/llm_wiki.git", true);
+        write_text(&runtime.join("runtime-dirty.txt"), "dirty\n").expect("dirty runtime");
+        let mut settings = DesktopSettings::default();
+        settings.runtime_path = to_display(&runtime);
+        save_desktop_settings(to_display(&vault), settings).expect("save settings");
+
+        let status = inspect_vault(to_display(&vault)).expect("inspect vault");
+        let identity = status.runtime_identity.expect("runtime identity");
+        let git = identity.git.expect("git identity");
+        assert!(status.external_runtime_ready);
+        assert_eq!(git.repository_kind, "upstream");
+        assert!(git.dirty);
+        assert!(identity
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("upstream")));
+        assert!(identity
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("uncommitted changes")));
+
+        let _ = fs::remove_dir_all(vault);
+        let _ = fs::remove_dir_all(runtime);
+    }
+
+    #[test]
+    fn runtime_identity_reports_missing_scripts_without_blocking_settings() {
+        let vault = test_vault("runtime-identity-missing-scripts");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        let runtime = test_vault("runtime-identity-missing-scripts-checkout");
+        init_git_runtime(
+            &runtime,
+            "https://github.com/Aidenwu0209/open-llm-wiki.git",
+            false,
+        );
+        let mut settings = DesktopSettings::default();
+        settings.runtime_path = to_display(&runtime);
+        save_desktop_settings(to_display(&vault), settings).expect("save settings");
+
+        let status = inspect_vault(to_display(&vault)).expect("inspect vault");
+        let identity = status.external_runtime.expect("external runtime identity");
+        assert!(!status.external_runtime_ready);
+        assert!(!identity.ready);
+        assert_eq!(identity.version.as_deref(), Some("9.8.7-test"));
+        assert!(identity.scripts_path.is_none());
+        assert!(identity
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("missing runtime scripts")));
+
+        let _ = fs::remove_dir_all(vault);
+        let _ = fs::remove_dir_all(runtime);
+    }
+
+    #[test]
+    fn runtime_identity_reports_non_git_runtime_directory() {
+        let vault = test_vault("runtime-identity-non-git");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        let runtime = test_vault("runtime-identity-non-git-dir");
+        write_runtime_script(&runtime);
+        write_text(
+            &runtime.join("pyproject.toml"),
+            "[project]\nversion = \"0.1.2-local\"\n",
+        )
+        .expect("write pyproject");
+        let mut settings = DesktopSettings::default();
+        settings.runtime_path = to_display(&runtime);
+        save_desktop_settings(to_display(&vault), settings).expect("save settings");
+
+        let status = inspect_vault(to_display(&vault)).expect("inspect vault");
+        let identity = status.runtime_identity.expect("runtime identity");
+        assert!(status.external_runtime_ready);
+        assert_eq!(identity.source, "external");
+        assert!(identity.git.is_none());
+        assert_eq!(identity.version.as_deref(), Some("0.1.2-local"));
+        assert!(identity
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("not a Git checkout")));
+
+        let _ = fs::remove_dir_all(vault);
+        let _ = fs::remove_dir_all(runtime);
+    }
+
+    #[test]
     fn archive_zip_corpus_package_extracts_supported_sources() {
         let vault = test_vault("archive-zip-import");
         let incoming = test_vault("external-archive-zip");
@@ -16084,7 +16452,12 @@ mod tests {
                     "deepseek_paper_中文/DeepSeek-V3_中文.md",
                     b"# DeepSeek V3\n\nChinese source body.\n",
                 ),
+                (
+                    "deepseek_paper_中文/nested/reports/DeepSeek-R1_中文.txt",
+                    b"DeepSeek R1 Chinese source body.\n",
+                ),
                 ("deepseek_paper_中文/_translation_cache.json", b"{}"),
+                ("deepseek_paper_中文/.DS_Store", b"metadata"),
                 (
                     "__MACOSX/deepseek_paper_中文/._DeepSeek-V3_中文.md",
                     b"metadata",
@@ -16095,7 +16468,7 @@ mod tests {
         let batch = import_sources_impl(&vault, vec![to_display(&archive)], false, false)
             .expect("import archive package");
 
-        assert_eq!(batch.imported.len(), 1);
+        assert_eq!(batch.imported.len(), 2);
         assert!(batch.errors.is_empty(), "{:?}", batch.errors);
         assert_eq!(batch.imported[0].file_name, "DeepSeek-V3_中文.md");
         assert_eq!(batch.imported[0].mime, "text/markdown");
@@ -16107,6 +16480,16 @@ mod tests {
                 |path| path.contains("raw/inbox/deepseek_paper_中文/DeepSeek-V3_中文.md")
             )
         );
+        let nested_import = batch
+            .imported
+            .iter()
+            .find(|entry| entry.file_name == "DeepSeek-R1_中文.txt")
+            .expect("nested Chinese text entry");
+        assert!(nested_import.source_path.contains(
+            "deepseek_paper_中文.zip!deepseek_paper_中文/nested/reports/DeepSeek-R1_中文.txt"
+        ));
+        assert!(nested_import.target_path.as_deref().is_some_and(|path| path
+            .contains("raw/inbox/deepseek_paper_中文/nested/reports/DeepSeek-R1_中文.txt")));
         assert!(!vault
             .join("raw")
             .join("inbox")
@@ -16117,6 +16500,12 @@ mod tests {
             .join("inbox")
             .join("deepseek_paper_中文")
             .join("_translation_cache.json")
+            .exists());
+        assert!(!vault
+            .join("raw")
+            .join("inbox")
+            .join("deepseek_paper_中文")
+            .join(".DS_Store")
             .exists());
         assert!(!vault.join("raw").join("inbox").join("__MACOSX").exists());
 
@@ -16137,6 +16526,10 @@ mod tests {
             .actions
             .iter()
             .any(|action| action.kind == "archive_extract_required"));
+        assert!(!plan
+            .entries
+            .iter()
+            .any(|entry| entry.file_name == ".DS_Store"));
 
         let _ = fs::remove_dir_all(vault);
         let _ = fs::remove_dir_all(incoming);

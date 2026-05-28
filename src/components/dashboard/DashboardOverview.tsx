@@ -118,6 +118,18 @@ const dashboardCopy = {
     runtimeReady: "可用",
     runtimeMissing: "缺失",
     runtimeDetail: "选择本地 open-llm-wiki 运行时路径",
+    runtimeSource: {
+      vaultLocal: "vault-local",
+      external: "external",
+      fork: "fork",
+      upstream: "upstream",
+      unknown: "unknown",
+      dirty: "dirty",
+      clean: "clean",
+      noGit: "non-Git",
+      remote: "remote",
+      scripts: "scripts",
+    },
     obsidian: "Obsidian",
     obsidianConfigured: "已配置",
     obsidianMissing: "未配置",
@@ -228,6 +240,18 @@ const dashboardCopy = {
     runtimeReady: "Ready",
     runtimeMissing: "Missing",
     runtimeDetail: "Select open-llm-wiki runtime path",
+    runtimeSource: {
+      vaultLocal: "vault-local",
+      external: "external",
+      fork: "fork",
+      upstream: "upstream",
+      unknown: "unknown",
+      dirty: "dirty",
+      clean: "clean",
+      noGit: "non-Git",
+      remote: "remote",
+      scripts: "scripts",
+    },
     obsidian: "Obsidian",
     obsidianConfigured: "Configured",
     obsidianMissing: "Not configured",
@@ -420,6 +444,40 @@ function readingQualityDetail(
   return items.slice(0, 4).join(" · ") || text.readingQualityBreakdown.noCategory;
 }
 
+function runtimeIsReady(status: VaultStatus | null) {
+  return Boolean(status?.runtimeInstalled || status?.externalRuntimeReady);
+}
+
+function runtimeSourceLabel(source: string, text: typeof dashboardCopy.zh | typeof dashboardCopy.en) {
+  if (source === "vault-local") return text.runtimeSource.vaultLocal;
+  if (source === "external") return text.runtimeSource.external;
+  return source;
+}
+
+function runtimeDetailText(
+  status: VaultStatus | null,
+  settings: DesktopSettings,
+  text: typeof dashboardCopy.zh | typeof dashboardCopy.en,
+) {
+  const identity = status?.runtimeIdentity;
+  if (!identity) return settings.runtimePath || text.runtimeDetail;
+  const git = identity.git;
+  const repoKind = git?.repositoryKind
+    ? text.runtimeSource[git.repositoryKind as keyof typeof text.runtimeSource] || git.repositoryKind
+    : text.runtimeSource.noGit;
+  const gitParts = git
+    ? [
+        repoKind,
+        git.branch || text.unknown,
+        git.commit || text.unknown,
+        git.dirty ? text.runtimeSource.dirty : text.runtimeSource.clean,
+      ]
+    : [repoKind];
+  const remote = git?.remoteUrl ? ` · ${text.runtimeSource.remote}: ${git.remoteUrl}` : "";
+  const scripts = identity.scriptsPath || identity.path;
+  return `${runtimeSourceLabel(identity.source, text)} · ${gitParts.join(" / ")}${remote} · ${text.runtimeSource.scripts}: ${scripts}`;
+}
+
 export function DashboardOverview({
   className,
   language = "zh",
@@ -455,6 +513,8 @@ export function DashboardOverview({
   const summary = ingestPlan?.summary;
   const topPlanEntry = topIngestPlanEntry(ingestPlan);
   const runnableIngest = runnableIngestCount(ingestPlan);
+  const runtimeReady = runtimeIsReady(status);
+  const runtimeDetail = runtimeDetailText(status, desktopSettings, text);
   const contractP0P1 = lintFindings.filter((finding) => finding.severity === "p0" || finding.severity === "p1").length;
   const proposedWritebacks = writebacks.filter((proposal) => proposal.status === "proposed").length;
   const writebackIssues = writebacks.filter((proposal) => proposal.status === "rejected").length;
@@ -471,7 +531,7 @@ export function DashboardOverview({
   if (status && !status.schemaValid) {
     statusMessages.push(vaultErrors[0] || text.messages.schemaInvalid);
   }
-  if (status && !status.runtimeInstalled) {
+  if (status && !runtimeReady) {
     statusMessages.push(text.messages.runtimeMissing);
   }
   if (status && !status.obsidianEnabled) {
@@ -539,11 +599,11 @@ export function DashboardOverview({
         <ReadinessCard
           icon={TerminalSquare}
           label={text.runtime}
-          value={status?.runtimeInstalled ? text.runtimeReady : text.runtimeMissing}
-          detail={status?.runtimeScriptsPath || desktopSettings.runtimePath || text.runtimeDetail}
-          tone={status?.runtimeInstalled ? "ok" : "danger"}
-          action={status?.runtimeInstalled ? text.activity : text.choose}
-          onAction={status?.runtimeInstalled ? onOpenActivity : onChooseRuntime}
+          value={runtimeReady ? text.runtimeReady : text.runtimeMissing}
+          detail={runtimeDetail}
+          tone={runtimeReady ? (status?.runtimeIdentity?.warnings?.length ? "warn" : "ok") : "danger"}
+          action={runtimeReady ? text.activity : text.choose}
+          onAction={runtimeReady ? onOpenActivity : onChooseRuntime}
         />
         <ReadinessCard
           icon={SquareStack}
@@ -611,7 +671,7 @@ export function DashboardOverview({
             <span>{runnableIngest} {text.ingestReady}</span>
           </div>
           <div className="next-action-list">
-            {!status?.runtimeInstalled && (
+            {!runtimeReady && (
               <NextAction
                 icon={Settings}
                 title={text.setRuntime}

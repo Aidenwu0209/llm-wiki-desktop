@@ -204,6 +204,15 @@ npm run start
 
 默认解析体验是 OCR-first 但配置门控：`paddleocr-vl15` 未配置时不会上传 raw document。`layout-api` hosted parser 和外部 LLM/API 仍需用户明确选择并批准。
 
+### 中文 ZIP 导入 smoke
+
+本地验证 `deepseek_paper_中文.zip` 时，不要修改原始 zip，也不要提交解压结果。推荐流程：
+
+1. 打开或创建一个临时 generated vault。
+2. 在 `原始资料` 页面选择 `deepseek_paper_中文.zip` 导入到 `raw/inbox/`。
+3. 刷新并运行 `规划 ingest`，确认中文文件名路径保持稳定，嵌套目录结构保留，`__MACOSX`、`.DS_Store`、`._*` 和 helper sidecar 不进入 ingest plan。
+4. 验证完成后删除临时 vault 或保留在 Git 外；不要提交 zip 的解压内容、测试输出或临时 `_state/archive-import/` 目录。
+
 ## 开发者启动
 
 推荐使用 lockfile 安装依赖：
