@@ -104,16 +104,39 @@ export type VaultStatus = {
   path: string;
   schemaValid: boolean;
   runtimeInstalled: boolean;
+  vaultLocalRuntimeInstalled: boolean;
+  externalRuntimeReady: boolean;
   obsidianEnabled: boolean;
   dashboardAvailable: boolean;
   runtimeScriptsPath?: string | null;
   runtimeVersion?: string | null;
+  runtimeIdentity?: RuntimeIdentity | null;
+  vaultLocalRuntime?: RuntimeIdentity | null;
+  externalRuntime?: RuntimeIdentity | null;
   lastUpdated?: string | null;
   counts: VaultCounts;
   readingQuality?: ReadingQualitySummary | null;
   productScorecard?: ProductScorecardSummary | null;
   files: VaultFile[];
   errors: string[];
+};
+
+export type RuntimeGitIdentity = {
+  remoteUrl?: string | null;
+  branch?: string | null;
+  commit?: string | null;
+  dirty: boolean;
+  repositoryKind: "fork" | "upstream" | "unknown" | string;
+};
+
+export type RuntimeIdentity = {
+  source: "vault-local" | "external" | string;
+  path: string;
+  scriptsPath?: string | null;
+  version?: string | null;
+  ready: boolean;
+  git?: RuntimeGitIdentity | null;
+  warnings: string[];
 };
 
 export type DesktopAppState = {

@@ -35,7 +35,7 @@ Use upstream-first only after:
 
 ## Current runtime detection facts
 
-The current desktop code already has path and version detection, but it does not yet detect Git source or commit.
+The desktop status model now reports a lightweight runtime identity for both vault-local and settings-selected runtime paths. This is reporting only: upstream, fork, unknown, dirty, missing scripts, or non-Git states show warnings and do not hard-fail user selection.
 
 ### User-configured runtime path
 
@@ -56,9 +56,7 @@ The picker can point at an open-llm-wiki repository root. Some runtime command p
 .open-llm-wiki/scripts/wiki_lint.py
 ```
 
-When this exists, `runtimeInstalled` is true and `runtimeScriptsPath` is set to that vault-local scripts path.
-
-Important gap: an external `runtimePath` in settings can be usable for command execution, but `inspect_vault(...)` does not currently mark `runtimeInstalled` true from that external path. The dashboard can show the configured path as detail, but runtime readiness is still based on the vault-local `.open-llm-wiki/scripts/wiki_lint.py` check.
+When this exists, `runtimeInstalled` and `vaultLocalRuntimeInstalled` are true, `runtimeScriptsPath` points at the vault-local scripts path, and `runtimeIdentity.source` is `vault-local`. Because runtime command resolution prefers the vault-local scripts directory, this identity is shown as the current runtime when it is installed.
 
 ### Runtime command resolution
 
@@ -73,13 +71,27 @@ Runtime actions execute Python directly with `Command` args; they do not invoke 
 
 ### Runtime version detection
 
-When a vault-local runtime is detected, `runtime_version_for_scripts(...)` reports:
+For any detected runtime path, `runtime_version_for_scripts(...)` / `runtime_version_for_root(...)` reports:
 
 1. `<scripts parent>/VERSION` if present and non-empty.
 2. The first `version = "..."` line found in `pyproject.toml` under the scripts parent or its parent.
 3. Fallback: `desktop-adapter <desktop cargo package version>`.
 
-Current gap: this is version-string detection only. It does not report the runtime Git remote, fork owner, branch, dirty state, or commit hash.
+### Runtime Git identity
+
+When the runtime path is a Git checkout, `inspect_vault(...)` reports:
+
+- `remoteUrl`
+- `branch`
+- short `commit`
+- `dirty`
+- `repositoryKind`: `fork`, `upstream`, or `unknown`
+
+Repository classification is intentionally advisory. The fork-first recommendation recognizes `Aidenwu0209/open-llm-wiki` as `fork`; `nashsu/llm_wiki` is reported as `upstream`; other remotes are `unknown`. Upstream, unknown, dirty, missing scripts, and non-Git states are surfaced as Dashboard warnings only.
+
+### External runtime readiness
+
+`DesktopSettings.runtimePath` is reported separately as `externalRuntime`. If it has usable scripts, `externalRuntimeReady` is true even when `vaultLocalRuntimeInstalled` is false. This makes settings-selected runtime readiness visible without changing the existing fork-first execution policy or forcing a hard failure on other checkouts.
 
 ### Runtime commands currently expected by desktop
 
@@ -106,9 +118,9 @@ The desktop command adapter expects these script names:
 | Risk | Impact | Mitigation |
 | --- | --- | --- |
 | Fork drift from upstream | Desktop may depend on behavior that does not exist upstream. | Track upstream regularly and document the pinned fork commit for demo/release branches. |
-| Runtime mismatch | A user can select a checkout with matching script names but incompatible output contracts. | Add source/commit detection in a follow-up PR and surface it in Settings/Dashboard. |
-| External runtime readiness ambiguity | Settings may contain a valid external runtime path while `runtimeInstalled` remains false because only vault-local runtime is counted. | Add lightweight external runtime readiness reporting in a follow-up PR. |
-| Version string is not enough | `VERSION` or `pyproject.toml` can identify a release but not a fork or commit. | Detect Git remote/commit/dirty state when the runtime path is a Git checkout. |
+| Runtime mismatch | A user can select a checkout with matching script names but incompatible output contracts. | Surface source/commit/dirty state in Dashboard and keep fork-first warnings visible without blocking local development. |
+| External runtime readiness ambiguity | Settings may contain a valid external runtime path while `runtimeInstalled` remains false because only vault-local runtime is counted. | Report `externalRuntimeReady` separately from `vaultLocalRuntimeInstalled`. |
+| Version string is not enough | `VERSION` or `pyproject.toml` can identify a release but not a fork or commit. | Detect Git remote/branch/commit/dirty state when the runtime path is a Git checkout. |
 | Over-enforcing too early | Hard failure on non-fork paths would block local development and upstream testing. | Start with reporting and warnings before enforcing pins. |
 
 ## Acceptance commands
@@ -139,12 +151,6 @@ bash scripts/smoke/macos-clean-profile.sh
 
 Do not run a DeepSeek full flow as part of this R4 documentation PR.
 
-## Recommended next PR
+## Current implementation boundary
 
-Add lightweight runtime identity reporting without changing parser behavior or shell layout:
-
-- Detect runtime source when `runtimePath` or vault-local `.open-llm-wiki` is a Git checkout.
-- Report remote URL, branch, commit, dirty state, version, and scripts path in the existing status model.
-- Make external `runtimePath` readiness visible separately from vault-local runtime installation.
-- Display runtime source/commit/version in Settings or Dashboard.
-- Add tests for fork checkout, upstream checkout, missing scripts, and non-Git runtime directories.
+This runtime identity layer does not modify PaddleOCR, ERNIE, archive ingest, or runtime command behavior. It reports what checkout the desktop is pointed at, including scripts path and version fallback for non-Git directories, then lets the user continue with warnings instead of enforcement.
