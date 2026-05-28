@@ -363,13 +363,8 @@ fn obsidian_uri_command(platform: DesktopPlatform, uri: &str) -> DesktopCommandS
             ["-a".to_string(), "Obsidian".to_string(), uri.to_string()],
         ),
         DesktopPlatform::Windows => DesktopCommandSpec::new(
-            "cmd",
-            [
-                "/C".to_string(),
-                "start".to_string(),
-                "".to_string(),
-                uri.to_string(),
-            ],
+            "rundll32",
+            ["url.dll,FileProtocolHandler".to_string(), uri.to_string()],
         ),
         DesktopPlatform::Linux => DesktopCommandSpec::new("xdg-open", [uri.to_string()]),
     }
@@ -1558,14 +1553,33 @@ fn app_state_path_for_workspace(root: &Path) -> PathBuf {
         .join("desktop-state.json")
 }
 
+fn app_support_state_path_for_platform(
+    platform: DesktopPlatform,
+    home: Option<PathBuf>,
+    appdata: Option<PathBuf>,
+) -> PathBuf {
+    match platform {
+        DesktopPlatform::Windows => {
+            let root = appdata
+                .or_else(|| home.map(|path| path.join("AppData").join("Roaming")))
+                .unwrap_or_else(|| PathBuf::from("."));
+            root.join("LLM Wiki").join("desktop-state.json")
+        }
+        DesktopPlatform::Macos | DesktopPlatform::Linux => home
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("Library")
+            .join("Application Support")
+            .join("LLM Wiki")
+            .join("desktop-state.json"),
+    }
+}
+
 fn app_support_state_path() -> PathBuf {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    home.join("Library")
-        .join("Application Support")
-        .join("LLM Wiki")
-        .join("desktop-state.json")
+    app_support_state_path_for_platform(
+        current_desktop_platform(),
+        std::env::var_os("HOME").map(PathBuf::from),
+        std::env::var_os("APPDATA").map(PathBuf::from),
+    )
 }
 
 fn app_state_path() -> PathBuf {
@@ -1710,14 +1724,18 @@ fn write_text(path: &Path, text: &str) -> Result<(), String> {
 
 fn rel_path(vault: &Path, path: &Path) -> String {
     if let Ok(stripped) = path.strip_prefix(vault) {
-        return stripped.to_string_lossy().to_string();
+        return vault_relative_display(stripped);
     }
     if let Ok(canonical_vault) = vault.canonicalize() {
         if let Ok(stripped) = path.strip_prefix(canonical_vault) {
-            return stripped.to_string_lossy().to_string();
+            return vault_relative_display(stripped);
         }
     }
-    path.to_string_lossy().to_string()
+    vault_relative_display(path)
+}
+
+fn vault_relative_display(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 fn sha256_text(text: &str) -> String {
@@ -4722,7 +4740,7 @@ fn file_item(vault: &Path, path: &Path, kind: &str, links: &WikilinkContext) -> 
             .unwrap_or_default()
             .to_string_lossy()
             .to_string(),
-        path: to_display(path),
+        path: rel.clone(),
         kind: kind.to_string(),
         source_id: source_id_from_page_path(path),
         title: page_title(path),
@@ -5037,7 +5055,7 @@ fn inspect_vault(vault_path: String) -> Result<VaultStatus, String> {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string(),
-            path: to_display(&path),
+            path: rel_path(&vault, &path),
             kind: "inbox".to_string(),
             source_id: None,
             title: None,
@@ -5425,7 +5443,7 @@ fn collect_import_dir(
                     path.parent()
                         .and_then(|parent| parent.strip_prefix(root).ok())
                         .filter(|rel| !rel.as_os_str().is_empty())
-                        .map(|rel| rel.to_string_lossy().to_string())
+                        .map(vault_relative_display)
                 } else {
                     None
                 };
@@ -5523,10 +5541,10 @@ fn is_archive_metadata_path(path: &Path) -> bool {
 fn join_folder_context(base: Option<&str>, rel_parent: Option<&Path>) -> Option<String> {
     let mut parts = Vec::new();
     if let Some(base) = base.filter(|value| !value.trim().is_empty()) {
-        parts.push(base.trim_matches('/').to_string());
+        parts.push(base.replace('\\', "/").trim_matches('/').to_string());
     }
     if let Some(parent) = rel_parent.filter(|path| !path.as_os_str().is_empty()) {
-        parts.push(parent.to_string_lossy().trim_matches('/').to_string());
+        parts.push(vault_relative_display(parent).trim_matches('/').to_string());
     }
     parts.retain(|part| !part.is_empty());
     (!parts.is_empty()).then(|| parts.join("/"))
@@ -5642,7 +5660,11 @@ fn extract_archive_import_candidates(
                 candidate.folder_context.as_deref(),
                 rel_path.parent(),
             ),
-            source_display: Some(format!("{}!{}", archive_display, rel_path.display())),
+            source_display: Some(format!(
+                "{}!{}",
+                archive_display,
+                vault_relative_display(&rel_path)
+            )),
             rule_path: candidate
                 .rule_path
                 .parent()
@@ -5950,7 +5972,7 @@ fn import_sources_impl(
                 size_bytes,
                 mime: detect_mime(&source),
                 sha256: hash,
-                target_path: Some(to_display(&dest)),
+                target_path: Some(rel_path(&vault, &dest)),
                 folder_context,
                 duplicate_of: Some(existing.clone()),
                 duplicate_reason: Some("sha256".to_string()),
@@ -6003,7 +6025,7 @@ fn import_sources_impl(
             size_bytes,
             mime: detect_mime(&source),
             sha256: hash,
-            target_path: Some(to_display(&dest)),
+            target_path: Some(rel_path(&vault, &dest)),
             folder_context,
             duplicate_of,
             duplicate_reason: duplicate_reason.map(ToString::to_string),
@@ -6964,7 +6986,7 @@ fn plan_entry_for_source(
     let artifact_path = if archive_package {
         None
     } else {
-        Some(to_display(&artifact))
+        Some(vault_relative_display(&artifact))
     };
 
     let (status, action, reason, parser_hint) = if published {
@@ -9058,7 +9080,7 @@ fn plan_ingest(vault_path: String) -> Result<IngestPlan, String> {
                     .to_string(),
                 sha256: hash,
                 artifact_sha256: sha256_file(&combined).ok(),
-                artifact_path: Some(to_display(&combined)),
+                artifact_path: Some(vault_relative_display(&combined)),
                 status,
                 action,
                 reason,
@@ -9468,6 +9490,23 @@ fn ernie_result(
 
 fn redact_provider_error(value: &str) -> String {
     let mut text = value.replace('\n', " ");
+    for separator in ["=", ":"] {
+        let marker = format!("{ERNIE_AI_STUDIO_API_KEY_ENV}{separator}");
+        let mut search_from = 0;
+        while let Some(relative_index) = text[search_from..].find(&marker) {
+            let value_start = search_from + relative_index + marker.len();
+            let value_len = text[value_start..]
+                .find(|ch: char| ch.is_whitespace() || matches!(ch, ',' | '&' | ';'))
+                .unwrap_or_else(|| text[value_start..].len());
+            if value_len == 0 {
+                break;
+            }
+            if &text[value_start..value_start + value_len] != "[redacted]" {
+                text.replace_range(value_start..value_start + value_len, "[redacted]");
+            }
+            search_from = value_start + "[redacted]".len();
+        }
+    }
     let mut search_from = 0;
     while let Some(relative_index) = text[search_from..].to_ascii_lowercase().find("bearer ") {
         let index = search_from + relative_index;
@@ -12323,22 +12362,49 @@ fn clear_runtime_job_cancel(job_id: &str) {
     }
 }
 
-fn sanitize_job_kind(kind: &str) -> String {
-    let sanitized = kind
+fn is_windows_reserved_file_name(value: &str) -> bool {
+    let stem = value
+        .trim_end_matches(|ch| matches!(ch, ' ' | '.'))
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || stem
+            .strip_prefix("COM")
+            .and_then(|suffix| suffix.parse::<u8>().ok())
+            .is_some_and(|number| (1..=9).contains(&number))
+        || stem
+            .strip_prefix("LPT")
+            .and_then(|suffix| suffix.parse::<u8>().ok())
+            .is_some_and(|number| (1..=9).contains(&number))
+}
+
+fn sanitize_file_name_component(value: &str, fallback: &str) -> String {
+    let sanitized = value
         .chars()
         .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
-                ch
-            } else {
+            if matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') || ch.is_control()
+            {
                 '-'
+            } else {
+                ch
             }
         })
-        .collect::<String>();
+        .collect::<String>()
+        .trim_end_matches(|ch| matches!(ch, ' ' | '.'))
+        .to_string();
     if sanitized.is_empty() {
-        "runtime".to_string()
+        fallback.to_string()
+    } else if is_windows_reserved_file_name(&sanitized) {
+        format!("_{sanitized}")
     } else {
         sanitized
     }
+}
+
+fn sanitize_job_kind(kind: &str) -> String {
+    sanitize_file_name_component(kind, "runtime")
 }
 
 fn new_runtime_job_id(kind: &str) -> String {
@@ -12358,10 +12424,10 @@ fn emit_runtime_event(app: Option<&AppHandle>, event: RuntimeJobEvent) {
 }
 
 fn runtime_task_log_path(vault: &Path, id: &str) -> PathBuf {
-    vault
-        .join("log-archive")
-        .join("desktop")
-        .join(format!("{id}.log"))
+    vault.join("log-archive").join("desktop").join(format!(
+        "{}.log",
+        sanitize_file_name_component(id, "runtime")
+    ))
 }
 
 fn append_text(path: &Path, text: &str) -> Result<(), String> {
@@ -12522,25 +12588,40 @@ fn runtime_job_finish_event(
     }
 }
 
-fn shell_command(script: &str) -> Vec<String> {
+fn platform_script_command(unix_script: &str, windows_script: &str) -> Vec<String> {
     if cfg!(target_os = "windows") {
-        vec!["cmd".to_string(), "/C".to_string(), script.to_string()]
+        vec![
+            "powershell".to_string(),
+            "-NoProfile".to_string(),
+            "-ExecutionPolicy".to_string(),
+            "Bypass".to_string(),
+            "-Command".to_string(),
+            windows_script.to_string(),
+        ]
     } else {
-        vec!["/bin/sh".to_string(), "-c".to_string(), script.to_string()]
+        vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            unix_script.to_string(),
+        ]
     }
 }
 
 fn runtime_probe_command(kind: &str) -> Option<(Vec<String>, usize, usize)> {
     match kind {
         "cancel_probe" => Some((
-            shell_command(
+            platform_script_command(
                 "echo cancel-probe-start; i=1; while [ $i -le 30 ]; do echo cancel-probe-tick-$i; i=$((i+1)); sleep 1; done; echo cancel-probe-finished",
+                "Write-Output 'cancel-probe-start'; for ($i = 1; $i -le 30; $i++) { Write-Output \"cancel-probe-tick-$i\"; Start-Sleep -Seconds 1 }; Write-Output 'cancel-probe-finished'",
             ),
             45,
             1,
         )),
         "timeout_probe" => Some((
-            shell_command("echo timeout-probe-start; sleep 8; echo timeout-probe-finished"),
+            platform_script_command(
+                "echo timeout-probe-start; sleep 8; echo timeout-probe-finished",
+                "Write-Output 'timeout-probe-start'; Start-Sleep -Seconds 8; Write-Output 'timeout-probe-finished'",
+            ),
             2,
             1,
         )),
@@ -12932,6 +13013,29 @@ fn run_python_script_log(
     run_process_job(app, vault, id, kind, command, timeout_seconds, retry_count)
 }
 
+fn pdf_parse_command_args(
+    source: &Path,
+    output_dir: &Path,
+    parser: &str,
+    layout_parsing_api_url: &str,
+) -> Vec<String> {
+    let mut args = vec![
+        to_display(source),
+        "--output".to_string(),
+        to_display(output_dir),
+        "--parser".to_string(),
+        parser.to_string(),
+        "--no-download-images".to_string(),
+    ];
+    if parser == "layout-api" && !layout_parsing_api_url.trim().is_empty() {
+        args.extend([
+            "--api-url".to_string(),
+            layout_parsing_api_url.trim().to_string(),
+        ]);
+    }
+    args
+}
+
 fn parse_pdf_artifacts(
     app: Option<&AppHandle>,
     vault: &Path,
@@ -12992,20 +13096,7 @@ fn parse_pdf_artifacts(
             "PDF parse output must stay inside the vault",
         )?;
         let _ = update_ingest_job_record(vault, &job_id, "running", None, None);
-        let mut args = vec![
-            to_display(&source),
-            "--output".to_string(),
-            to_display(output_dir),
-            "--parser".to_string(),
-            parser.clone(),
-            "--no-download-images".to_string(),
-        ];
-        if parser == "layout-api" && !layout_parsing_api_url.trim().is_empty() {
-            args.extend([
-                "--api-url".to_string(),
-                layout_parsing_api_url.trim().to_string(),
-            ]);
-        }
+        let args = pdf_parse_command_args(&source, output_dir, &parser, layout_parsing_api_url);
         let log = run_python_script_log(
             app,
             vault,
@@ -13433,6 +13524,54 @@ mod tests {
             zip.write_all(content).expect("write zip entry");
         }
         zip.finish().expect("finish zip");
+    }
+
+    fn test_script_command(unix_script: &str, windows_script: &str) -> Vec<String> {
+        if cfg!(target_os = "windows") {
+            vec![
+                "powershell".to_string(),
+                "-NoProfile".to_string(),
+                "-ExecutionPolicy".to_string(),
+                "Bypass".to_string(),
+                "-Command".to_string(),
+                windows_script.to_string(),
+            ]
+        } else {
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                unix_script.to_string(),
+            ]
+        }
+    }
+
+    fn test_sleep_command(seconds: usize) -> Vec<String> {
+        test_script_command(
+            &format!("sleep {seconds}"),
+            &format!("Start-Sleep -Seconds {seconds}"),
+        )
+    }
+
+    fn test_echo_command(message: &str) -> Vec<String> {
+        let unix_message = message.replace('\'', "'\\''");
+        let windows_message = message.replace('\'', "''");
+        test_script_command(
+            &format!("echo '{unix_message}'"),
+            &format!("Write-Output '{windows_message}'"),
+        )
+    }
+
+    fn test_retry_marker_command(marker: &Path) -> Vec<String> {
+        let unix_marker = marker.to_string_lossy().replace('\'', "'\\''");
+        let windows_marker = marker.to_string_lossy().replace('\'', "''");
+        test_script_command(
+            &format!(
+                "count=$(cat '{unix_marker}' 2>/dev/null || echo 0); count=$((count + 1)); echo $count > '{unix_marker}'; if [ $count -lt 2 ]; then echo retry-fail; exit 7; fi; echo retry-ok; exit 0"
+            ),
+            &format!(
+                "$path = '{windows_marker}'; $count = if (Test-Path -LiteralPath $path) {{ [int](Get-Content -LiteralPath $path -Raw) }} else {{ 0 }}; $count += 1; Set-Content -LiteralPath $path -Value $count; if ($count -lt 2) {{ Write-Output 'retry-fail'; exit 7 }}; Write-Output 'retry-ok'; exit 0"
+            ),
+        )
     }
 
     fn agent_http_request(
@@ -15710,8 +15849,8 @@ mod tests {
 
     #[test]
     fn desktop_command_specs_cover_windows_open_reveal_obsidian_and_cli_lookup() {
-        let target = PathBuf::from(r"C:\Users\Ada\llm-wiki\LLM Wiki Home.md");
-        let uri = "obsidian://open?path=C%3A%5CUsers%5CAda%5Cllm-wiki%5CLLM%20Wiki%20Home.md";
+        let target = PathBuf::from(r"C:\Users\Ada\LLM Wiki 中文\LLM Wiki Home & notes.md");
+        let uri = "obsidian://open?path=C%3A%5CUsers%5CAda%5CLLM%20Wiki%20%E4%B8%AD%E6%96%87%5CLLM%20Wiki%20Home%20%26%20notes.md";
 
         let open = open_path_command(DesktopPlatform::Windows, &target);
         assert_eq!(open.program, "explorer");
@@ -15729,20 +15868,114 @@ mod tests {
         assert_eq!(reveal_dir.args, vec![to_display(&target)]);
 
         let obsidian = obsidian_uri_command(DesktopPlatform::Windows, uri);
-        assert_eq!(obsidian.program, "cmd");
+        assert_eq!(obsidian.program, "rundll32");
         assert_eq!(
             obsidian.args,
-            vec![
-                "/C".to_string(),
-                "start".to_string(),
-                "".to_string(),
-                uri.to_string()
-            ]
+            vec!["url.dll,FileProtocolHandler".to_string(), uri.to_string()]
         );
+        assert!(!obsidian
+            .args
+            .iter()
+            .any(|arg| arg == "/C" || arg == "start"));
 
         let lookup = local_cli_lookup_command(DesktopPlatform::Windows, "codex");
         assert_eq!(lookup.program, "where");
         assert_eq!(lookup.args, vec!["codex".to_string()]);
+    }
+
+    #[test]
+    fn windows_paths_with_spaces_and_chinese_normalize_to_vault_relative_slashes() {
+        let vault = PathBuf::from("C:/LLM Wiki Vault/中文 vault");
+        let source = vault.join("raw\\inbox\\中文 paper with spaces.pdf");
+        assert_eq!(
+            rel_path(&vault, &source),
+            "raw/inbox/中文 paper with spaces.pdf"
+        );
+
+        let unc_vault = PathBuf::from(r"\\server\share\LLM Wiki Vault");
+        let unc_source = unc_vault.join("sources\\中文 source.md");
+        assert_eq!(rel_path(&unc_vault, &unc_source), "sources/中文 source.md");
+    }
+
+    #[test]
+    fn app_support_state_path_uses_windows_roaming_profile_without_macos_regression() {
+        let windows = app_support_state_path_for_platform(
+            DesktopPlatform::Windows,
+            Some(PathBuf::from(r"C:\Users\Ada")),
+            Some(PathBuf::from(r"C:\Users\Ada\AppData\Roaming")),
+        );
+        assert_eq!(
+            to_display(&windows),
+            to_display(
+                &PathBuf::from(r"C:\Users\Ada\AppData\Roaming")
+                    .join("LLM Wiki")
+                    .join("desktop-state.json")
+            )
+        );
+
+        let mac = app_support_state_path_for_platform(
+            DesktopPlatform::Macos,
+            Some(PathBuf::from("/Users/ada")),
+            None,
+        );
+        assert_eq!(
+            mac,
+            PathBuf::from("/Users/ada")
+                .join("Library")
+                .join("Application Support")
+                .join("LLM Wiki")
+                .join("desktop-state.json")
+        );
+    }
+
+    #[test]
+    fn generated_artifact_file_names_are_windows_safe() {
+        assert_eq!(
+            sanitize_file_name_component("CON:bad*name?.log ", "artifact"),
+            "CON-bad-name-.log"
+        );
+        assert_eq!(sanitize_file_name_component("CON", "artifact"), "_CON");
+        assert_eq!(
+            sanitize_file_name_component("中文 report?.md", "artifact"),
+            "中文 report-.md"
+        );
+
+        let vault = test_vault("windows-safe-log");
+        let log_path = runtime_task_log_path(&vault, r#"parse:pdf*bad?name|"#);
+        assert_eq!(
+            log_path.file_name().and_then(OsStr::to_str),
+            Some("parse-pdf-bad-name-.log")
+        );
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn paddleocr_parser_command_args_do_not_concatenate_shell_strings() {
+        let source = PathBuf::from(r"C:\LLM Wiki 中文\raw\inbox\paper & notes.pdf");
+        let output = PathBuf::from(r"C:\LLM Wiki 中文\raw\inbox\paper_markdown");
+        let args = pdf_parse_command_args(&source, &output, "auto", "");
+
+        assert_eq!(args[0], to_display(&source));
+        assert_eq!(args[1], "--output");
+        assert_eq!(args[2], to_display(&output));
+        assert_eq!(args[3], "--parser");
+        assert_eq!(args[4], "auto");
+        assert_eq!(args[5], "--no-download-images");
+        assert!(!args
+            .iter()
+            .any(|arg| arg == "cmd" || arg == "/C" || arg == "/bin/sh"));
+        assert!(args.iter().any(|arg| arg.contains('&')));
+    }
+
+    #[test]
+    fn ernie_api_key_markers_are_redacted_from_errors() {
+        let secret = "fake-ernie-key-for-redaction-test";
+        let redacted = redact_provider_error(&format!(
+            "Authorization: Bearer {secret}; {ERNIE_AI_STUDIO_API_KEY_ENV}={secret}"
+        ));
+        assert!(!redacted.contains(secret));
+        assert!(redacted.contains("[redacted]"));
     }
 
     #[test]
@@ -16452,13 +16685,20 @@ mod tests {
     #[test]
     fn missing_path_reports_trailing_space_suggestion() {
         let root = test_vault("space-root");
-        let actual = root.join("LLM-Wiki ");
-        fs::create_dir_all(actual.join("vaults").join("deepseek")).expect("create spaced path");
-        let requested = root.join("LLM-Wiki").join("vaults").join("deepseek");
-        let suggestion = path_whitespace_suggestion(&requested).expect("suggest spaced path");
-        assert_eq!(suggestion, actual.join("vaults").join("deepseek"));
-        let error = require_existing_dir(&requested, "vault").expect_err("missing path");
-        assert!(error.contains("significant whitespace"));
+        if cfg!(target_os = "windows") {
+            let requested = root.join("LLM-Wiki ").join("vaults").join("deepseek");
+            let error =
+                reject_trailing_space_path(&requested, "vault path").expect_err("reject path");
+            assert!(error.contains("trailing space"));
+        } else {
+            let actual = root.join("LLM-Wiki ");
+            fs::create_dir_all(actual.join("vaults").join("deepseek")).expect("create spaced path");
+            let requested = root.join("LLM-Wiki").join("vaults").join("deepseek");
+            let suggestion = path_whitespace_suggestion(&requested).expect("suggest spaced path");
+            assert_eq!(suggestion, actual.join("vaults").join("deepseek"));
+            let error = require_existing_dir(&requested, "vault").expect_err("missing path");
+            assert!(error.contains("significant whitespace"));
+        }
 
         let _ = fs::remove_dir_all(root);
     }
@@ -17035,6 +17275,12 @@ mod tests {
         let cancel = runtime_probe_command("cancel_probe").expect("cancel probe");
         assert_eq!(cancel.1, 45);
         assert_eq!(cancel.2, 1);
+        if cfg!(target_os = "windows") {
+            assert_eq!(cancel.0[0], "powershell");
+            assert!(!cancel.0.iter().any(|part| part == "/bin/sh"));
+        } else {
+            assert_eq!(cancel.0[0], "/bin/sh");
+        }
         let timeout = runtime_probe_command("timeout_probe").expect("timeout probe");
         assert_eq!(timeout.1, 2);
         assert_eq!(timeout.2, 1);
@@ -17071,11 +17317,7 @@ mod tests {
             &vault,
             "job-timeout-test".to_string(),
             "timeout_test",
-            vec![
-                "/bin/sh".to_string(),
-                "-c".to_string(),
-                "sleep 2".to_string(),
-            ],
+            test_sleep_command(2),
             1,
             1,
         )
@@ -17094,16 +17336,12 @@ mod tests {
     fn runtime_job_retry_count_reexecutes_failed_command() {
         let vault = test_vault("job-retry");
         let marker = vault.join("_state").join("retry-count.txt");
-        let marker_arg = marker.to_string_lossy().replace('\'', "'\\''");
-        let script = format!(
-            "count=$(cat '{marker_arg}' 2>/dev/null || echo 0); count=$((count + 1)); echo $count > '{marker_arg}'; if [ $count -lt 2 ]; then echo retry-fail; exit 7; fi; echo retry-ok; exit 0"
-        );
         let log = run_process_job(
             None,
             &vault,
             "job-retry-test".to_string(),
             "retry_test",
-            vec!["/bin/sh".to_string(), "-c".to_string(), script],
+            test_retry_marker_command(&marker),
             5,
             2,
         )
@@ -17124,11 +17362,7 @@ mod tests {
             &vault,
             "job-history-test".to_string(),
             "history_test",
-            vec![
-                "/bin/sh".to_string(),
-                "-c".to_string(),
-                "echo history-ok".to_string(),
-            ],
+            test_echo_command("history-ok"),
             5,
             3,
         )
@@ -17198,11 +17432,7 @@ mod tests {
             &vault,
             job_id,
             "cancel_test",
-            vec![
-                "/bin/sh".to_string(),
-                "-c".to_string(),
-                "sleep 5".to_string(),
-            ],
+            test_sleep_command(5),
             10,
             1,
         )
