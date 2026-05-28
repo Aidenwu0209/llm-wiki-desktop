@@ -31,6 +31,43 @@
       "expected_evidence_ids": ["mock-trace:missing-source"]
     }
   ],
+  "fixture_ocr_artifacts": [
+    {
+      "artifact_path": "artifacts/demo-source-0001/markdown.md",
+      "manifest_path": "artifacts/demo-source-0001/manifest.json",
+      "source_path": "raw/inbox/sample-project.md",
+      "source_id": "DEMO-0001",
+      "parser": "PaddleOCR-VL-1.5",
+      "parser_model": "PaddleOCR-VL-1.5",
+      "parser_version": "synthetic-demo",
+      "page_count": 3,
+      "chunk_count": 4,
+      "source_sha256": "fixture-demo-source-sha256",
+      "artifact_sha256": "fixture-demo-artifact-sha256",
+      "latency_ms": 120,
+      "limitations": [
+        "fixture benchmark artifact metadata only; no live OCR request was performed",
+        "sample demo artifact omits real page images and parser-side timing logs"
+      ]
+    },
+    {
+      "artifact_path": "artifacts/mock-paper/ocr.json",
+      "manifest_path": "artifacts/mock-paper/manifest.json",
+      "source_path": "raw/sources/mock-submission.pdf",
+      "source_id": "MOCK-PAPER",
+      "parser": "PaddleOCR-VL-1.5",
+      "parser_model": "PaddleOCR-VL-1.5",
+      "parser_version": "fixture-benchmark",
+      "page_count": 3,
+      "chunk_count": 6,
+      "source_sha256": "fixture-mock-paper-sha256",
+      "artifact_sha256": "fixture-mock-paper-artifact-sha256",
+      "latency_ms": 120,
+      "limitations": [
+        "fixture metadata for CI and local no-key benchmark runs"
+      ]
+    }
+  ],
   "required_metrics": [
     "parse_success_rate",
     "markdown_generated",

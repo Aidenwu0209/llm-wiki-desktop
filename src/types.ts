@@ -633,13 +633,16 @@ export type ArtifactContractSummary = {
   figuresPath?: string | null;
   parseLogPath?: string | null;
   parser?: string | null;
+  parserModel?: string | null;
   parserVersion?: string | null;
   schemaVersion?: string | null;
   sourceSha256?: string | null;
   artifactSha256?: string | null;
   status: string;
   contractValid: boolean;
+  pageCount?: number | null;
   chunkCount: number;
+  latencyMs?: number | null;
   anchorsLines: boolean;
   anchorsPages: boolean;
   anchorsTables: boolean;

@@ -2,7 +2,9 @@
 
 LLM Wiki Desktop uses PaddleOCR-VL-1.5 as the default PDF / image parser plan. The app reads the credential from `PADDLEOCR_API_KEY`; it does not save or display the key.
 
-When OCR Parser is enabled, the service URL is configured, and `PADDLEOCR_API_KEY` is visible to the desktop process, the desktop parse command routes PDF / image inputs through the runtime `pdf_to_markdown.py --parser layout-api --api-url <PaddleOCR endpoint>` wire format. If any of those requirements are missing, ingest planning blocks with `paddleocr_config_required` and does not upload raw documents.
+When OCR Parser is enabled, the service URL is configured, and `PADDLEOCR_API_KEY` is visible to the desktop process, the desktop parse action routes PDF / image inputs through the runtime `pdf_to_markdown.py --parser layout-api --api-url <PaddleOCR endpoint>` wire format. The desktop process passes the secret only as a child-process environment override and never writes the key value into logs, settings, or vault state.
+
+If any of those requirements are missing, ingest planning blocks with `paddleocr_config_required` and does not upload raw documents.
 
 ## Set The Environment Variable
 
@@ -33,18 +35,51 @@ Open Settings -> OCR Parser and set:
 
 The service URL must use HTTPS unless it is a localhost HTTP URL for a local test service.
 
+## Real Parse Runtime Handoff
+
+For a real parse action, the desktop process sends configuration to the runtime in two ways:
+
+- command argument: `--api-url <PaddleOCR endpoint>`
+- child-process environment overrides:
+  - `OPEN_LLM_WIKI_LAYOUT_TOKEN=<value from PADDLEOCR_API_KEY>`
+  - `OPEN_LLM_WIKI_LAYOUT_MODEL=<configured OCR model>`
+  - `OPEN_LLM_WIKI_LAYOUT_ENDPOINT=<configured OCR endpoint>`
+
+The desktop settings file stores the endpoint, model, and API-key environment-variable name only. It never stores the key value itself.
+
 ## Status Values
 
 - `missing_key`: `PADDLEOCR_API_KEY` is not visible to the desktop process.
-- `configured`: the environment variable is visible and the local config is valid.
+- `missing_endpoint`: endpoint / service URL is empty or invalid.
 - `ready`: Test connection reached the configured service URL successfully.
 - `connection_failed`: the endpoint is invalid or did not respond successfully.
+- `parser_failed`: parser dry-run/config validation failed before any real OCR call could start.
+- `artifact_valid`: parser dry-run/config validation passed. No raw document was uploaded yet, but the parser path is configured well enough for a real run.
+- `artifact_invalid`: a produced parser artifact contract is missing required metadata or fails validation.
 
 ## Test Connection And Parser
 
 Test connection checks key visibility and, when a service URL is configured, sends a small authenticated connectivity request to that URL.
 
 Test parser is still a dry run. It validates the config and key visibility only; it does not upload raw documents, does not run OCR, and does not write to the vault. Real OCR runs only from an explicit parse / ingest action after OCR Parser is enabled and the endpoint/key checks are satisfied.
+
+## Artifact Contract Fields
+
+Real parser artifacts are expected to expose at least:
+
+- `source_id`
+- `source_path`
+- `parser`
+- `parser_model` or `model`
+- `parser_version`
+- `page_count`
+- `chunk_count`
+- `source_sha256`
+- `artifact_sha256`
+- `latency_ms`
+- `limitations`
+
+The desktop shell treats missing or mismatched contract metadata as `artifact_invalid`.
 
 ## Ingest Plan Behavior
 
