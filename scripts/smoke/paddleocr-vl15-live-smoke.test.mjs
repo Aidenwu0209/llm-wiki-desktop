@@ -1,0 +1,95 @@
+#!/usr/bin/env node
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { endpointHost, redactText, validateLiveManifest } from "./paddleocr-vl15-live-smoke.mjs";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(__dirname, "../..");
+const scriptPath = path.join(__dirname, "paddleocr-vl15-live-smoke.mjs");
+
+const fixtureManifest = {
+  schema_version: 1,
+  source_id: "paddleocr-fixture-0001",
+  source_path: "examples/ocr-samples/public-sample.pdf",
+  source_sha256: "9".repeat(64),
+  artifact_sha256: "a".repeat(64),
+  parser: "paddleocr-vl15-live-smoke",
+  parser_model: "paddleocr-vl-1.5",
+  parser_version: "fixture-contract",
+  page_count: 1,
+  chunk_count: 2,
+  latency_ms: 1234,
+  limitations: ["fixture_manifest_not_live_ocr"],
+  external_upload: true,
+  endpoint_host: "paddleocr.example.com",
+};
+
+test("live manifest validator accepts the required contract", () => {
+  const result = validateLiveManifest(fixtureManifest);
+  assert.equal(result.valid, true, result.errors.join("; "));
+});
+
+test("live manifest validator rejects missing artifact fields", () => {
+  const result = validateLiveManifest({ ...fixtureManifest, artifact_sha256: "" });
+  assert.equal(result.valid, false);
+  assert.match(result.errors.join("\n"), /artifact_sha256/);
+});
+
+test("endpoint_host keeps only host and port", () => {
+  assert.equal(endpointHost(`https://paddleocr.example.com/api/v2/ocr/jobs?${"token"}=secret`), "paddleocr.example.com");
+});
+
+test("redaction removes provider secrets from diagnostic text", () => {
+  const secret = "abc123";
+  const redacted = redactText(`Authorization: Bearer ${secret} and ${"token"}=secret-value`, [secret]);
+  assert.doesNotMatch(redacted, /abc123|secret-value/);
+  assert.match(redacted, /\[redacted\]/);
+});
+
+test("missing key fails clearly and does not create a fake success report", async () => {
+  const outDir = path.join(repoRoot, "artifacts/test/paddleocr-live-missing-key");
+  await fs.rm(outDir, { recursive: true, force: true });
+  const env = { ...process.env };
+  delete env.PADDLEOCR_API_KEY;
+  env.OPEN_LLM_WIKI_LAYOUT_ENDPOINT = "https://paddleocr.example.com/api/v2/ocr/jobs";
+  const result = spawnSync(process.execPath, [
+    scriptPath,
+    "--input",
+    "package.json",
+    "--out",
+    outDir,
+  ], {
+    cwd: repoRoot,
+    env,
+    encoding: "utf8",
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /missing_key/);
+  await assert.rejects(fs.stat(path.join(outDir, "manifest.json")));
+});
+
+test("missing endpoint fails clearly and does not create a fake success report", async () => {
+  const outDir = path.join(repoRoot, "artifacts/test/paddleocr-live-missing-endpoint");
+  await fs.rm(outDir, { recursive: true, force: true });
+  const env = { ...process.env, PADDLEOCR_API_KEY: "test-only-key" };
+  delete env.OPEN_LLM_WIKI_LAYOUT_ENDPOINT;
+  const result = spawnSync(process.execPath, [
+    scriptPath,
+    "--input",
+    "package.json",
+    "--out",
+    outDir,
+  ], {
+    cwd: repoRoot,
+    env,
+    encoding: "utf8",
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /missing_endpoint/);
+  assert.doesNotMatch(result.stderr, /test-only-key/);
+  await assert.rejects(fs.stat(path.join(outDir, "manifest.json")));
+});
