@@ -28,21 +28,10 @@ function count(haystack: string, needle: string) {
 const english = renderWelcome("en");
 const chinese = renderWelcome("zh");
 
-assert.equal(count(english, 'class="welcome-onboarding-step"'), 5, "English Welcome should render five onboarding steps.");
-assert.equal(count(chinese, 'class="welcome-onboarding-step"'), 5, "Chinese Welcome should render five onboarding steps.");
+assert.equal(count(english, 'class="welcome-onboarding-step"'), 0, "English Welcome should not render the in-project onboarding flow on the start screen.");
+assert.equal(count(chinese, 'class="welcome-onboarding-step"'), 0, "Chinese Welcome should not render the in-project onboarding flow on the start screen.");
 
 for (const text of [
-  "Create or open a Vault",
-  "Submit PDFs or images",
-  "Parse with PaddleOCR-VL-1.5",
-  "Ask with ERNIE using evidence",
-  "Create a writeback proposal",
-  "PDF / Image",
-  "Markdown / JSON Artifact",
-  "LLM Wiki Runtime",
-  "Evidence Map",
-  "ERNIE Answer",
-  "Writeback Proposal",
   "New Project",
   "Open Project",
   "View Demo Tour",
@@ -51,18 +40,30 @@ for (const text of [
 }
 
 for (const text of [
-  "创建或打开知识库",
-  "提交 PDF 或图片",
-  "使用 PaddleOCR-VL-1.5 解析",
-  "使用文心一言基于证据问答",
-  "创建可审核写回提案",
-  "PDF / 图片",
-  "文心一言回答",
   "新建项目",
   "打开项目",
   "查看 Demo Tour",
 ]) {
   assert.ok(chinese.includes(text), `Chinese Welcome should contain: ${text}`);
+}
+
+for (const text of [
+  "OCR + ERNIE Evidence Flow",
+  "Parse with PaddleOCR-VL-1.5",
+  "Evidence Map",
+  "ERNIE Answer",
+  "Writeback Proposal",
+]) {
+  assert.ok(!english.includes(text), `English Welcome should keep in-project flow off the start screen: ${text}`);
+}
+
+for (const text of [
+  "OCR + ERNIE 证据工作流",
+  "使用 PaddleOCR-VL-1.5 解析",
+  "文心一言回答",
+  "写回提案",
+]) {
+  assert.ok(!chinese.includes(text), `Chinese Welcome should keep in-project flow off the start screen: ${text}`);
 }
 
 assert.ok(english.includes("Synthetic demo"), "Missing real demo vault should render the Demo Tour fallback.");
@@ -82,4 +83,4 @@ for (const requiredPath of [
   assert.ok(existsSync(path.join(demoVault, requiredPath)), `Demo vault is missing ${requiredPath}`);
 }
 
-console.log("Welcome onboarding render checks passed.");
+console.log("Welcome render checks passed.");

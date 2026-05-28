@@ -1,8 +1,8 @@
 # PaddleOCR-VL-1.5 Provider Setup
 
-LLM Wiki Desktop can store PaddleOCR-VL-1.5 parser configuration and run connection checks when you explicitly provide a service URL. The app reads the credential from `PADDLEOCR_API_KEY`; it does not save or display the key.
+LLM Wiki Desktop uses PaddleOCR-VL-1.5 as the default PDF / image parser plan. The app reads the credential from `PADDLEOCR_API_KEY`; it does not save or display the key.
 
-This is configuration scaffolding only. It does not implement real OCR parsing yet.
+When OCR Parser is enabled, the service URL is configured, and `PADDLEOCR_API_KEY` is visible to the desktop process, the desktop parse command routes PDF / image inputs through the runtime `pdf_to_markdown.py --parser layout-api --api-url <PaddleOCR endpoint>` wire format. If any of those requirements are missing, ingest planning blocks with `paddleocr_config_required` and does not upload raw documents.
 
 ## Set The Environment Variable
 
@@ -44,4 +44,12 @@ The service URL must use HTTPS unless it is a localhost HTTP URL for a local tes
 
 Test connection checks key visibility and, when a service URL is configured, sends a small authenticated connectivity request to that URL.
 
-Test parser is a dry run. It validates the config and key visibility only; it does not upload raw documents, does not run OCR, and does not write to the vault.
+Test parser is still a dry run. It validates the config and key visibility only; it does not upload raw documents, does not run OCR, and does not write to the vault. Real OCR runs only from an explicit parse / ingest action after OCR Parser is enabled and the endpoint/key checks are satisfied.
+
+## Ingest Plan Behavior
+
+- `paddleocr_config_required`: PaddleOCR-VL-1.5 is selected but OCR Parser is disabled, endpoint is empty, or `PADDLEOCR_API_KEY` is not visible.
+- `parse_required`: PaddleOCR-VL-1.5 config is ready and the next parse action will run the runtime parser against the configured endpoint.
+- `cloud_parser_approval_required`: `layout-api` was selected directly, but cloud parsing approval is off.
+
+The runtime task log records command arguments but never writes the API key value. The key is passed only as a child-process environment override for the parser process.
