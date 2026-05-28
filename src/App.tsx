@@ -1765,6 +1765,7 @@ function pipelineState(index: number, status: VaultStatus | null, plan: IngestPl
 
 function App() {
   const shellRef = useRef<HTMLElement | null>(null);
+  const projectSwitcherTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [interfaceLanguage, setInterfaceLanguage] = useState<UiLanguage>(() =>
     normalizeUiLanguage(typeof localStorage === "undefined" ? null : localStorage.getItem(INTERFACE_LANGUAGE_STORAGE_KEY)),
   );
@@ -1816,6 +1817,7 @@ function App() {
   const [previewSidebarWidth, setPreviewSidebarWidth] = useState(defaultPreviewSidebarWidth);
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [projectSwitcherOpen, setProjectSwitcherOpen] = useState(false);
+  const [projectSwitcherMenuStyle, setProjectSwitcherMenuStyle] = useState<CSSProperties>({});
   const [actionFocusIndex, setActionFocusIndex] = useState(0);
   const [actionListExpanded, setActionListExpanded] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -2840,6 +2842,48 @@ function App() {
     }
     return items.slice(0, 9);
   }, [appState?.recentVaults, interfaceLanguage, vaultDisplayName, vaultPath, vaultSuggestions]);
+
+  useEffect(() => {
+    if (!projectSwitcherOpen) return;
+
+    const updateProjectSwitcherPosition = () => {
+      const trigger = projectSwitcherTriggerRef.current;
+      if (!trigger) return;
+
+      const rect = trigger.getBoundingClientRect();
+      const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+      const safePadding = 12;
+      const menuWidth = Math.min(420, Math.max(280, viewportWidth - safePadding * 2));
+      const estimatedMenuHeight = Math.min(
+        520,
+        viewportHeight - safePadding * 2,
+        Math.max(160, projectSwitchOptions.length * 66 + 58),
+      );
+      const maxLeft = Math.max(safePadding, viewportWidth - menuWidth - safePadding);
+      const opensFromRail = rect.left < NAV_RAIL_WIDTH + safePadding;
+      const left = clampNumber(opensFromRail ? Math.max(rect.right + 10, NAV_RAIL_WIDTH + 10) : rect.right - menuWidth, safePadding, maxLeft);
+      const maxTop = Math.max(safePadding, viewportHeight - estimatedMenuHeight - safePadding);
+      const top = clampNumber(opensFromRail ? rect.top - estimatedMenuHeight - 8 : rect.bottom + 8, safePadding, maxTop);
+
+      setProjectSwitcherMenuStyle({
+        position: "fixed",
+        top: `${top}px`,
+        left: `${left}px`,
+        width: `${menuWidth}px`,
+        maxHeight: `${Math.max(160, Math.min(estimatedMenuHeight, viewportHeight - top - safePadding))}px`,
+      });
+    };
+
+    updateProjectSwitcherPosition();
+    window.addEventListener("resize", updateProjectSwitcherPosition);
+    window.addEventListener("scroll", updateProjectSwitcherPosition, true);
+    return () => {
+      window.removeEventListener("resize", updateProjectSwitcherPosition);
+      window.removeEventListener("scroll", updateProjectSwitcherPosition, true);
+    };
+  }, [projectSwitcherOpen, projectSwitchOptions.length]);
+
   const contractP0P1 = lintFindings.filter((finding) => finding.severity === "p0" || finding.severity === "p1").length;
   const openReviewCount = reviewItems.filter((item) => !["approved", "resolved", "ignored", "rejected"].includes(item.status)).length;
   const navBadgeForPage = (page: ShellPage): NavBadge | null => {
@@ -3605,7 +3649,71 @@ function App() {
             {busy === "query_writeback" && <span className="nav-badge live">1</span>}
           </button>
         </nav>
-        <div className={classNames("rail-status", tone)} title={vaultPath || "No vault selected"} />
+        <div
+          className="rail-project-switcher"
+          onBlur={(event) => {
+            const nextTarget = event.relatedTarget;
+            if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+              setProjectSwitcherOpen(false);
+            }
+          }}
+        >
+          <button
+            ref={projectSwitcherTriggerRef}
+            type="button"
+            className={classNames("rail-project-switcher-trigger", tone)}
+            onClick={() => setProjectSwitcherOpen((open) => !open)}
+            aria-haspopup="menu"
+            aria-expanded={projectSwitcherOpen}
+            aria-label={interfaceLanguage === "zh" ? "切换项目" : "Switch project"}
+            title={`${interfaceLanguage === "zh" ? "切换项目" : "Switch project"} · ${vaultPath || "No vault selected"}`}
+          >
+            <Database size={18} />
+            <span aria-hidden="true" />
+          </button>
+          {projectSwitcherOpen && (
+            <div className="project-switcher-menu rail-project-switcher-menu" role="menu" style={projectSwitcherMenuStyle}>
+              {projectSwitchOptions.map((item) => (
+                <button
+                  type="button"
+                  role="menuitem"
+                  key={item.path}
+                  disabled={item.path === vaultPath}
+                  onClick={() => {
+                    setProjectSwitcherOpen(false);
+                    if (item.path !== vaultPath) void selectVault(item.path);
+                  }}
+                >
+                  <strong>{item.label}</strong>
+                  <span>{item.meta}</span>
+                  <code>{visiblePath(item.path)}</code>
+                </button>
+              ))}
+              <div className="project-switcher-actions">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProjectSwitcherOpen(false);
+                    setCreateProjectOpen(true);
+                  }}
+                >
+                  <Archive size={14} />
+                  {interfaceLanguage === "zh" ? "新建项目" : "New Project"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setProjectSwitcherOpen(false);
+                    void chooseVault();
+                  }}
+                >
+                  <FolderOpen size={14} />
+                  {interfaceLanguage === "zh" ? "打开项目" : "Open Project"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </aside>
 
       {activePage !== "settings" && renderKnowledgeSidebar()}
@@ -3617,73 +3725,6 @@ function App() {
             <p>{activePageCopy.subtitle}</p>
           </div>
           <div className="topbar-status">
-            <div
-              className="project-switcher"
-              onBlur={(event) => {
-                const nextTarget = event.relatedTarget;
-                if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
-                  setProjectSwitcherOpen(false);
-                }
-              }}
-            >
-              <button
-                className="project-switcher-trigger"
-                type="button"
-                onClick={() => setProjectSwitcherOpen((open) => !open)}
-                aria-haspopup="menu"
-                aria-expanded={projectSwitcherOpen}
-                title={vaultPath || "No vault selected"}
-              >
-                <Database size={15} />
-                <span>
-                  <strong>{vaultDisplayName}</strong>
-                  <em>{interfaceLanguage === "zh" ? "切换项目" : "Switch project"}</em>
-                </span>
-                <ChevronDown size={14} />
-              </button>
-              {projectSwitcherOpen && (
-                <div className="project-switcher-menu" role="menu">
-                  {projectSwitchOptions.map((item) => (
-                    <button
-                      type="button"
-                      role="menuitem"
-                      key={item.path}
-                      disabled={item.path === vaultPath}
-                      onClick={() => {
-                        setProjectSwitcherOpen(false);
-                        if (item.path !== vaultPath) void selectVault(item.path);
-                      }}
-                    >
-                      <strong>{item.label}</strong>
-                      <span>{item.meta}</span>
-                      <code>{visiblePath(item.path)}</code>
-                    </button>
-                  ))}
-                  <div className="project-switcher-actions">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setProjectSwitcherOpen(false);
-                        setCreateProjectOpen(true);
-                      }}
-                    >
-                      <Archive size={14} />
-                      {interfaceLanguage === "zh" ? "新建项目" : "New Project"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setProjectSwitcherOpen(false);
-                        void chooseVault();
-                      }}
-                    >
-                      <FolderOpen size={14} />
-                      {interfaceLanguage === "zh" ? "打开项目" : "Open Project"}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
             <div className={classNames("health", tone)}>
               {tone === "ok" ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
               {vaultPath ? (status ? (status.schemaValid ? copy.labels.schemaValid : copy.labels.schemaInvalid) : copy.labels.inspecting) : copy.brandSubtitleNoVault}
