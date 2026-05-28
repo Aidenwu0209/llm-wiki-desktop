@@ -6,6 +6,8 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 
 const DEFAULT_MODEL = "paddleocr-vl-1.5";
+const DEFAULT_API_KEY_ENV_VAR = "PADDLEOCR_API_KEY";
+const API_KEY_ENV_VAR_SETTING = "PADDLEOCR_API_KEY_ENV";
 const REQUIRED_MANIFEST_FIELDS = [
   "source_id",
   "source_path",
@@ -35,13 +37,15 @@ function usage() {
   npm run ocr:live-smoke -- --input <pdf-or-image> --out <artifact-dir>
 
 Environment:
-  PADDLEOCR_API_KEY                 Required. Read only from the environment.
+  PADDLEOCR_API_KEY                 Default required key environment variable.
+  PADDLEOCR_API_KEY_ENV             Optional key environment variable name.
   OPEN_LLM_WIKI_LAYOUT_ENDPOINT     Required. PaddleOCR job or parse endpoint.
   OPEN_LLM_WIKI_LAYOUT_MODEL        Optional. Defaults to ${DEFAULT_MODEL}.
 
 Options:
   --input <path>                    Required public PDF or image sample.
   --out <path>                      Required output directory for live artifacts.
+  --api-key-env-var <ENV>           Key environment variable name. Defaults to PADDLEOCR_API_KEY_ENV or ${DEFAULT_API_KEY_ENV_VAR}.
   --timeout-ms <n>                  Overall HTTP/poll timeout. Defaults to 180000.
   --poll-interval-ms <n>            Async job poll interval. Defaults to 2500.
   --validate-manifest <path>        Validate a manifest and exit without OCR.
@@ -66,6 +70,9 @@ function parseArgs(argv) {
     } else if (arg === "--out") {
       args.out = next;
       i += 1;
+    } else if (arg === "--api-key-env-var") {
+      args.apiKeyEnvVar = next;
+      i += 1;
     } else if (arg === "--timeout-ms") {
       args.timeoutMs = Number(next);
       i += 1;
@@ -82,9 +89,21 @@ function parseArgs(argv) {
   return args;
 }
 
-function requireEnv(name) {
+function normalizeEnvVarName(value, fallback = DEFAULT_API_KEY_ENV_VAR) {
+  const name = String(value || fallback).trim();
+  if (!/^[A-Z_][A-Z0-9_]*$/.test(name)) {
+    throw new LiveOcrSmokeError("bad_args", `Invalid API key environment variable name: ${name}`);
+  }
+  return name;
+}
+
+function resolveApiKeyEnvVar(args) {
+  return normalizeEnvVarName(args.apiKeyEnvVar || process.env[API_KEY_ENV_VAR_SETTING] || DEFAULT_API_KEY_ENV_VAR);
+}
+
+function requireEnv(name, code) {
   const value = process.env[name]?.trim();
-  if (!value) throw new LiveOcrSmokeError(name === "PADDLEOCR_API_KEY" ? "missing_key" : "missing_endpoint", `${name} is required for live OCR smoke.`);
+  if (!value) throw new LiveOcrSmokeError(code, `${name} is required for live OCR smoke.`);
   return value;
 }
 
@@ -342,8 +361,9 @@ function validateLiveManifest(value) {
 async function writeArtifacts(args) {
   if (!args.input) throw new LiveOcrSmokeError("bad_args", "Missing --input <path>.");
   if (!args.out) throw new LiveOcrSmokeError("bad_args", "Missing --out <artifact-dir>.");
-  const apiKey = requireEnv("PADDLEOCR_API_KEY");
-  const endpoint = requireEnv("OPEN_LLM_WIKI_LAYOUT_ENDPOINT");
+  const apiKeyEnvVar = resolveApiKeyEnvVar(args);
+  const apiKey = requireEnv(apiKeyEnvVar, "missing_key");
+  const endpoint = requireEnv("OPEN_LLM_WIKI_LAYOUT_ENDPOINT", "missing_endpoint");
   const model = process.env.OPEN_LLM_WIKI_LAYOUT_MODEL?.trim() || DEFAULT_MODEL;
   const inputPath = path.resolve(args.input);
   const outDir = path.resolve(args.out);
@@ -392,6 +412,7 @@ async function writeArtifacts(args) {
     parser: "paddleocr-vl15-live-smoke",
     parser_model: model,
     parser_version: parserVersion,
+    api_key_env_var: apiKeyEnvVar,
     page_count: pageCount,
     chunk_count: chunks.length,
     latency_ms: latencyMs,
@@ -418,8 +439,9 @@ async function validateManifestFile(filePath) {
 }
 
 async function main() {
+  let args = {};
   try {
-    const args = parseArgs(process.argv.slice(2));
+    args = parseArgs(process.argv.slice(2));
     if (args.validateManifest) {
       const result = await validateManifestFile(args.validateManifest);
       if (!result.valid) throw new LiveOcrSmokeError("manifest_invalid", result.errors.join("; "));
@@ -435,7 +457,21 @@ async function main() {
   } catch (err) {
     const code = err instanceof LiveOcrSmokeError ? err.code : "unexpected_error";
     const message = err instanceof Error ? err.message : String(err);
-    console.error(JSON.stringify({ status: code, message: redactText(message, [process.env.PADDLEOCR_API_KEY, process.env.OPEN_LLM_WIKI_LAYOUT_ENDPOINT]) }));
+    const apiKeyEnvVar = (() => {
+      try {
+        return resolveApiKeyEnvVar(args);
+      } catch {
+        return DEFAULT_API_KEY_ENV_VAR;
+      }
+    })();
+    console.error(JSON.stringify({
+      status: code,
+      message: redactText(message, [
+        process.env[DEFAULT_API_KEY_ENV_VAR],
+        process.env[apiKeyEnvVar],
+        process.env.OPEN_LLM_WIKI_LAYOUT_ENDPOINT,
+      ]),
+    }));
     process.exitCode = 1;
   }
 }
@@ -446,11 +482,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
 export {
   REQUIRED_MANIFEST_FIELDS,
+  DEFAULT_API_KEY_ENV_VAR,
   LiveOcrSmokeError,
   endpointHost,
   isLocalEndpoint,
+  normalizeEnvVarName,
   parseArgs,
   redactText,
+  resolveApiKeyEnvVar,
   validateLiveManifest,
   writeArtifacts,
 };

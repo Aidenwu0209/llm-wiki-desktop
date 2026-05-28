@@ -5,7 +5,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { endpointHost, redactText, validateLiveManifest } from "./paddleocr-vl15-live-smoke.mjs";
+import { endpointHost, normalizeEnvVarName, redactText, resolveApiKeyEnvVar, validateLiveManifest } from "./paddleocr-vl15-live-smoke.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../..");
@@ -50,6 +50,19 @@ test("redaction removes provider secrets from diagnostic text", () => {
   assert.match(redacted, /\[redacted\]/);
 });
 
+test("custom API key environment variable name is supported", () => {
+  const previous = process.env.PADDLEOCR_API_KEY_ENV;
+  process.env.PADDLEOCR_API_KEY_ENV = "CUSTOM_PADDLEOCR_KEY";
+  try {
+    assert.equal(resolveApiKeyEnvVar({}), "CUSTOM_PADDLEOCR_KEY");
+    assert.equal(resolveApiKeyEnvVar({ apiKeyEnvVar: "OVERRIDE_PADDLEOCR_KEY" }), "OVERRIDE_PADDLEOCR_KEY");
+    assert.throws(() => normalizeEnvVarName("bad-name"), /Invalid API key environment variable name/);
+  } finally {
+    if (previous === undefined) delete process.env.PADDLEOCR_API_KEY_ENV;
+    else process.env.PADDLEOCR_API_KEY_ENV = previous;
+  }
+});
+
 test("missing key fails clearly and does not create a fake success report", async () => {
   const outDir = path.join(repoRoot, "artifacts/test/paddleocr-live-missing-key");
   await fs.rm(outDir, { recursive: true, force: true });
@@ -69,6 +82,33 @@ test("missing key fails clearly and does not create a fake success report", asyn
   });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /missing_key/);
+  await assert.rejects(fs.stat(path.join(outDir, "manifest.json")));
+});
+
+test("configured key env var is honored and redacted", async () => {
+  const outDir = path.join(repoRoot, "artifacts/test/paddleocr-live-custom-key-env");
+  await fs.rm(outDir, { recursive: true, force: true });
+  const env = {
+    ...process.env,
+    PADDLEOCR_API_KEY_ENV: "CUSTOM_PADDLEOCR_KEY",
+    CUSTOM_PADDLEOCR_KEY: "custom-test-only-secret",
+  };
+  delete env.PADDLEOCR_API_KEY;
+  delete env.OPEN_LLM_WIKI_LAYOUT_ENDPOINT;
+  const result = spawnSync(process.execPath, [
+    scriptPath,
+    "--input",
+    "package.json",
+    "--out",
+    outDir,
+  ], {
+    cwd: repoRoot,
+    env,
+    encoding: "utf8",
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /missing_endpoint/);
+  assert.doesNotMatch(result.stderr, /custom-test-only-secret/);
   await assert.rejects(fs.stat(path.join(outDir, "manifest.json")));
 });
 

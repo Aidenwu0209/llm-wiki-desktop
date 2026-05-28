@@ -4,7 +4,7 @@
 
 Add a reproducible, optional live OCR smoke path for PaddleOCR-VL-1.5 so maintainers can prove that a public PDF or image sample produces real parser artifacts that satisfy the desktop artifact contract.
 
-This report is intentionally not a dry-run success record. Live run not executed in this PR; script and report template added. Maintainer must run with `PADDLEOCR_API_KEY`.
+This report is intentionally not a dry-run success record. Live run not executed in this PR; script and report template added. Maintainer must run with the configured PaddleOCR API key environment variable, defaulting to `PADDLEOCR_API_KEY`.
 
 ## Repository State
 
@@ -47,9 +47,12 @@ The live smoke script reads these names only:
 
 ```bash
 PADDLEOCR_API_KEY
+PADDLEOCR_API_KEY_ENV
 OPEN_LLM_WIKI_LAYOUT_ENDPOINT
 OPEN_LLM_WIKI_LAYOUT_MODEL
 ```
+
+`PADDLEOCR_API_KEY_ENV` is optional. When unset, the script reads the key from `PADDLEOCR_API_KEY`. When set, it must contain an environment variable name such as `MY_PADDLEOCR_KEY`; the key value is then read from that variable. The same override can be passed with `--api-key-env-var`.
 
 Do not paste values into this report, README files, issue comments, screenshots, logs, or PR descriptions.
 
@@ -61,6 +64,18 @@ export OPEN_LLM_WIKI_LAYOUT_MODEL="paddleocr-vl-1.5"
 read -rsp "PADDLEOCR_API_KEY: " PADDLEOCR_API_KEY
 export PADDLEOCR_API_KEY
 npm run ocr:live-smoke -- \
+  --input ../deepseek_paper/DeepSeek-OCR_2510.18234.pdf \
+  --out artifacts/smoke/paddleocr-vl15/
+```
+
+Custom key env example:
+
+```bash
+export PADDLEOCR_API_KEY_ENV="MY_PADDLEOCR_KEY"
+read -rsp "MY_PADDLEOCR_KEY: " MY_PADDLEOCR_KEY
+export MY_PADDLEOCR_KEY
+npm run ocr:live-smoke -- \
+  --api-key-env-var MY_PADDLEOCR_KEY \
   --input ../deepseek_paper/DeepSeek-OCR_2510.18234.pdf \
   --out artifacts/smoke/paddleocr-vl15/
 ```
@@ -78,7 +93,7 @@ artifacts/smoke/paddleocr-vl15/chunks.jsonl
 artifacts/smoke/paddleocr-vl15/manifest.json
 ```
 
-If `PADDLEOCR_API_KEY` or `OPEN_LLM_WIKI_LAYOUT_ENDPOINT` is missing, the script exits with `missing_key` or `missing_endpoint` and must not generate a fake success manifest.
+If the configured key environment variable or `OPEN_LLM_WIKI_LAYOUT_ENDPOINT` is missing, the script exits with `missing_key` or `missing_endpoint` and must not generate a fake success manifest.
 
 ## Manifest Summary
 
@@ -93,6 +108,7 @@ Fill after the live smoke:
 | `parser` | `<parser>` |
 | `parser_model` | `<model>` |
 | `parser_version` | `<version or unreported>` |
+| `api_key_env_var` | `<configured key env var name, not the key value>` |
 | `page_count` | `<number>` |
 | `chunk_count` | `<number>` |
 | `latency_ms` | `<number>` |
@@ -107,11 +123,11 @@ Fill after the live smoke:
 - Expected behavior when running against hosted PaddleOCR: `external_upload: true`
 - Expected behavior when running against localhost: `external_upload: false`
 
-The script does not upload anything until `PADDLEOCR_API_KEY`, `OPEN_LLM_WIKI_LAYOUT_ENDPOINT`, `--input`, and `--out` are all present.
+The script does not upload anything until the configured key environment variable, `OPEN_LLM_WIKI_LAYOUT_ENDPOINT`, `--input`, and `--out` are all present.
 
 ## Key Handling
 
-- The API key is read from `PADDLEOCR_API_KEY`.
+- The API key is read from `PADDLEOCR_API_KEY` by default, or from the variable named by `PADDLEOCR_API_KEY_ENV` / `--api-key-env-var`.
 - The key is passed only in request headers for the live smoke process.
 - The script redacts bearer tokens, known secret values, and token-like URL query parameters from diagnostics and `ocr-output.json`.
 - The manifest records only `endpoint_host`, not the full endpoint URL.
