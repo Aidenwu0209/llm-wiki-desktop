@@ -1,0 +1,43 @@
+name: Good first issue
+description: Suggest a small, well-scoped task for new contributors.
+title: "[good first issue]: "
+labels:
+  - good first issue
+body:
+  - type: textarea
+    id: task
+    attributes:
+      label: Task
+      description: What should be changed?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Link the relevant docs, files, or UI area.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      placeholder: |
+        - ...
+        - ...
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: Suggested files
+      description: Keep the scope small and avoid business logic unless required.
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Boundaries
+      options:
+        - label: This task does not require live API keys, private raw documents, or fabricated provider results.
+          required: true
+        - label: This task can be completed with docs, tests, or synthetic data.
+          required: true
