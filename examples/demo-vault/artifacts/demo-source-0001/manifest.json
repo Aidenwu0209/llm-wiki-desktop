@@ -1,10 +1,26 @@
 {
+  "schema_version": 1,
   "source_id": "DEMO-0001",
   "source_uuid": "demo-source-0001",
   "parser": "PaddleOCR-VL-1.5",
+  "parser_model": "PaddleOCR-VL-1.5",
   "parser_version": "synthetic-demo",
   "source_path": "raw/inbox/sample-project.md",
+  "source_sha256": "9acfb1bbb851321d852859389caecd78c3e06789b383450e955762291274f188",
   "markdown_path": "artifacts/demo-source-0001/markdown.md",
+  "artifact_sha256": "e973f1cd950cf6ac2449d17c9f1dbc35310946c182a14c291ff5ad6e76e5522a",
   "chunks_path": "artifacts/demo-source-0001/chunks.jsonl",
-  "chunk_count": 4
+  "page_count": 3,
+  "chunk_count": 4,
+  "latency_ms": 0,
+  "anchors": {
+    "lines": true,
+    "pages": true,
+    "tables": false,
+    "figures": false,
+    "equations": false
+  },
+  "limitations": [
+    "synthetic_demo_fixture_not_live_ocr"
+  ]
 }
