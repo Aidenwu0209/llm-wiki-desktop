@@ -23,6 +23,23 @@ type EvidenceDoc = {
   parser?: string | null;
 };
 
+type OcrArtifactMetadata = {
+  artifact_path: string;
+  manifest_path?: string | null;
+  source_path?: string | null;
+  source_id?: string | null;
+  parser?: string | null;
+  parser_model?: string | null;
+  parser_version?: string | null;
+  page_count?: number | null;
+  chunk_count?: number | null;
+  source_sha256?: string | null;
+  artifact_sha256?: string | null;
+  latency_ms?: number | null;
+  limitations: string[];
+  fixture?: boolean;
+};
+
 type Args = {
   vault?: string;
   questions: string;
@@ -195,6 +212,12 @@ function numberFrom(value: any, fields: string[]) {
     if (typeof candidate === "number" && Number.isFinite(candidate)) return candidate;
   }
   return null;
+}
+
+function stringArrayFrom(value: any, field: string) {
+  const items = value?.[field];
+  if (!Array.isArray(items)) return [];
+  return items.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
 }
 
 function extractLatencyMs(value: any): number[] {
@@ -449,6 +472,130 @@ function detectOcrParser(docs: EvidenceDoc[]) {
   return docs.find((doc) => doc.parser)?.parser || "local-artifact";
 }
 
+function maxPageInChunks(text: string) {
+  let max = 0;
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      const value = JSON.parse(line);
+      const page = numberFrom(value, ["page", "page_number", "page_index"]);
+      if (typeof page === "number" && page > max) max = page;
+    } catch {
+      continue;
+    }
+  }
+  return max > 0 ? max : null;
+}
+
+function ocrArtifactKey(value: Pick<OcrArtifactMetadata, "artifact_path" | "source_path">) {
+  return value.artifact_path || value.source_path || "";
+}
+
+function mergeArtifactMetadata(base: OcrArtifactMetadata, fallback?: OcrArtifactMetadata) {
+  if (!fallback) return base;
+  return {
+    ...fallback,
+    ...base,
+    artifact_path: base.artifact_path || fallback.artifact_path,
+    manifest_path: base.manifest_path || fallback.manifest_path,
+    source_path: base.source_path || fallback.source_path,
+    source_id: base.source_id || fallback.source_id,
+    parser: base.parser || fallback.parser,
+    parser_model: base.parser_model || fallback.parser_model,
+    parser_version: base.parser_version || fallback.parser_version,
+    page_count: base.page_count ?? fallback.page_count ?? null,
+    chunk_count: base.chunk_count ?? fallback.chunk_count ?? null,
+    source_sha256: base.source_sha256 || fallback.source_sha256,
+    artifact_sha256: base.artifact_sha256 || fallback.artifact_sha256,
+    latency_ms: base.latency_ms ?? fallback.latency_ms ?? null,
+    limitations: base.limitations.length ? base.limitations : fallback.limitations,
+    fixture: Boolean(base.fixture && fallback.fixture),
+  };
+}
+
+async function readOcrArtifactMetadata(vault: string, manifestPath: string): Promise<OcrArtifactMetadata | null> {
+  let manifest: any;
+  try {
+    manifest = await readJsonFile(manifestPath);
+  } catch {
+    return null;
+  }
+  const relManifestPath = relative(vault, manifestPath);
+  const parent = path.dirname(manifestPath);
+  const parentRel = relative(vault, parent);
+  const chunksRel =
+    firstString(manifest, ["chunks", "chunks_path", "chunksPath"])
+    || `${parentRel}/chunks.jsonl`;
+  const chunksPath = path.join(vault, chunksRel);
+  let derivedChunkCount = numberFrom(manifest, ["chunk_count", "chunkCount"]);
+  let derivedPageCount = numberFrom(manifest, ["page_count", "pageCount"]);
+  if (derivedChunkCount === null || derivedPageCount === null) {
+    try {
+      const chunksText = await readTextSafe(chunksPath, 500_000);
+      if (derivedChunkCount === null) {
+        derivedChunkCount = chunksText.split(/\r?\n/).filter((line) => line.trim().length > 0).length;
+      }
+      if (derivedPageCount === null) {
+        derivedPageCount = maxPageInChunks(chunksText);
+      }
+    } catch {
+      // Keep manifest values only.
+    }
+  }
+  return {
+    artifact_path:
+      firstString(manifest, ["combined", "markdown_path", "markdownPath", "artifact_path", "artifactPath"])
+      || `${parentRel}/markdown.md`,
+    manifest_path: relManifestPath,
+    source_path: firstString(manifest, ["source_path", "sourcePath"]) || null,
+    source_id: firstString(manifest, ["source_id", "sourceId"]) || null,
+    parser: firstString(manifest, ["parser"]) || null,
+    parser_model: firstString(manifest, ["parser_model", "parserModel", "model"]) || null,
+    parser_version: firstString(manifest, ["parser_version", "parserVersion"]) || null,
+    page_count: derivedPageCount,
+    chunk_count: derivedChunkCount,
+    source_sha256: firstString(manifest, ["source_sha256", "sourceSha256", "sha256"]) || null,
+    artifact_sha256: firstString(manifest, ["artifact_sha256", "artifactSha256"]) || null,
+    latency_ms: numberFrom(manifest, ["latency_ms", "duration_ms", "parse_latency_ms"]),
+    limitations: stringArrayFrom(manifest, "limitations"),
+  };
+}
+
+function fixtureOcrArtifacts(manifest: any): OcrArtifactMetadata[] {
+  const items = Array.isArray(manifest?.fixture_ocr_artifacts) ? manifest.fixture_ocr_artifacts : [];
+  return items.map((item) => ({
+    artifact_path: firstString(item, ["artifact_path", "artifactPath"]),
+    manifest_path: firstString(item, ["manifest_path", "manifestPath"]) || null,
+    source_path: firstString(item, ["source_path", "sourcePath"]) || null,
+    source_id: firstString(item, ["source_id", "sourceId"]) || null,
+    parser: firstString(item, ["parser"]) || null,
+    parser_model: firstString(item, ["parser_model", "parserModel", "model"]) || null,
+    parser_version: firstString(item, ["parser_version", "parserVersion"]) || null,
+    page_count: numberFrom(item, ["page_count", "pageCount"]),
+    chunk_count: numberFrom(item, ["chunk_count", "chunkCount"]),
+    source_sha256: firstString(item, ["source_sha256", "sourceSha256", "sha256"]) || null,
+    artifact_sha256: firstString(item, ["artifact_sha256", "artifactSha256"]) || null,
+    latency_ms: numberFrom(item, ["latency_ms", "duration_ms", "parse_latency_ms"]),
+    limitations: stringArrayFrom(item, "limitations"),
+    fixture: true,
+  })).filter((item) => item.artifact_path || item.source_path);
+}
+
+async function loadOcrArtifacts(vault: string, files: string[], manifest: any) {
+  const manifestFiles = files.filter((file) => /(^|\/)artifacts\/.+\/manifest\.json$/i.test(relative(vault, file)));
+  const actualArtifacts = (await Promise.all(manifestFiles.map((file) => readOcrArtifactMetadata(vault, file))))
+    .filter((item): item is OcrArtifactMetadata => Boolean(item));
+  const fixtureArtifacts = fixtureOcrArtifacts(manifest);
+  const fixtureByKey = new Map(fixtureArtifacts.map((item) => [ocrArtifactKey(item), item]));
+  const merged = actualArtifacts.map((item) => mergeArtifactMetadata(item, fixtureByKey.get(ocrArtifactKey(item))));
+  const seenKeys = new Set(merged.map((item) => ocrArtifactKey(item)));
+  for (const item of fixtureArtifacts) {
+    const key = ocrArtifactKey(item);
+    if (key && !seenKeys.has(key)) merged.push(item);
+  }
+  return merged;
+}
+
 async function main() {
   const started = Date.now();
   const args = parseArgs(process.argv.slice(2));
@@ -458,6 +605,7 @@ async function main() {
   const manifest = await readJsonFile(manifestPath);
   const manifestValidation = validateManifest(manifest);
   const corpus = await loadEvidenceCorpus(vault);
+  const ocrArtifacts = await loadOcrArtifacts(vault, corpus.files, manifest);
   const questionResults = questions.map((question) => evaluateQuestion(question, corpus.docs, args.maxEvidence));
   const apiKey = process.env.AI_STUDIO_API_KEY?.trim();
   const ernieEnabled = Boolean(apiKey && !args.noErnie);
@@ -479,16 +627,22 @@ async function main() {
   const requiredEvidenceTotal = questionResults.reduce((sum, result) => sum + result.required_evidence_ids.length, 0);
   const coveredEvidenceTotal = questionResults.reduce((sum, result) => sum + Math.round(result.citation_coverage * result.required_evidence_ids.length), 0);
   const noEvidenceQuestions = questionResults.filter((result) => !result.expected_answerable);
-  const ocrLatencies = corpus.docs.flatMap((doc) => typeof doc.latency_ms === "number" ? [doc.latency_ms] : []);
+  const ocrLatencies = ocrArtifacts.flatMap((artifact) => typeof artifact.latency_ms === "number" ? [artifact.latency_ms] : []);
   const artifactDocsWithoutSource = corpus.docs.filter((doc) => (doc.kind === "json" || doc.kind === "jsonl") && !doc.source_path).length;
   const expectedSampleCount = Array.isArray(manifest.samples) ? manifest.samples.length : 0;
-  const parsedSourceCount = new Set(corpus.docs.map((doc) => doc.source_path || doc.path.split("#")[0]).filter(Boolean)).size;
+  const parsedSourceCount = new Set(
+    ocrArtifacts
+      .map((artifact) => artifact.source_path || artifact.artifact_path)
+      .filter(Boolean),
+  ).size || new Set(corpus.docs.map((doc) => doc.source_path || doc.path.split("#")[0]).filter(Boolean)).size;
+  const ocrChunkCount = ocrArtifacts.reduce((sum, artifact) => sum + (artifact.chunk_count ?? 0), 0);
+  const ocrPageCount = ocrArtifacts.reduce((sum, artifact) => sum + (artifact.page_count ?? 0), 0);
   const metrics = {
     parse_success_rate: expectedSampleCount ? Math.min(1, parsedSourceCount / expectedSampleCount) : (corpus.docs.length > 0 ? 1 : 0),
     markdown_generated: corpus.markdownFiles.length,
     json_generated: corpus.jsonFiles.length,
     manifest_valid: manifestValidation.valid,
-    chunk_count: corpus.docs.length,
+    chunk_count: ocrChunkCount || corpus.docs.length,
     citation_coverage: requiredEvidenceTotal ? coveredEvidenceTotal / requiredEvidenceTotal : 1,
     unsupported_claim_count: questionResults.filter((result) => result.unsupported_claim).length,
     traceability_break_count: questionResults.reduce((sum, result) => sum + result.traceability_break_count, 0) + artifactDocsWithoutSource,
@@ -521,9 +675,14 @@ async function main() {
       max_evidence: args.maxEvidence,
     },
     ocr: {
-      parser: detectOcrParser(corpus.docs),
-      artifact_count: corpus.jsonFiles.length,
+      parser: ocrArtifacts[0]?.parser || detectOcrParser(corpus.docs),
+      parser_model: ocrArtifacts[0]?.parser_model || null,
+      parser_version: ocrArtifacts[0]?.parser_version || null,
+      artifact_count: ocrArtifacts.length || corpus.jsonFiles.length,
+      page_count: ocrPageCount || null,
+      chunk_count: ocrChunkCount || null,
       latency_ms: metrics.ocr_latency_ms,
+      artifacts: ocrArtifacts,
     },
     ernie: {
       model: args.ernieModel,

@@ -28,6 +28,8 @@ const PADDLEOCR_VL15_PROVIDER_ID: &str = "paddleocr-vl15";
 const PADDLEOCR_VL15_API_KEY_ENV: &str = "PADDLEOCR_API_KEY";
 const PADDLEOCR_VL15_DEFAULT_MODEL: &str = "PaddleOCR-VL-1.5";
 const PADDLEOCR_LAYOUT_TOKEN_ENV: &str = "OPEN_LLM_WIKI_LAYOUT_TOKEN";
+const PADDLEOCR_LAYOUT_MODEL_ENV: &str = "OPEN_LLM_WIKI_LAYOUT_MODEL";
+const PADDLEOCR_LAYOUT_ENDPOINT_ENV: &str = "OPEN_LLM_WIKI_LAYOUT_ENDPOINT";
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -980,13 +982,16 @@ struct ArtifactContractSummary {
     figures_path: Option<String>,
     parse_log_path: Option<String>,
     parser: Option<String>,
+    parser_model: Option<String>,
     parser_version: Option<String>,
     schema_version: Option<String>,
     source_sha256: Option<String>,
     artifact_sha256: Option<String>,
     status: String,
     contract_valid: bool,
+    page_count: Option<usize>,
     chunk_count: usize,
+    latency_ms: Option<u128>,
     anchors_lines: bool,
     anchors_pages: bool,
     anchors_tables: bool,
@@ -1912,6 +1917,13 @@ fn json_usize(value: &serde_json::Value, key: &str) -> Option<usize> {
         .get(key)
         .and_then(serde_json::Value::as_u64)
         .and_then(|item| usize::try_from(item).ok())
+}
+
+fn json_u128(value: &serde_json::Value, key: &str) -> Option<u128> {
+    value
+        .get(key)
+        .and_then(serde_json::Value::as_u64)
+        .map(u128::from)
 }
 
 fn detect_mime(path: &Path) -> String {
@@ -6847,6 +6859,16 @@ fn parser_artifact_contract_blocker(
         return Some("parser artifact contract is invalid: manifest.parser is missing".to_string());
     }
 
+    if json_string(&manifest, "parser_model")
+        .or_else(|| json_string(&manifest, "model"))
+        .is_none()
+    {
+        return Some(
+            "parser artifact contract is invalid: manifest.parser_model (or manifest.model) is missing"
+                .to_string(),
+        );
+    }
+
     if json_string(&manifest, "artifact_sha256").as_deref() != Some(artifact_hash.as_str()) {
         return Some(
             "parser artifact contract is invalid: manifest.artifact_sha256 does not match combined.md"
@@ -6857,10 +6879,58 @@ fn parser_artifact_contract_blocker(
     if !chunks_path.is_file() {
         return Some("parser artifact contract is invalid: chunks.jsonl is missing".to_string());
     }
-    if count_jsonl(&chunks_path) == 0 {
+    let actual_chunk_count = count_jsonl(&chunks_path);
+    if actual_chunk_count == 0 {
         return Some(
             "parser artifact contract is invalid: chunks.jsonl has no evidence chunks".to_string(),
         );
+    }
+    if json_usize(&manifest, "chunk_count")
+        .is_none_or(|chunk_count| chunk_count != actual_chunk_count)
+    {
+        return Some(
+            "parser artifact contract is invalid: manifest.chunk_count does not match chunks.jsonl"
+                .to_string(),
+        );
+    }
+
+    if json_usize(&manifest, "page_count")
+        .or_else(|| json_usize(&manifest, "pageCount"))
+        .is_none()
+    {
+        return Some(
+            "parser artifact contract is invalid: manifest.page_count is missing".to_string(),
+        );
+    }
+
+    if json_u128(&manifest, "latency_ms")
+        .or_else(|| json_u128(&manifest, "duration_ms"))
+        .is_none()
+    {
+        return Some(
+            "parser artifact contract is invalid: manifest.latency_ms is missing".to_string(),
+        );
+    }
+
+    if manifest
+        .get("limitations")
+        .and_then(serde_json::Value::as_array)
+        .is_none()
+    {
+        return Some(
+            "parser artifact contract is invalid: manifest.limitations is missing".to_string(),
+        );
+    }
+
+    if let Some(expected_source_id) = source_id_for_source(vault, source_sha256, &source_rel) {
+        let manifest_source_id =
+            json_string(&manifest, "source_id").or_else(|| json_string(&manifest, "sourceId"));
+        if manifest_source_id.as_deref() != Some(expected_source_id.as_str()) {
+            return Some(
+                "parser artifact contract is invalid: manifest.source_id does not match the current source"
+                    .to_string(),
+            );
+        }
     }
 
     None
@@ -6878,6 +6948,24 @@ fn manifest_limitations(manifest: &serde_json::Value) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn max_page_in_chunks(path: &Path) -> Option<usize> {
+    let mut max_page = 0usize;
+    for row in read_jsonl_values(path) {
+        let page = json_usize(&row, "page")
+            .or_else(|| json_usize(&row, "page_index"))
+            .or_else(|| json_usize(&row, "page_number"))
+            .unwrap_or(0);
+        if page > max_page {
+            max_page = page;
+        }
+    }
+    if max_page > 0 {
+        Some(max_page)
+    } else {
+        None
+    }
 }
 
 fn manifest_anchor(manifest: &serde_json::Value, key: &str) -> bool {
@@ -7028,11 +7116,14 @@ fn write_text_artifact_contract(
         "combined": rel_path(vault, artifact),
         "chunks": rel_path(vault, &parent.join("chunks.jsonl")),
         "parser": "llm-wiki-desktop-text-stager",
+        "parser_model": "llm-wiki-desktop-text-stager",
         "parser_version": env!("CARGO_PKG_VERSION"),
         "created_at": Local::now().to_rfc3339(),
         "staged_at": Local::now().to_rfc3339(),
         "mime": detect_mime(source),
+        "page_count": 0,
         "chunk_count": chunks.len(),
+        "latency_ms": 0,
         "anchors": {
             "pages": false,
             "lines": true,
@@ -7067,6 +7158,13 @@ struct PaddleOcrConfigState {
     ready: bool,
     endpoint: String,
     message: String,
+}
+
+#[derive(Debug, Clone)]
+struct PaddleOcrRuntimeConfig {
+    endpoint: String,
+    api_key: String,
+    model: String,
 }
 
 fn parser_output_dir_display(artifact: &Path) -> String {
@@ -7135,7 +7233,7 @@ fn paddleocr_config_state(settings: &DesktopSettings) -> Result<PaddleOcrConfigS
     })
 }
 
-fn paddleocr_runtime_config(settings: &DesktopSettings) -> Result<(String, String), String> {
+fn paddleocr_runtime_config(settings: &DesktopSettings) -> Result<PaddleOcrRuntimeConfig, String> {
     let state = paddleocr_config_state(settings)?;
     if !state.ready {
         return Err(format!(
@@ -7150,7 +7248,11 @@ fn paddleocr_runtime_config(settings: &DesktopSettings) -> Result<(String, Strin
                 settings.ocr_parser.api_key_env_var
             )
         })?;
-    Ok((state.endpoint, api_key))
+    Ok(PaddleOcrRuntimeConfig {
+        endpoint: state.endpoint,
+        api_key,
+        model: paddleocr_model(&settings.ocr_parser.model),
+    })
 }
 
 fn parser_plan_for_source(
@@ -7170,13 +7272,14 @@ fn parser_plan_for_source(
                     "PDF/image requires a PaddleOCR-VL-1.5 artifact before corpus ingest can run"
                         .to_string(),
                 parser_hint: format!(
-                    "{} # PaddleOCR-VL-1.5 via Settings -> OCR Parser; token source: {}",
+                    "{} # PaddleOCR-VL-1.5 via Settings -> OCR Parser; model: {}; token source: {}",
                     runtime_parser_hint_for_source(
                         source,
                         artifact,
                         "layout-api",
                         Some(&state.endpoint),
                     ),
+                    paddleocr_model(&settings.ocr_parser.model),
                     settings.ocr_parser.api_key_env_var
                 ),
                 next_action_label: "Parse with PaddleOCR-VL-1.5, then run the ingest pipeline"
@@ -7741,6 +7844,19 @@ fn artifact_summary_for_entry(
     let manifest_source_sha = manifest.as_ref().and_then(|value| {
         json_string(value, "source_sha256").or_else(|| json_string(value, "sha256"))
     });
+    let page_count = manifest
+        .as_ref()
+        .and_then(|value| {
+            json_usize(value, "page_count").or_else(|| json_usize(value, "pageCount"))
+        })
+        .or_else(|| max_page_in_chunks(&chunks_path));
+    let chunk_count = manifest
+        .as_ref()
+        .and_then(|value| json_usize(value, "chunk_count"))
+        .unwrap_or_else(|| count_jsonl(&chunks_path));
+    let latency_ms = manifest.as_ref().and_then(|value| {
+        json_u128(value, "latency_ms").or_else(|| json_u128(value, "duration_ms"))
+    });
     let status = if manifest.is_none() {
         "legacy"
     } else if manifest_source_sha
@@ -7772,6 +7888,9 @@ fn artifact_summary_for_entry(
         parser: manifest
             .as_ref()
             .and_then(|value| json_string(value, "parser")),
+        parser_model: manifest.as_ref().and_then(|value| {
+            json_string(value, "parser_model").or_else(|| json_string(value, "model"))
+        }),
         parser_version: manifest
             .as_ref()
             .and_then(|value| json_string(value, "parser_version")),
@@ -7787,13 +7906,16 @@ fn artifact_summary_for_entry(
         source_sha256: manifest_source_sha,
         artifact_sha256,
         status,
-        contract_valid: manifest.is_some()
-            && chunks_path.is_file()
-            && manifest
-                .as_ref()
-                .and_then(|value| json_string(value, "artifact_sha256"))
-                .is_some_and(|hash| sha256_file(&artifact).ok().as_deref() == Some(hash.as_str())),
-        chunk_count: count_jsonl(&chunks_path),
+        contract_valid: parser_artifact_contract_blocker(
+            vault,
+            &PathBuf::from(&entry.source_path),
+            &entry.sha256,
+            &artifact,
+        )
+        .is_none(),
+        page_count,
+        chunk_count,
+        latency_ms,
         anchors_lines: manifest
             .as_ref()
             .is_some_and(|value| manifest_anchor(value, "lines")),
@@ -13963,10 +14085,18 @@ fn parse_pdf_artifacts(
     let mut env_overrides: Vec<(String, String)> = Vec::new();
     if selected_parser == PADDLEOCR_VL15_PROVIDER_ID {
         let settings = load_desktop_settings(to_display(vault))?;
-        let (endpoint, api_key) = paddleocr_runtime_config(&settings)?;
+        let runtime_config = paddleocr_runtime_config(&settings)?;
         parser = "layout-api".to_string();
-        api_url = endpoint;
-        env_overrides.push((PADDLEOCR_LAYOUT_TOKEN_ENV.to_string(), api_key));
+        api_url = runtime_config.endpoint.clone();
+        env_overrides.push((
+            PADDLEOCR_LAYOUT_TOKEN_ENV.to_string(),
+            runtime_config.api_key,
+        ));
+        env_overrides.push((PADDLEOCR_LAYOUT_MODEL_ENV.to_string(), runtime_config.model));
+        env_overrides.push((
+            PADDLEOCR_LAYOUT_ENDPOINT_ENV.to_string(),
+            runtime_config.endpoint,
+        ));
     } else if parser == "layout-api" && !cloud_parsing_allowed {
         return Err("layout-api parser requires explicit cloud parsing approval".to_string());
     }
@@ -14538,8 +14668,11 @@ mod tests {
                     "combined": rel_path(vault, artifact),
                     "chunks": rel_path(vault, &chunks_path),
                     "parser": "test-parser",
+                    "parser_model": "test-parser-model",
                     "parser_version": "test",
+                    "page_count": 1,
                     "chunk_count": 1,
+                    "latency_ms": 42,
                     "anchors": {
                         "pages": true,
                         "lines": true,
