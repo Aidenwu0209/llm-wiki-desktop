@@ -159,6 +159,7 @@ const KNOWLEDGE_SIDEBAR_MIN_WIDTH = 180;
 const KNOWLEDGE_SIDEBAR_MAX_WIDTH = 400;
 const PREVIEW_SIDEBAR_MIN_WIDTH = 280;
 const PREVIEW_SIDEBAR_MAX_WIDTH = 560;
+const NAV_RAIL_EXPANDED_STORAGE_KEY = "llm-wiki.navRailExpanded";
 
 const localizedBoolean = (value: boolean, language: UiLanguage) => {
   if (language === "zh") return value ? "是" : "否";
@@ -1828,6 +1829,9 @@ function App() {
   const [runtimeHistory, setRuntimeHistory] = useState<RuntimeJobEvent[]>([]);
   const [liveLogLines, setLiveLogLines] = useState<string[]>([]);
   const [activePage, setActivePage] = useState<ShellPage>("chat");
+  const [navRailExpanded, setNavRailExpanded] = useState(() =>
+    typeof localStorage !== "undefined" && localStorage.getItem(NAV_RAIL_EXPANDED_STORAGE_KEY) === "true",
+  );
   const [detailDrawerOpen, setDetailDrawerOpen] = useState(true);
   const [sidebarTreeMode, setSidebarTreeMode] = useState<SidebarTreeMode>("knowledge");
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -1899,12 +1903,23 @@ function App() {
   const activePageCopy = copy.pages[activePage];
   const pageVisible = (...pages: ShellPage[]) => pages.includes(activePage);
   const activeReadingPath = detailSelection.kind === "source" ? detailSelection.file.path : (readingHistory[readingHistoryIndex]?.path || "");
+  const navRailToggleLabel = navRailExpanded
+    ? (interfaceLanguage === "zh" ? "收起导航" : "Collapse nav")
+    : (interfaceLanguage === "zh" ? "展开导航" : "Expand nav");
+  const navRailToggleTitle = navRailExpanded
+    ? (interfaceLanguage === "zh" ? "收起所有页面导航" : "Collapse navigation on all pages")
+    : (interfaceLanguage === "zh" ? "展开所有页面导航" : "Expand navigation on all pages");
   const shellLayoutStyle = activePage !== "settings"
     ? ({
       "--knowledge-sidebar-width": `${knowledgeSidebarWidth}px`,
       "--preview-sidebar-width": `${previewSidebarWidth}px`,
     } as CSSProperties)
     : undefined;
+
+  useEffect(() => {
+    if (typeof localStorage === "undefined") return;
+    localStorage.setItem(NAV_RAIL_EXPANDED_STORAGE_KEY, navRailExpanded ? "true" : "false");
+  }, [navRailExpanded]);
 
   const startShellResize = (side: "knowledge" | "preview") => (event: ReactMouseEvent<HTMLElement>) => {
     event.preventDefault();
@@ -3667,6 +3682,7 @@ function App() {
       className={classNames(
         "app-shell",
         activePage !== "settings" && "nashsu-aligned-shell",
+        navRailExpanded && "nav-rail-expanded",
         `interface-${interfaceLanguage}`,
         activePage === "settings" && "settings-mode",
         activePage !== "settings" && (detailDrawerOpen || researchPanelOpen) && "inspector-open",
@@ -3721,6 +3737,17 @@ function App() {
             {busy === "query_writeback" && <span className="nav-badge live">1</span>}
           </button>
         </nav>
+        <button
+          type="button"
+          className={classNames("nav-button", "nav-rail-toggle", navRailExpanded && "active")}
+          title={navRailToggleTitle}
+          aria-label={navRailToggleTitle}
+          aria-pressed={navRailExpanded}
+          onClick={() => setNavRailExpanded((expanded) => !expanded)}
+        >
+          {navRailExpanded ? <ChevronLeft size={19} /> : <ChevronRight size={19} />}
+          <span className="nav-label">{navRailToggleLabel}</span>
+        </button>
         <div
           className="rail-project-switcher"
           onBlur={(event) => {
