@@ -2217,7 +2217,25 @@ body[data-shell-panel-resizing="true"] * {
 }
 
 .reviews-workspace-grid {
-  grid-template-columns: minmax(520px, 1.35fr) minmax(320px, 0.85fr);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr));
+}
+
+.review-context-panel {
+  min-width: 0;
+}
+
+.review-context-panel .workflow-metrics.compact {
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+}
+
+.review-context-panel .inline-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(126px, 1fr));
+}
+
+.review-context-panel .inline-actions button {
+  width: 100%;
+  min-width: 0;
 }
 
 .concept-workspace-grid {
