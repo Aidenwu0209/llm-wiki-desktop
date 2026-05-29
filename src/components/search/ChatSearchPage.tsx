@@ -1,15 +1,19 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
+  Bot,
   ClipboardCopy,
   FileSearch,
   FolderOpen,
   GitCompare,
   History,
   Lightbulb,
+  Plus,
   Search,
+  Send,
   SquareStack,
+  User,
 } from "lucide-react";
 import type {
   ClaimLedgerItem,
@@ -156,7 +160,7 @@ const chatCopy = {
     noSnippet: "没有摘要。",
     selectResult: "选择一个结果，检查路径、证据关系和动作。",
     copyDraft: "复制草稿",
-    draftPlaceholder: "先选择问题或执行搜索，再生成证据回答。可用 API 提供方会被调用；否则输出清楚标记为本地草稿。",
+    draftPlaceholder: "先选择问题或执行搜索，再生成证据回答。点击“使用 ERNIE 生成”才会调用 API；普通发送只生成本地证据草稿。",
     evidenceMap: "证据图",
     references: "条引用",
     currentEvidence: "当前回答证据",
@@ -239,7 +243,7 @@ const chatCopy = {
     noSnippet: "No snippet available.",
     selectResult: "Select a result to inspect its path, evidence relation, and actions.",
     copyDraft: "copy draft",
-    draftPlaceholder: "Generate an evidence answer after choosing a question or running a search. A usable API provider will be called; otherwise the output is clearly marked as a local draft.",
+    draftPlaceholder: "Generate an evidence answer after choosing a question or running a search. The ERNIE button is the explicit API call; regular send creates a local evidence draft.",
     evidenceMap: "Evidence Map",
     references: "references",
     currentEvidence: "Current answer evidence",
@@ -319,6 +323,18 @@ const localProviderIds = new Set(["local-codex", "local-claude", "codex-cli", "c
 
 function classNames(...items: Array<string | false | null | undefined>) {
   return items.filter(Boolean).join(" ");
+}
+
+function formatHistoryDate(value: string, language: UiLanguage) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const now = new Date();
+  const sameDay = date.toDateString() === now.toDateString();
+  const locale = language === "zh" ? "zh-CN" : undefined;
+  return sameDay
+    ? new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(date)
+    : new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(date);
 }
 
 function compactText(value?: string | null, maxLength = 220) {
@@ -1277,16 +1293,18 @@ export function ChatSearchPage({
     setSelectedResultId(item.evidence[0]?.id ?? null);
   };
 
-  const currentEvidenceSelection = () => {
-    const draftSearchText = searchText.trim() || question;
+  const currentEvidenceSelection = (searchOverride?: string) => {
+    const draftSearchText = (searchOverride ?? searchText).trim() || question;
     const draftResults = filterSearchResults(index, typeFilter, draftSearchText);
     const draftSelected = draftResults.find((item) => item.id === selectedResultId) ?? draftResults[0] ?? null;
     const draftEvidence = pickAnswerEvidence(draftResults, draftSelected);
     return { draftSearchText, draftSelected, draftEvidence };
   };
 
-  const generateDraft = () => {
-    const { draftSearchText, draftSelected, draftEvidence } = currentEvidenceSelection();
+  const generateDraftFromQuestion = () => {
+    const trimmed = question.trim();
+    if (!trimmed || answerBusy) return;
+    const { draftSearchText, draftSelected, draftEvidence } = currentEvidenceSelection(trimmed);
     const localDraft = buildAnswerDraft(question, targetPath, draftEvidence, language, typeLabel);
     setSearchText(draftSearchText);
     setSelectedResultId(draftSelected?.id ?? null);
@@ -1388,6 +1406,24 @@ export function ChatSearchPage({
     setSelectedResultId(null);
   };
 
+  const startNewQuery = () => {
+    setQuestion("");
+    setSearchText("");
+    setTargetPath("reviews/query-writeback/deepseek-research-insights.md");
+    setSelectedResultId(null);
+    setAnswerProviderResult(null);
+    setAnswerProviderError(null);
+    setAnswerDraft("");
+  };
+
+  const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.nativeEvent.isComposing) return;
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      generateDraftFromQuestion();
+    }
+  };
+
   const openResult = (result: SearchResult) => {
     onOpenPath(resolveVaultPath(result.path));
   };
@@ -1406,22 +1442,177 @@ export function ChatSearchPage({
   };
 
   return (
-    <div className={classNames("chat-search-page chat-search-workbench", className)}>
-      <section className="panel large chat-search-top">
-        <div className="section-head">
-          <h2>{text.title}</h2>
-          <span>{text.loaded(filteredResults.length, index.length)}</span>
+    <div className={classNames("chat-search-page chat-search-workbench wiki-chat-page", className)}>
+      <aside className="wiki-chat-sidebar" aria-label={text.history}>
+        <div className="wiki-chat-sidebar-head">
+          <div>
+            <h2>{text.title}</h2>
+            <span>{text.loaded(filteredResults.length, index.length)}</span>
+          </div>
+          <button
+            type="button"
+            className="wiki-chat-icon-button"
+            onClick={startNewQuery}
+            title={language === "zh" ? "新建问题" : "New question"}
+          >
+            <Plus size={15} />
+          </button>
         </div>
-        <div className="chat-search-top-grid">
-          <label className="top-question-input">
-            <Search size={16} />
-            <textarea
-              value={question}
-              onChange={(event) => setQuestion(event.target.value)}
-              placeholder={text.inputPlaceholder}
-            />
-          </label>
-          <label className="top-target-input">
+
+        <div className="wiki-chat-history">
+          <div className="wiki-chat-pane-title">
+            <strong><History size={14} /> {text.history}</strong>
+            <span>{history.length}</span>
+          </div>
+          <div className="wiki-chat-history-list">
+            {history.length === 0 && <p className="empty">{text.emptyHistory}</p>}
+            {history.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={classNames(item.id === history[0]?.id && "active")}
+                onClick={() => chooseHistory(item)}
+              >
+                <span>{item.question}</span>
+                <em>
+                  {formatHistoryDate(item.createdAt, language)}
+                  {item.evidence.length ? ` · ${item.evidence.length} ${text.evidenceCount}` : ""}
+                  {item.proposal ? ` · ${localizedSearchValue(item.proposal.status, language)}` : ""}
+                </em>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="wiki-chat-search-panel">
+          <div className="wiki-chat-pane-title">
+            <strong><Search size={14} /> {text.results}</strong>
+            <span>{filteredResults.length}</span>
+          </div>
+          <div className="wiki-chat-search-controls">
+            <label>
+              <Search size={14} />
+              <input
+                value={searchText}
+                onChange={(event) => setSearchText(event.target.value)}
+                placeholder={text.searchPlaceholder}
+              />
+            </label>
+            <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value as SearchFilter)}>
+              <option value="all">{text.filters.all}</option>
+              <option value="source">{text.filters.source}</option>
+              <option value="claim">{text.filters.claim}</option>
+              <option value="concept">{text.filters.concept}</option>
+              <option value="note">{text.filters.note}</option>
+              <option value="draft">{text.filters.draft}</option>
+              <option value="review">{text.filters.review}</option>
+              <option value="writeback">{text.filters.writeback}</option>
+              <option value="evidence">{text.filters.evidence}</option>
+              <option value="traceability">{text.filters.traceability}</option>
+              <option value="report">{text.filters.report}</option>
+              <option value="inbox">{text.filters.inbox}</option>
+            </select>
+          </div>
+          <div className="wiki-chat-result-list">
+            {!hasVaultEvidence && <p className="empty">{text.noVault}</p>}
+            {hasVaultEvidence && filteredResults.length === 0 && <p className="empty">{text.noMatch}</p>}
+            {filteredResults.map((result) => (
+              <article
+                className={classNames("wiki-chat-result", selectedResult?.id === result.id && "selected")}
+                key={result.id}
+                onClick={() => setSelectedResultId(result.id)}
+              >
+                <div>
+                  <span className={classNames("status-chip", result.severity || result.status || result.type)}>
+                    {resultStatusLabel(result)}
+                  </span>
+                  <strong>{result.title}</strong>
+                  <em>{typeLabel(result.type)} · {result.path}</em>
+                  <p>{result.snippet || text.noSnippet}</p>
+                </div>
+                <div className="wiki-chat-result-actions">
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      openResult(result);
+                    }}
+                  >
+                    <FolderOpen size={13} />{text.actions.open}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onOpenVaultItem?.(result.path);
+                    }}
+                    disabled={!onOpenVaultItem || !isMarkdownPath(result.path)}
+                  >
+                    <SquareStack size={13} />{text.actions.obsidian}
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+      </aside>
+
+      <section className="wiki-chat-main" aria-label={text.answer}>
+        <div className="wiki-chat-provider-bar">
+          <strong>{text.providerLabel}: {activeProvider.name}</strong>
+          <span>{activeProvider.detail}</span>
+          <em>{text.providerDraftOnly}</em>
+        </div>
+
+        <div className="wiki-chat-thread">
+          <article className="wiki-chat-message assistant">
+            <div className="wiki-chat-avatar"><Bot size={16} /></div>
+            <div className="wiki-chat-bubble">
+              <strong>{text.boundaryTitle}</strong>
+              <p>{text.boundaryBody}</p>
+              {!ernieProvider.configured && <em>{text.ernieNotConfigured}</em>}
+            </div>
+          </article>
+
+          {question.trim() && (
+            <article className="wiki-chat-message user">
+              <div className="wiki-chat-avatar"><User size={16} /></div>
+              <div className="wiki-chat-bubble">
+                <p>{question}</p>
+              </div>
+            </article>
+          )}
+
+          <article className="wiki-chat-message assistant answer">
+            <div className="wiki-chat-avatar"><Bot size={16} /></div>
+            <div className="wiki-chat-bubble wiki-chat-answer-bubble">
+              {(answerProviderResult || answerProviderError) && (
+                <div className={classNames("model-answer-status", answerProviderError && "warning")}>
+                  {answerProviderResult ? (
+                    <span>
+                      {text.providerGenerated}: ERNIE · {answerProviderResult.model} · {answerProviderResult.evidenceIds.length} {text.references}
+                    </span>
+                  ) : (
+                    <span>{text.providerFallback}: {answerProviderError}</span>
+                  )}
+                </div>
+              )}
+              <div className="chat-answer-draft">
+                <AnswerMarkdown content={answerDraft} placeholder={text.draftPlaceholder} onOpenVaultItem={onOpenVaultItem} />
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <div className="wiki-chat-composer">
+          <div className="question-chips compact">
+            {defaultQuestions.map((item) => (
+              <button key={item} type="button" onClick={() => chooseQuestion(item)}>
+                {item}
+              </button>
+            ))}
+          </div>
+          <label className="wiki-chat-target-row">
             <span>{text.target}</span>
             <input
               value={targetPath}
@@ -1429,12 +1620,19 @@ export function ChatSearchPage({
               placeholder="reviews/query-writeback/deepseek-research-insights.md"
             />
           </label>
-          <div className="top-action-grid">
+          <textarea
+            value={question}
+            onChange={(event) => setQuestion(event.target.value)}
+            onKeyDown={handleComposerKeyDown}
+            placeholder={text.inputPlaceholder}
+            rows={2}
+          />
+          <div className="wiki-chat-composer-actions">
             <button type="button" onClick={searchFromQuestion} disabled={!question.trim()}>
               <Search size={14} />{text.searchEvidence}
             </button>
-            <button type="button" onClick={generateDraft} disabled={!vaultPath || !question.trim() || answerBusy}>
-              <Lightbulb size={14} />{text.localDraftAnswer}
+            <button type="button" onClick={generateDraftFromQuestion} disabled={!vaultPath || !question.trim() || answerBusy}>
+              <Send size={14} />{text.localDraftAnswer}
             </button>
             <button
               type="button"
@@ -1447,124 +1645,42 @@ export function ChatSearchPage({
             <button type="button" onClick={createProposal} disabled={!vaultPath || !question.trim() || busy === "query_writeback"}>
               <GitCompare size={14} />{text.createProposal}
             </button>
-          </div>
-        </div>
-        <div className="question-chips">
-          {defaultQuestions.map((item) => (
-            <button key={item} type="button" onClick={() => chooseQuestion(item)}>
-              {item}
+            <button type="button" onClick={() => onCopyText?.("answer draft", answerDraft)} disabled={!answerDraft || !onCopyText}>
+              <ClipboardCopy size={14} />{text.copyDraft}
             </button>
-          ))}
-        </div>
-        <div className="proposal-boundary chat-search-boundary">
-          <strong>{text.boundaryTitle}</strong>
-          <span>{text.boundaryBody}</span>
-          <code>
-            {text.providerLabel}: {activeProvider.name} · {activeProvider.detail}. {text.providerDraftOnly}
-            {!activeProvider.canGenerate && activeProvider.unavailableReason ? ` ${text.providerNotCallable}: ${activeProvider.unavailableReason}` : ""}
-          </code>
-          {!ernieProvider.configured && <span>{text.ernieNotConfigured}</span>}
+          </div>
         </div>
       </section>
 
-      <div className="chat-search-columns">
-        <section className="panel large search-history-panel">
-          <div className="section-head">
-            <h2><History size={16} /> {text.history}</h2>
-            <span>{history.length}</span>
+      <aside className="wiki-chat-references" aria-label={text.evidenceMap}>
+        <div className="wiki-chat-pane-title">
+          <strong>{text.evidenceMap}</strong>
+          <span>{answerEvidence.length} {text.references}</span>
+        </div>
+
+        <div className="answer-evidence-map wiki-chat-evidence-map">
+          <div className="section-head compact">
+            <h3>{text.currentEvidence}</h3>
+            <span>{answerEvidence.length} {text.selectedCount}</span>
           </div>
-          <div className="history-list rich-history-list">
-            {history.length === 0 && <p className="empty">{text.emptyHistory}</p>}
-            {history.map((item) => (
-              <button key={item.id} type="button" onClick={() => chooseHistory(item)}>
-                <History size={14} />
-                <span>{item.question}</span>
-                <em>
-                  {item.evidence.length} {text.evidenceCount}
-                  {item.proposal ? ` · ${localizedSearchValue(item.proposal.status, language)}` : ""}
-                </em>
-                {item.targetPath && <code>{item.targetPath}</code>}
+          <div className="evidence-pill-grid">
+            {answerEvidence.length === 0 && <p className="empty">{text.evidenceEmpty}</p>}
+            {answerEvidence.map((item, index) => (
+              <button key={`evidence-map-${item.id}`} type="button" onClick={() => openResult(item)}>
+                <span>E{index + 1}</span>
+                <strong>{item.title}</strong>
+                <em>{typeLabel(item.type)} · {localizedSearchValue(item.status || text.loadedStatus, language)}</em>
               </button>
             ))}
           </div>
-
-        <div className="section-head">
-          <h2>{text.results}</h2>
-          <span>{filteredResults.length} {text.shown}</span>
-        </div>
-        <div className="search-toolbar">
-          <label>
-            <Search size={15} />
-            <input
-              value={searchText}
-              onChange={(event) => setSearchText(event.target.value)}
-              placeholder={text.searchPlaceholder}
-            />
-          </label>
-          <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value as SearchFilter)}>
-            <option value="all">{text.filters.all}</option>
-            <option value="source">{text.filters.source}</option>
-            <option value="claim">{text.filters.claim}</option>
-            <option value="concept">{text.filters.concept}</option>
-            <option value="note">{text.filters.note}</option>
-            <option value="draft">{text.filters.draft}</option>
-            <option value="review">{text.filters.review}</option>
-            <option value="writeback">{text.filters.writeback}</option>
-            <option value="evidence">{text.filters.evidence}</option>
-            <option value="traceability">{text.filters.traceability}</option>
-            <option value="report">{text.filters.report}</option>
-            <option value="inbox">{text.filters.inbox}</option>
-          </select>
-        </div>
-        <div className="search-results">
-          {!hasVaultEvidence && <p className="empty">{text.noVault}</p>}
-          {hasVaultEvidence && filteredResults.length === 0 && <p className="empty">{text.noMatch}</p>}
-          {filteredResults.map((result) => (
-            <article
-              className={classNames("search-result-card", selectedResult?.id === result.id && "selected")}
-              key={result.id}
-              onClick={() => setSelectedResultId(result.id)}
-            >
-              <span className={classNames("status-chip", result.severity || result.status || result.type)}>
-                {resultStatusLabel(result)}
-              </span>
-              <div className="search-result-body">
-                <strong>{result.title}</strong>
-                <em>{typeLabel(result.type)} · {result.path}</em>
-                <p>{result.snippet || text.noSnippet}</p>
-                {result.evidence && <code>{result.evidence}</code>}
-                <div className="relation-list">
-                  {result.relations.slice(0, 8).map((item) => (
-                    <span key={`${result.id}-${item}`}>{item}</span>
-                  ))}
-                </div>
-                <div className="inline-actions">
-                  <button type="button" onClick={() => openResult(result)}><FolderOpen size={14} />{text.actions.open}</button>
-                  <button type="button" onClick={() => onOpenVaultItem?.(result.path)} disabled={!onOpenVaultItem || !isMarkdownPath(result.path)}>
-                    <SquareStack size={14} />{text.actions.obsidian}
-                  </button>
-                  <button type="button" onClick={() => onRevealPath?.(resolveVaultPath(result.path))} disabled={!onRevealPath}><FileSearch size={14} />{text.actions.reveal}</button>
-                  <button type="button" onClick={() => onCopyText?.("path", result.path)} disabled={!onCopyText}><ClipboardCopy size={14} />{text.actions.path}</button>
-                  <button type="button" onClick={() => copyResult(result)} disabled={!onCopyText}><ClipboardCopy size={14} />{text.actions.evidence}</button>
-                </div>
-              </div>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <section className="panel large research-chat-panel answer-workspace-panel">
-        <div className="section-head">
-          <h2>{text.answer}</h2>
-          <span>{text.answerKinds}</span>
         </div>
 
-        <div className="selected-result-panel">
-          <div className="section-head compact">
-            <h3>{text.selected}</h3>
-            <span>{selectedResult ? typeLabel(selectedResult.type) : text.none}</span>
-          </div>
-          {selectedResult ? (
+        {selectedResult && (
+          <div className="selected-result-panel wiki-chat-selected-result">
+            <div className="section-head compact">
+              <h3>{text.selected}</h3>
+              <span>{typeLabel(selectedResult.type)}</span>
+            </div>
             <div className="selected-result-detail">
               <strong>{selectedResult.title}</strong>
               <em>{selectedResult.path}</em>
@@ -1582,45 +1698,27 @@ export function ChatSearchPage({
                 <button type="button" onClick={() => copyResult(selectedResult)} disabled={!onCopyText}><ClipboardCopy size={14} />{text.actions.evidence}</button>
               </div>
             </div>
-          ) : (
-            <p className="empty">{text.selectResult}</p>
-          )}
-        </div>
-
-        <div className="answer-action-row">
-          <button type="button" onClick={generateDraft} disabled={!vaultPath || !question.trim() || answerBusy}>
-            <Lightbulb size={14} />{text.localDraftAnswer}
-          </button>
-          <button
-            type="button"
-            onClick={generateWithErnie}
-            disabled={!vaultPath || !question.trim() || answerBusy || !ernieProvider.configured}
-            title={!ernieProvider.configured ? text.ernieNotConfigured : undefined}
-          >
-            <Lightbulb size={14} />{answerBusy ? text.generatingAnswer : text.generateWithErnie}
-          </button>
-          <button type="button" onClick={createProposal} disabled={!vaultPath || !question.trim() || busy === "query_writeback"}>
-            <GitCompare size={14} />{text.createProposal}
-          </button>
-          <button type="button" onClick={() => onCopyText?.("answer draft", answerDraft)} disabled={!answerDraft || !onCopyText}>
-            <ClipboardCopy size={14} />{text.copyDraft}
-          </button>
-        </div>
-
-        {(answerProviderResult || answerProviderError) && (
-          <div className={classNames("model-answer-status", answerProviderError && "warning")}>
-            {answerProviderResult ? (
-              <span>
-                {text.providerGenerated}: ERNIE · {answerProviderResult.model} · {answerProviderResult.evidenceIds.length} {text.references}
-              </span>
-            ) : (
-              <span>{text.providerFallback}: {answerProviderError}</span>
-            )}
           </div>
         )}
 
+        <div className="reference-list wiki-chat-reference-list">
+          {answerEvidence.map((item, index) => (
+            <article key={`reference-${item.id}`}>
+              <span>E{index + 1}</span>
+              <strong>{item.title}</strong>
+              <em>{typeLabel(item.type)} · {item.path}</em>
+              <p>{item.evidence || item.snippet || text.noEvidenceQuote}</p>
+              <div className="inline-actions">
+                <button type="button" onClick={() => openResult(item)}><FolderOpen size={14} />{text.actions.open}</button>
+                <button type="button" onClick={() => onRevealPath?.(resolveVaultPath(item.path))} disabled={!onRevealPath}><FileSearch size={14} />{text.actions.reveal}</button>
+                <button type="button" onClick={() => copyResult(item)} disabled={!onCopyText}><ClipboardCopy size={14} />{text.actions.copy}</button>
+              </div>
+            </article>
+          ))}
+        </div>
+
         {answerProviderResult && (
-          <div className="composer-result">
+          <div className="composer-result wiki-chat-model-details">
             <strong>{text.evidenceCitations}</strong>
             <div className="impact-list compact">
               {answerProviderResult.citations.length === 0 && <p className="empty">{text.noStructuredItems}</p>}
@@ -1677,50 +1775,6 @@ export function ChatSearchPage({
           </div>
         )}
 
-        <div className="chat-answer-draft">
-          <AnswerMarkdown content={answerDraft} placeholder={text.draftPlaceholder} onOpenVaultItem={onOpenVaultItem} />
-        </div>
-      </section>
-
-      <section className="panel large evidence-reference-panel">
-        <div className="section-head">
-          <h2>{text.evidenceMap}</h2>
-          <span>{answerEvidence.length} {text.references}</span>
-        </div>
-
-        <div className="answer-evidence-map">
-          <div className="section-head compact">
-            <h3>{text.currentEvidence}</h3>
-            <span>{answerEvidence.length} {text.selectedCount}</span>
-          </div>
-          <div className="evidence-pill-grid">
-            {answerEvidence.length === 0 && <p className="empty">{text.evidenceEmpty}</p>}
-            {answerEvidence.map((item, index) => (
-              <button key={`evidence-map-${item.id}`} type="button" onClick={() => openResult(item)}>
-                <span>E{index + 1}</span>
-                <strong>{item.title}</strong>
-                <em>{typeLabel(item.type)} · {localizedSearchValue(item.status || text.loadedStatus, language)}</em>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="reference-list">
-          {answerEvidence.map((item, index) => (
-            <article key={`reference-${item.id}`}>
-              <span>E{index + 1}</span>
-              <strong>{item.title}</strong>
-              <em>{typeLabel(item.type)} · {item.path}</em>
-              <p>{item.evidence || item.snippet || text.noEvidenceQuote}</p>
-              <div className="inline-actions">
-                <button type="button" onClick={() => openResult(item)}><FolderOpen size={14} />{text.actions.open}</button>
-                <button type="button" onClick={() => onRevealPath?.(resolveVaultPath(item.path))} disabled={!onRevealPath}><FileSearch size={14} />{text.actions.reveal}</button>
-                <button type="button" onClick={() => copyResult(item)} disabled={!onCopyText}><ClipboardCopy size={14} />{text.actions.copy}</button>
-              </div>
-            </article>
-          ))}
-        </div>
-
         <div className="recent-query-panel proposal-reference-panel">
           <div className="section-head compact">
             <h3><GitCompare size={15} /> {text.writebackProposals}</h3>
@@ -1745,8 +1799,7 @@ export function ChatSearchPage({
             ))}
           </div>
         </div>
-      </section>
-      </div>
+      </aside>
     </div>
   );
 }
