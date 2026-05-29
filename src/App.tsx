@@ -823,6 +823,7 @@ const shellCopy: Record<UiLanguage, {
       createVaultPath: "请先填写要创建的知识库绝对路径。",
       createProject: "请填写 Project Name 并选择 Parent Directory。",
       dropNoPath: "拖拽事件没有提供本地文件路径，请使用导入文件或导入文件夹按钮。",
+      openProjectWebUnavailable: "当前浏览器预览无法打开本地目录。请使用 Tauri 桌面端打开项目，或先查看 Demo Tour。",
     },
   },
   en: {
@@ -948,6 +949,7 @@ const shellCopy: Record<UiLanguage, {
       createVaultPath: "Enter an absolute path for the vault first.",
       createProject: "Enter a Project Name and choose a Parent Directory.",
       dropNoPath: "The drag event did not provide local file paths. Use Import files or Import folder.",
+      openProjectWebUnavailable: "This browser preview cannot open local folders. Use the Tauri desktop app to open a project, or start with the Demo Tour.",
     },
   },
 };
@@ -2304,9 +2306,19 @@ function App() {
   }
 
   async function chooseVault() {
-    const picked = await open({ directory: true, multiple: false, title: copy.dialogs.chooseVault });
-    if (typeof picked !== "string") return;
-    await selectVault(picked);
+    setError(null);
+    setRestoreError(null);
+    if (!isTauriAvailable()) {
+      setError(copy.errors.openProjectWebUnavailable);
+      return;
+    }
+    try {
+      const picked = await open({ directory: true, multiple: false, title: copy.dialogs.chooseVault });
+      if (typeof picked !== "string") return;
+      await selectVault(picked);
+    } catch (err) {
+      setError(String(err));
+    }
   }
 
   async function selectVault(path: string) {
