@@ -2250,7 +2250,28 @@ body[data-shell-panel-resizing="true"] * {
 }
 
 .traceability-workspace-grid {
-  grid-template-columns: minmax(420px, 0.92fr) minmax(520px, 1.2fr);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 560px), 1fr));
+}
+
+.traceability-primary,
+.evidence-path-panel {
+  min-width: 0;
+}
+
+.traceability-metrics {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.traceability-primary .inline-actions,
+.evidence-path-panel .inline-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(126px, 1fr));
+}
+
+.traceability-primary .inline-actions button,
+.evidence-path-panel .inline-actions button {
+  width: 100%;
+  min-width: 0;
 }
 
 .main-grid > * {
