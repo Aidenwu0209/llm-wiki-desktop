@@ -21,12 +21,34 @@ function renderWelcome(language: "zh" | "en") {
   );
 }
 
+function renderCreateModal(language: "zh" | "en") {
+  return renderToStaticMarkup(
+    <WelcomePanel
+      modalOnly
+      createOpen
+      language={language}
+      appState={{ recentVaults: [] }}
+      suggestions={[]}
+      busy={null}
+      defaultParentDirectory="/Users/demo/Wikis"
+      onChooseVault={() => undefined}
+      onToggleLanguage={() => undefined}
+      onSelectVault={() => undefined}
+      onCreateVault={() => undefined}
+      onCreateProject={() => true}
+      onViewDemoTour={() => undefined}
+    />,
+  );
+}
+
 function count(haystack: string, needle: string) {
   return haystack.split(needle).length - 1;
 }
 
 const english = renderWelcome("en");
 const chinese = renderWelcome("zh");
+const englishCreateModal = renderCreateModal("en");
+const chineseCreateModal = renderCreateModal("zh");
 
 assert.equal(count(english, 'class="welcome-onboarding-step"'), 0, "English Welcome should not render the in-project onboarding flow on the start screen.");
 assert.equal(count(chinese, 'class="welcome-onboarding-step"'), 0, "Chinese Welcome should not render the in-project onboarding flow on the start screen.");
@@ -68,6 +90,10 @@ for (const text of [
 
 assert.ok(english.includes("Synthetic demo"), "Missing real demo vault should render the Demo Tour fallback.");
 assert.ok(chinese.includes("合成示例"), "Missing real demo vault should render the Chinese Demo Tour fallback.");
+assert.ok(englishCreateModal.includes("Create New Wiki Project"), "Modal-only render should expose the English project creation dialog.");
+assert.ok(chineseCreateModal.includes("创建新的 Wiki 项目"), "Modal-only render should expose the Chinese project creation dialog.");
+assert.ok(!englishCreateModal.includes("Open Project"), "Modal-only render should not include the full welcome screen actions.");
+assert.ok(!chineseCreateModal.includes("打开项目"), "Modal-only render should not include the full welcome screen actions.");
 
 const demoVault = path.resolve("examples/demo-vault");
 for (const requiredPath of [
