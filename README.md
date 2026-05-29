@@ -17,6 +17,16 @@
 
 Agent / API 集成必须先通过只读 readiness gate；当前契约见 [`docs/agent-skill.md`](docs/agent-skill.md)。通过 gate 后可在 Settings -> Agent API 启动 `127.0.0.1` token-protected read API；在 gate 未通过前，不应启动 localhost API，也不应向 Codex/Claude Code 暴露写入、删除、apply 或后台 ingest 能力。
 
+## 开源治理
+
+- License: pending maintainer decision; do not publish or redistribute as open source until a real license is selected.
+- Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md)。
+- Security: [`SECURITY.md`](SECURITY.md)。
+- Code of Conduct: [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)。
+- Changelog: [`CHANGELOG.md`](CHANGELOG.md)。
+- Roadmap: [`ROADMAP.md`](ROADMAP.md)。
+- Issue drafts: [`docs/issues-to-create.md`](docs/issues-to-create.md)。
+
 Product planning and submission scoring docs: [`docs/PRD.md`](docs/PRD.md), [`docs/scoring-mapping.md`](docs/scoring-mapping.md).
 
 ## 软件使用教程

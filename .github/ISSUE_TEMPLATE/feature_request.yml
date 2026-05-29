@@ -1,0 +1,50 @@
+name: Feature request
+description: Propose an improvement without claiming unverified user demand.
+title: "[feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please describe the problem and evidence. Do not present internal planning as external user feedback.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow, safety gap, or usability issue does this address?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Suggested priority
+      options:
+        - P0 release blocker
+        - P1 important
+        - P2 later
+        - Unsure
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety and privacy boundary
+      description: Note provider calls, parser uploads, raw documents, or writeback behavior affected.
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Confirmation
+      options:
+        - label: This request does not include API keys, private raw documents, or unredacted user data.
+          required: true
+        - label: If this is based on user feedback, I have described the source without exposing private information.
+          required: true
