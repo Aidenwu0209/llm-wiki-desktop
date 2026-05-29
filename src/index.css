@@ -258,6 +258,7 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  max-height: 100vh;
   border-right: 1px solid #d5ddd8;
   padding: 12px;
 }
@@ -309,6 +310,7 @@ textarea {
 }
 
 .knowledge-tabs {
+  flex: 0 0 auto;
   grid-template-columns: 1fr 1fr;
 }
 
@@ -327,6 +329,7 @@ textarea {
 }
 
 .knowledge-stat-strip {
+  flex: 0 0 auto;
   grid-template-columns: repeat(3, 1fr);
 }
 
@@ -354,6 +357,7 @@ textarea {
 
 .knowledge-tree-scroll {
   display: grid;
+  flex: 1 1 auto;
   gap: 12px;
   min-height: 0;
   overflow: auto;
@@ -494,8 +498,8 @@ textarea {
 
 .knowledge-bottom {
   display: grid;
+  flex: 0 0 auto;
   gap: 8px;
-  margin-top: auto;
   border-top: 1px solid #e1e7e2;
   padding-top: 10px;
 }
@@ -512,6 +516,39 @@ textarea {
   border-color: #e0e6e2;
   background: #fbfcfa;
   padding: 0 8px;
+}
+
+.knowledge-bottom .activity-mini-panel {
+  padding: 8px;
+}
+
+.knowledge-bottom .activity-mini-panel .section-head {
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.knowledge-bottom .activity-mini-panel .section-head button {
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+.knowledge-bottom .mini-job {
+  min-height: 0;
+  padding: 8px;
+}
+
+.knowledge-bottom .mini-job .status-chip {
+  position: static;
+  justify-self: start;
+}
+
+.knowledge-bottom .mini-job .inline-actions {
+  margin-top: 0;
+}
+
+.knowledge-bottom .mini-history {
+  display: none;
 }
 
 .preview-sidebar {
@@ -2218,9 +2255,10 @@ body[data-shell-panel-resizing="true"] * {
 
 .pipeline li {
   display: grid;
-  grid-template-columns: 38px 1fr 96px;
+  grid-template-columns: 38px minmax(0, 1fr) minmax(72px, 96px);
   align-items: center;
   gap: 10px;
+  min-width: 0;
   min-height: 32px;
   border: 1px solid #d8ded9;
   border-radius: 6px;
@@ -2235,10 +2273,18 @@ body[data-shell-panel-resizing="true"] * {
 }
 
 .pipeline strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 13px;
 }
 
 .pipeline em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: #64706a;
   font-size: 12px;
   font-style: normal;
@@ -2461,7 +2507,10 @@ body[data-shell-panel-resizing="true"] * {
 .claim-list,
 .registry-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
   max-height: 270px;
   overflow: auto;
 }
@@ -2487,6 +2536,8 @@ body[data-shell-panel-resizing="true"] * {
   position: relative;
   display: block;
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
   height: auto;
   min-height: 70px;
   padding: 10px 10px 10px 92px;
@@ -2514,6 +2565,8 @@ body[data-shell-panel-resizing="true"] * {
 .work-item em,
 .work-item code {
   display: block;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .concept-list strong,
@@ -4706,6 +4759,8 @@ body[data-shell-panel-resizing="true"] * {
 .linked-objects button {
   display: grid;
   justify-items: start;
+  min-width: 0;
+  max-width: 100%;
   height: auto;
   min-height: 58px;
   border-color: #d8ded9;
@@ -5150,6 +5205,7 @@ body[data-shell-panel-resizing="true"] * {
   display: flex;
   align-items: center;
   min-width: 0;
+  max-width: 100%;
 }
 
 .graph-topbar-main {
@@ -5749,6 +5805,8 @@ body[data-shell-panel-resizing="true"] * {
 
 .graph-summary-grid span {
   display: grid;
+  justify-items: start;
+  text-align: left;
   gap: 4px;
   border: 1px solid #d8ded9;
   border-radius: 6px;
@@ -6233,15 +6291,25 @@ body[data-shell-panel-resizing="true"] * {
   }
 
   .workflow-guide,
+  .writeback-guide,
+  .app-shell.nashsu-aligned-shell.inspector-open .dashboard-hero,
+  .app-shell.nashsu-aligned-shell.inspector-open .dashboard-body,
+  .app-shell.nashsu-aligned-shell.inspector-open .main-grid,
+  .app-shell.nashsu-aligned-shell.inspector-open .raw-sources-layout,
+  .app-shell.nashsu-aligned-shell.inspector-open .graph-summary-bar,
+  .app-shell.nashsu-aligned-shell.inspector-open .graph-insight-strip,
+  .app-shell.nashsu-aligned-shell.inspector-open .graph-workspace,
+  .app-shell.nashsu-aligned-shell.inspector-open .graph-list-grid,
   .claims-workspace-grid,
   .reviews-workspace-grid,
   .concept-workspace-grid,
   .traceability-workspace-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  .workflow-steps {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .workflow-steps,
+  .writeback-steps {
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
   }
 }
 
@@ -7208,6 +7276,32 @@ body[data-shell-panel-resizing="true"] * {
   .workflow-metrics,
   .workflow-metrics.compact {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-hero,
+  .dashboard-body,
+  .main-grid,
+  .raw-sources-layout,
+  .linked-objects,
+  .deepseek-home-grid,
+  .graph-summary-bar,
+  .graph-insight-strip,
+  .graph-workspace,
+  .graph-list-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .deepseek-home-note {
+    grid-column: auto;
+  }
+
+  .graph-panel {
+    min-height: 360px;
+  }
+
+  .research-graph-svg {
+    max-width: 100%;
+    min-height: 360px;
   }
 
   .browser,
