@@ -101,6 +101,20 @@ textarea {
   grid-template-columns: 168px var(--knowledge-sidebar-width, 286px) minmax(0, 1fr);
 }
 
+.app-shell.nashsu-aligned-shell.chat-workspace-mode,
+.app-shell.nashsu-aligned-shell.chat-workspace-mode:not(.inspector-open) {
+  grid-template-columns: 64px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "nav workspace";
+  align-content: stretch;
+  background: #ffffff;
+}
+
+.app-shell.nashsu-aligned-shell.chat-workspace-mode.nav-rail-expanded,
+.app-shell.nashsu-aligned-shell.chat-workspace-mode.nav-rail-expanded:not(.inspector-open) {
+  grid-template-columns: 168px minmax(0, 1fr);
+}
+
 .app-shell.settings-mode {
   grid-template-columns: 64px minmax(0, 1fr);
   grid-template-areas: "nav workspace";
@@ -1380,6 +1394,25 @@ body[data-shell-panel-resizing="true"] * {
 .nashsu-aligned-shell .workspace {
   gap: 12px;
   padding: 12px 14px 18px;
+}
+
+.nashsu-aligned-shell.chat-workspace-mode .workspace {
+  gap: 0;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: #ffffff;
+  padding: 0;
+}
+
+.nashsu-aligned-shell.chat-workspace-mode .icon-sidebar {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+}
+
+.nashsu-aligned-shell.chat-workspace-mode .topbar {
+  display: none;
 }
 
 .nashsu-aligned-shell .topbar {
@@ -7883,16 +7916,23 @@ button.primary:hover:not(:disabled),
 
 .wiki-chat-page.chat-search-workbench {
   display: grid;
-  grid-template-columns: 242px minmax(420px, 1fr) 326px;
+  grid-template-columns: 210px minmax(460px, 1fr) 336px;
   gap: 0;
   align-items: stretch;
-  min-height: 620px;
+  min-height: 0;
   height: calc(100vh - 224px);
   overflow: hidden;
   border: 1px solid #d5ddd8;
   border-radius: 8px;
   background: #ffffff;
   box-shadow: 0 16px 42px rgba(23, 32, 29, 0.08);
+}
+
+.chat-workspace-mode .wiki-chat-page.chat-search-workbench {
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .wiki-chat-sidebar,
@@ -7931,7 +7971,7 @@ button.primary:hover:not(:disabled),
 
 .wiki-chat-sidebar-head {
   justify-content: space-between;
-  min-height: 40px;
+  min-height: 34px;
 }
 
 .wiki-chat-sidebar-head h2 {
@@ -7957,6 +7997,16 @@ button.primary:hover:not(:disabled),
   padding: 0;
 }
 
+.wiki-chat-new-chat {
+  min-height: 30px;
+  width: 100%;
+  flex: 1 1 auto;
+  justify-content: center;
+  padding: 0 10px;
+  gap: 6px;
+  white-space: nowrap;
+}
+
 .wiki-chat-history,
 .wiki-chat-search-panel,
 .wiki-chat-evidence-map,
@@ -7978,11 +8028,19 @@ button.primary:hover:not(:disabled),
 }
 
 .wiki-chat-history {
-  flex: 0 0 190px;
+  flex: 1 1 auto;
 }
 
 .wiki-chat-search-panel {
   flex: 1 1 auto;
+}
+
+.wiki-chat-context-panel {
+  flex: 0 0 auto;
+}
+
+.wiki-chat-context-panel .wiki-chat-result-list {
+  max-height: 300px;
 }
 
 .wiki-chat-pane-title {
@@ -8289,7 +8347,7 @@ button.primary:hover:not(:disabled),
 
 @media (max-width: 1360px) {
   .wiki-chat-page.chat-search-workbench {
-    grid-template-columns: 222px minmax(380px, 1fr) 292px;
+    grid-template-columns: 200px minmax(380px, 1fr) 300px;
   }
 }
 

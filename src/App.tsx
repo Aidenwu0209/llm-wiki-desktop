@@ -1902,6 +1902,10 @@ function App() {
   const progressDone = jobs.filter((job) => job.status === "succeeded").length;
   const activePageCopy = copy.pages[activePage];
   const pageVisible = (...pages: ShellPage[]) => pages.includes(activePage);
+  const chatWorkspaceMode = activePage === "chat";
+  const shellKnowledgeVisible = activePage !== "settings" && !chatWorkspaceMode;
+  const shellInspectorVisible = activePage !== "settings" && !chatWorkspaceMode && (detailDrawerOpen || researchPanelOpen);
+  const shellStatusHeaderVisible = activePage !== "settings" && !chatWorkspaceMode;
   const activeReadingPath = detailSelection.kind === "source" ? detailSelection.file.path : (readingHistory[readingHistoryIndex]?.path || "");
   const navRailToggleLabel = navRailExpanded
     ? (interfaceLanguage === "zh" ? "收起导航" : "Collapse nav")
@@ -3685,7 +3689,8 @@ function App() {
         navRailExpanded && "nav-rail-expanded",
         `interface-${interfaceLanguage}`,
         activePage === "settings" && "settings-mode",
-        activePage !== "settings" && (detailDrawerOpen || researchPanelOpen) && "inspector-open",
+        chatWorkspaceMode && "chat-workspace-mode",
+        shellInspectorVisible && "inspector-open",
         dragActive && "drag-active",
       )}
       onDragOver={(event) => {
@@ -3836,7 +3841,7 @@ function App() {
         />
       )}
 
-      {activePage !== "settings" && renderKnowledgeSidebar()}
+      {shellKnowledgeVisible && renderKnowledgeSidebar()}
 
       <section className="workspace">
         <header className="topbar">
@@ -3883,7 +3888,7 @@ function App() {
               <Languages size={15} />
               <span>{copy.languageToggle}</span>
             </button>
-            {activePage !== "settings" && (
+            {activePage !== "settings" && !chatWorkspaceMode && (
               <button
                 className="sidebar-toggle"
                 type="button"
@@ -3901,7 +3906,7 @@ function App() {
         {error && <pre className="error-box">{error}</pre>}
         {restoreError && <pre className="error-box subtle">{restoreError}</pre>}
 
-        {activePage !== "settings" && (
+        {shellStatusHeaderVisible && (
           <PageStatusHeader
             title={activePageCopy.title}
             subtitle={activePageCopy.subtitle}
@@ -4607,7 +4612,7 @@ function App() {
         )}
       </section>
 
-      {activePage !== "settings" && (detailDrawerOpen || researchPanelOpen) && (
+      {shellInspectorVisible && (
         <aside
           className={classNames("preview-sidebar", researchPanelOpen && "research-open", detailDrawerOpen && researchPanelOpen && "split-panels")}
           aria-label={interfaceLanguage === "zh" ? "预览、检查器和深度研究" : "Preview, inspector, and Deep Research"}
