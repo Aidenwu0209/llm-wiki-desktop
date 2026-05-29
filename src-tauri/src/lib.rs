@@ -18853,6 +18853,33 @@ mod tests {
     }
 
     #[test]
+    fn generated_obsidian_home_does_not_mark_unconfigured_parser_as_runnable() {
+        let vault = test_vault("obsidian-home-parser-gate");
+        create_minimal_vault(&vault).expect("create vault");
+        let source = vault.join("raw").join("paper.pdf");
+        fs::write(&source, b"pdf bytes").expect("write pdf");
+
+        let plan = plan_ingest(to_display(&vault)).expect("write desktop ingest plan");
+        let entry = plan
+            .entries
+            .iter()
+            .find(|entry| entry.file_name == "paper.pdf")
+            .expect("pdf entry");
+        assert_eq!(entry.current_state, "paddleocr_config_required");
+        assert!(!plan_entry_is_pipeline_runnable(entry));
+
+        let home = generate_entry_note(&vault).expect("generate home");
+        let text = read_text(&home);
+        assert!(text.contains("- Runnable ingest inputs: 0"));
+        assert!(text.contains("- Review-gated ingest inputs: 0"));
+        assert!(text.contains("No runnable ingest inputs in the current desktop plan."));
+        assert!(text.contains("[[raw/paper.pdf]]"));
+        assert!(!text.contains("[[raw/paper|paper.pdf]] - `paddleocr_config_required`"));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
     fn generated_obsidian_home_creates_canvas_from_impact_graph() {
         let vault = test_vault("obsidian-impact-canvas");
         create_minimal_vault(&vault).expect("create vault");
@@ -19687,6 +19714,12 @@ impl EntryNoteIngestPlanEntry {
 
     fn is_runnable(&self) -> bool {
         if self.is_review_gated() {
+            return false;
+        }
+        if matches!(
+            self.current_state.as_str(),
+            "paddleocr_config_required" | "cloud_parser_approval_required"
+        ) {
             return false;
         }
         matches!(self.status.as_str(), "ready" | "stageable" | "cached")
