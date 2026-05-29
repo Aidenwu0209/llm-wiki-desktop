@@ -2630,15 +2630,33 @@ body[data-shell-panel-resizing="true"] * {
 }
 
 .status-chip {
-  position: absolute;
-  top: 10px;
-  left: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
   min-width: 70px;
   border-radius: 999px;
   padding: 3px 8px;
   text-align: center;
   font-size: 11px;
   font-weight: 750;
+  line-height: 1.2;
+}
+
+.concept-list button > .status-chip:not(.inline),
+.ingest-list button > .status-chip:not(.inline),
+.contract-list button > .status-chip:not(.inline),
+.impact-list button > .status-chip:not(.inline),
+.registry-list button > .status-chip:not(.inline),
+.graph-list button > .status-chip:not(.inline),
+.graph-node-list button > .status-chip:not(.inline),
+.graph-node-detail > .status-chip:not(.inline),
+.runtime-history-item > .status-chip:not(.inline),
+.mini-job > .status-chip:not(.inline),
+.work-item > .status-chip:not(.inline) {
+  position: absolute;
+  top: 10px;
+  left: 10px;
 }
 
 .status-chip.ready {
@@ -2752,7 +2770,7 @@ body[data-shell-panel-resizing="true"] * {
 
 .status-chip.inline {
   position: static;
-  display: inline-block;
+  display: inline-flex;
   width: fit-content;
 }
 
