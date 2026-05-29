@@ -2087,6 +2087,14 @@ function App() {
       setError(String(err));
     }
   };
+  const openVaultItemInObsidian = async (path?: string | null) => {
+    if (!vaultPath || !path) return;
+    try {
+      await openVaultPath(vaultPath, path);
+    } catch (err) {
+      setError(String(err));
+    }
+  };
   const openWorkspacePath = async (path?: string | null) => {
     if (!path) return;
     if (focusVaultItem(path)) return;
@@ -4301,6 +4309,7 @@ function App() {
           traceabilityWarnings={traceabilityWarnings}
           onOpenPath={openWorkspacePath}
           onOpenVaultItem={openVaultItem}
+          onOpenVaultItemInObsidian={openVaultItemInObsidian}
           onRevealPath={revealPath}
           onCopyText={copyText}
           onOpenObsidian={handleOpenObsidian}

@@ -119,6 +119,7 @@ type ResearchGraphPageProps = {
   traceabilityWarnings: TraceabilityWarning[];
   onOpenPath: (path: string) => void;
   onOpenVaultItem: (path: string) => void;
+  onOpenVaultItemInObsidian: (path: string) => void;
   onRevealPath: (path: string) => void;
   onCopyText: (label: string, text?: string | null) => void;
   onOpenObsidian: () => void;
@@ -1471,6 +1472,7 @@ export function ResearchGraphPage({
   traceabilityWarnings,
   onOpenPath,
   onOpenVaultItem,
+  onOpenVaultItemInObsidian,
   onRevealPath,
   onCopyText,
   onOpenObsidian,
@@ -1626,7 +1628,7 @@ export function ResearchGraphPage({
   }, [filteredNodes, selectedId]);
 
   const openNodePath = (node: ResearchGraphNode) => {
-    if (node.path) onOpenVaultItem(node.path);
+    if (node.path) onOpenVaultItemInObsidian(node.path);
   };
   const revealNodePath = (node: ResearchGraphNode) => {
     if (node.path) onRevealPath(resolveVaultPath(node.path));
