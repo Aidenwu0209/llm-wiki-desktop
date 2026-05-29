@@ -30,6 +30,7 @@ type WelcomePanelProps = {
   appState: DesktopAppState | null;
   suggestions: VaultSuggestion[];
   busy: string | null;
+  modalOnly?: boolean;
   createOpen?: boolean;
   onCreateOpenChange?: (open: boolean) => void;
   defaultParentDirectory?: string;
@@ -172,6 +173,7 @@ export function WelcomePanel({
   onViewDemoTour,
   onCreateProject,
   onChooseParentDirectory,
+  modalOnly,
 }: WelcomePanelProps) {
   const text = welcomeCopy[language];
   const [internalCreateOpen, setInternalCreateOpen] = useState(false);
@@ -239,6 +241,88 @@ export function WelcomePanel({
     }
     onCreateVault();
   };
+
+  const createDialog = createOpen ? (
+    <div className="modal-backdrop project-modal-backdrop" role="presentation" onMouseDown={closeCreate}>
+      <div className="project-modal" role="dialog" aria-modal="true" aria-labelledby="create-project-title" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="project-modal-head">
+          <div>
+            <h2 id="create-project-title">{text.createTitle}</h2>
+            <p>{text.createSubtitle}</p>
+          </div>
+          <LogoMark size={46} />
+        </div>
+
+        <label className="field-label">
+          {text.projectName}
+          <input value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="DeepSeek Research" />
+        </label>
+
+        <div className="template-picker" aria-label="Project templates">
+          {templates.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button
+                key={item.id}
+                className={classNames("template-card", template === item.id && "selected")}
+                type="button"
+                onClick={() => setTemplate(item.id)}
+              >
+                <Icon size={18} />
+                <strong>{text.templates[item.id][0]}</strong>
+                <em>{text.templates[item.id][1]}</em>
+                {template === item.id && <CheckCircle2 className="selected-check" size={16} />}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="project-form-grid">
+          <label className="field-label">
+            {text.aiOutputLanguage}
+            <select value={aiOutputLanguage} onChange={(event) => setAiOutputLanguage(event.target.value)}>
+              <option value="English">English</option>
+              <option value="简体中文">简体中文</option>
+              <option value="日本語">日本語</option>
+              <option value="한국어">한국어</option>
+              <option value="Bilingual: English + 中文">Bilingual: English + 中文</option>
+            </select>
+          </label>
+          <label className="field-label">
+            {text.parentDirectory}
+            <div className="directory-picker">
+              <input value={parentDirectory} onChange={(event) => setParentDirectory(event.target.value)} placeholder="/Users/you/Wikis" />
+              <button type="button" onClick={chooseParent}>
+                <FolderOpen size={15} />
+                {text.browse}
+              </button>
+            </div>
+            {parentWhitespaceComponents.length > 0 && (
+              <div className="project-path-warning" role="alert">
+                <AlertTriangle size={14} />
+                <span>{text.parentPathWhitespaceWarning(parentWhitespaceComponents)}</span>
+              </div>
+            )}
+          </label>
+        </div>
+
+        <div className="project-preview">
+          <span>{text.templatePurpose}</span>
+          <strong>{selectedTemplateText[0]}</strong>
+          <p>{selectedTemplateText[2]}</p>
+        </div>
+
+        <div className="project-modal-actions">
+          <button type="button" onClick={closeCreate}>{text.cancel}</button>
+          <button type="button" className="primary-command primary" onClick={submitCreate} disabled={busy === "create" || !projectName.trim() || !parentDirectory.trim()}>
+            {text.create}
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
+  if (modalOnly) return createDialog;
 
   return (
     <section className="welcome-product product-welcome">
@@ -327,85 +411,7 @@ export function WelcomePanel({
         </section>
       </div>
 
-      {createOpen && (
-        <div className="modal-backdrop project-modal-backdrop" role="presentation" onMouseDown={closeCreate}>
-          <div className="project-modal" role="dialog" aria-modal="true" aria-labelledby="create-project-title" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="project-modal-head">
-              <div>
-                <h2 id="create-project-title">{text.createTitle}</h2>
-                <p>{text.createSubtitle}</p>
-              </div>
-              <LogoMark size={46} />
-            </div>
-
-            <label className="field-label">
-              {text.projectName}
-              <input value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="DeepSeek Research" />
-            </label>
-
-            <div className="template-picker" aria-label="Project templates">
-              {templates.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <button
-                    key={item.id}
-                    className={classNames("template-card", template === item.id && "selected")}
-                    type="button"
-                    onClick={() => setTemplate(item.id)}
-                  >
-                    <Icon size={18} />
-                    <strong>{text.templates[item.id][0]}</strong>
-                    <em>{text.templates[item.id][1]}</em>
-                    {template === item.id && <CheckCircle2 className="selected-check" size={16} />}
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="project-form-grid">
-              <label className="field-label">
-                {text.aiOutputLanguage}
-                <select value={aiOutputLanguage} onChange={(event) => setAiOutputLanguage(event.target.value)}>
-                  <option value="English">English</option>
-                  <option value="简体中文">简体中文</option>
-                  <option value="日本語">日本語</option>
-                  <option value="한국어">한국어</option>
-                  <option value="Bilingual: English + 中文">Bilingual: English + 中文</option>
-                </select>
-              </label>
-              <label className="field-label">
-                {text.parentDirectory}
-                <div className="directory-picker">
-                  <input value={parentDirectory} onChange={(event) => setParentDirectory(event.target.value)} placeholder="/Users/you/Wikis" />
-                  <button type="button" onClick={chooseParent}>
-                    <FolderOpen size={15} />
-                    {text.browse}
-                  </button>
-                </div>
-                {parentWhitespaceComponents.length > 0 && (
-                  <div className="project-path-warning" role="alert">
-                    <AlertTriangle size={14} />
-                    <span>{text.parentPathWhitespaceWarning(parentWhitespaceComponents)}</span>
-                  </div>
-                )}
-              </label>
-            </div>
-
-            <div className="project-preview">
-              <span>{text.templatePurpose}</span>
-              <strong>{selectedTemplateText[0]}</strong>
-              <p>{selectedTemplateText[2]}</p>
-            </div>
-
-            <div className="project-modal-actions">
-              <button type="button" onClick={closeCreate}>{text.cancel}</button>
-              <button type="button" className="primary-command primary" onClick={submitCreate} disabled={busy === "create" || !projectName.trim() || !parentDirectory.trim()}>
-                {text.create}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {createDialog}
     </section>
   );
 }

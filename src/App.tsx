@@ -3815,6 +3815,27 @@ function App() {
         </div>
       </aside>
 
+      {vaultPath && createProjectOpen && (
+        <WelcomePanel
+          modalOnly
+          language={interfaceLanguage}
+          appState={appState}
+          suggestions={vaultSuggestions}
+          onToggleLanguage={toggleInterfaceLanguage}
+          onChooseVault={chooseVault}
+          onSelectVault={selectVault}
+          onViewDemoTour={loadDemoTour}
+          createOpen={createProjectOpen}
+          onCreateOpenChange={setCreateProjectOpen}
+          onCreateVault={handleCreateVault}
+          onCreateProject={handleCreateProject}
+          onChooseParentDirectory={chooseParentDirectory}
+          defaultParentDirectory={desktopSettings.parentDirectory}
+          defaultLanguage={desktopSettings.aiOutputLanguage}
+          busy={busy}
+        />
+      )}
+
       {activePage !== "settings" && renderKnowledgeSidebar()}
 
       <section className="workspace">
