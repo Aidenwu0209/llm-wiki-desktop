@@ -11,6 +11,12 @@ export function isReviewGatedIngestEntry(entry: IngestPlanEntry) {
 
 export function isRunnableIngestEntry(entry: IngestPlanEntry) {
   if (isReviewGatedIngestEntry(entry)) return false;
+  if (
+    entry.currentState === "paddleocr_config_required" ||
+    entry.currentState === "cloud_parser_approval_required"
+  ) {
+    return false;
+  }
   return (
     entry.status === "ready" ||
     entry.status === "stageable" ||
