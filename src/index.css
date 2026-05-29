@@ -24,6 +24,12 @@ body {
   overflow: hidden;
 }
 
+@media (max-width: 1180px) {
+  body {
+    min-width: 0;
+  }
+}
+
 button,
 input,
 select,
@@ -1389,6 +1395,7 @@ body[data-shell-panel-resizing="true"] * {
 }
 
 .workspace {
+  container: workspace / inline-size;
   grid-area: workspace;
   display: flex;
   flex-direction: column;
@@ -3218,10 +3225,15 @@ body[data-shell-panel-resizing="true"] * {
   display: grid;
   grid-template-columns: minmax(260px, 0.82fr) minmax(0, 1.18fr);
   gap: 12px;
+  min-width: 0;
   border: 1px solid #cbd4cf;
   border-radius: 8px;
   background: #f9faf7;
   padding: 12px;
+}
+
+.deepseek-home-copy {
+  min-width: 0;
 }
 
 .deepseek-home-copy span {
@@ -3232,6 +3244,7 @@ body[data-shell-panel-resizing="true"] * {
 }
 
 .deepseek-home-copy h3 {
+  max-width: 100%;
   margin: 5px 0 6px;
   color: #17201d;
   font-size: 22px;
@@ -3240,6 +3253,7 @@ body[data-shell-panel-resizing="true"] * {
 }
 
 .deepseek-home-copy p {
+  max-width: 100%;
   margin: 0;
   color: #40514a;
   font-size: 13px;
@@ -3248,7 +3262,7 @@ body[data-shell-panel-resizing="true"] * {
 
 .deepseek-home-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(132px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   min-width: 0;
 }
@@ -3263,6 +3277,7 @@ body[data-shell-panel-resizing="true"] * {
     "icon detail";
   align-items: center;
   justify-items: start;
+  gap: 3px 10px;
   height: auto;
   min-height: 86px;
   border: 1px solid #d8ded9;
@@ -3302,12 +3317,12 @@ body[data-shell-panel-resizing="true"] * {
 
 .deepseek-home-grid em {
   grid-area: detail;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   color: #40514a;
   font-size: 11px;
   font-style: normal;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .deepseek-home-grid .deepseek-home-primary {
@@ -3328,6 +3343,55 @@ body[data-shell-panel-resizing="true"] * {
   color: #755a24;
   font-size: 12px;
   line-height: 1.35;
+}
+
+@container workspace (max-width: 980px) {
+  .dashboard-hero,
+  .dashboard-body,
+  .deepseek-home,
+  .main-grid.view-section.visible {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .hero-actions {
+    justify-content: flex-start;
+  }
+
+  .deepseek-home-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .deepseek-home-note {
+    grid-column: 1 / -1;
+  }
+}
+
+@container workspace (max-width: 700px) {
+  .deepseek-home {
+    padding: 10px;
+  }
+
+  .deepseek-home-grid,
+  .readiness-grid,
+  .next-action-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .deepseek-home-grid button,
+  .deepseek-home-note {
+    min-height: 74px;
+  }
+
+  .deepseek-home-grid strong {
+    font-size: 20px;
+  }
+}
+
+@media (max-width: 1180px) {
+  .nashsu-aligned-shell .workspace {
+    padding-right: 10px;
+    padding-left: 10px;
+  }
 }
 
 .details-panel,
