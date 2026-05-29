@@ -23,6 +23,8 @@ cargo test --manifest-path src-tauri/Cargo.toml
 npm run build:app
 ```
 
+For the `v0.1.0-rc1` unsigned release candidate notes and publish checklist, see [`docs/release-notes-v0.1.0-rc1.md`](release-notes-v0.1.0-rc1.md) and [`docs/release-publish-checklist.md`](release-publish-checklist.md).
+
 ## Manual Acceptance
 
 1. Launch `src-tauri/target/release/bundle/macos/LLM Wiki.app`.
