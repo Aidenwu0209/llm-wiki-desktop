@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { Copy, ExternalLink, FolderOpen, GitCompare, Lightbulb, Maximize, Network, RotateCcw, Search, ShieldAlert, SquareStack, ZoomIn, ZoomOut } from "lucide-react";
+import { Copy, ExternalLink, Filter, FolderOpen, GitCompare, Layers, Lightbulb, Network, RotateCcw, Search, SquareStack, Tag, X } from "lucide-react";
 import type { UiLanguage } from "../../i18n";
-import { radialGraphPositions, radialGraphRadii } from "../../lib/graphLayout";
+import { SigmaEvidenceGraph } from "./SigmaEvidenceGraph";
+import type { SigmaEvidenceGraphEdge, SigmaEvidenceGraphNode } from "./SigmaEvidenceGraph";
 import type {
   ClaimLedgerItem,
   DesktopRegistryEntry,
@@ -139,6 +140,8 @@ const nodeTypes: Array<ResearchNodeType | "all"> = [
   "warning",
 ];
 
+const primaryFilterNodeTypes: ResearchNodeType[] = ["source", "claim", "concept", "review", "proposal", "warning"];
+
 const edgeTypes: Array<ResearchEdgeType | "all"> = [
   "all",
   "source_claim",
@@ -150,13 +153,6 @@ const edgeTypes: Array<ResearchEdgeType | "all"> = [
   "warning_claim",
   "warning_source",
 ];
-
-const VISUAL_NODE_LIMIT = 96;
-const VISUAL_EDGE_LIMIT = 120;
-const GRAPH_VIEWBOX = { width: 860, height: 560, centerX: 430, centerY: 280 };
-const GRAPH_ZOOM_MIN = 1;
-const GRAPH_ZOOM_MAX = 2.2;
-const GRAPH_ZOOM_STEP = 0.25;
 
 const graphCopy = {
   zh: {
@@ -424,28 +420,28 @@ const typeOrder: Record<ResearchNodeType, number> = {
 };
 
 const typeColors: Record<ResearchNodeType, string> = {
-  note: "#4d6f7a",
-  source: "#245b93",
-  claim: "#6d4fb0",
-  concept: "#1f6f45",
-  review: "#a04d1d",
-  proposal: "#6d5f2a",
-  warning: "#a43131",
+  note: "#94a3b8",
+  source: "#fb923c",
+  claim: "#60a5fa",
+  concept: "#c084fc",
+  review: "#f97316",
+  proposal: "#4ade80",
+  warning: "#f87171",
 };
 
 const communityColors = [
-  "#245b93",
-  "#1f6f45",
-  "#a04d1d",
-  "#6d4fb0",
-  "#4d6f7a",
-  "#9a5a8f",
-  "#2f7f83",
-  "#8a6a20",
-  "#5f6f38",
-  "#b7552b",
-  "#3b5d8a",
-  "#7a4b64",
+  "#60a5fa",
+  "#4ade80",
+  "#fb923c",
+  "#c084fc",
+  "#f87171",
+  "#2dd4bf",
+  "#facc15",
+  "#f472b6",
+  "#a78bfa",
+  "#38bdf8",
+  "#34d399",
+  "#fbbf24",
 ];
 
 function classNames(...items: Array<string | false | null | undefined>) {
@@ -1316,6 +1312,16 @@ function edgeStatusClass(edge: ResearchGraphEdge) {
   return edge.type;
 }
 
+function graphEdgeWeight(edge: ResearchGraphEdge) {
+  if (edge.type.startsWith("warning_")) return 1.9;
+  if (edge.status === "broken" || edge.status === "p0" || edge.status === "p1") return 1.8;
+  if (edge.type === "source_claim") return 1.55;
+  if (edge.type === "claim_concept") return 1.35;
+  if (edge.type === "source_overlap") return 1.2;
+  if (edge.type === "claim_review" || edge.type === "proposal_target") return 1.15;
+  return 1;
+}
+
 function graphStatusLabel(status: string | null | undefined, language: UiLanguage) {
   if (!status || language !== "zh") return status;
   const labels: Record<string, string> = {
@@ -1479,10 +1485,12 @@ export function ResearchGraphPage({
   const [edgeFilter, setEdgeFilter] = useState<ResearchEdgeType | "all">("all");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [colorMode, setColorMode] = useState<"type" | "community">("type");
   const [hideLowLinkNodes, setHideLowLinkNodes] = useState(false);
-  const [zoom, setZoom] = useState(1);
+  const [hiddenNodeIds, setHiddenNodeIds] = useState<Set<string>>(() => new Set());
+  const [showFilters, setShowFilters] = useState(false);
+  const [showInsights, setShowInsights] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const graph = useMemo(
     () => buildResearchGraph({ status, registry, claims, evidencePaths, reviewItems, writebacks, traceabilityWarnings }),
     [claims, evidencePaths, registry, reviewItems, status, traceabilityWarnings, writebacks],
@@ -1528,6 +1536,11 @@ export function ResearchGraphPage({
   const nodeSecondaryLabel = (node: ResearchGraphNode) =>
     nodeSubtitle(node.subtitle) || graphStatusLabel(node.status, language) || node.id;
   const nodeById = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph.nodes]);
+  const nodeCountByType = useMemo(() => {
+    const counts: Partial<Record<ResearchNodeType, number>> = {};
+    for (const node of graph.nodes) counts[node.type] = (counts[node.type] || 0) + 1;
+    return counts;
+  }, [graph.nodes]);
   const degreeByNodeId = useMemo(() => {
     const degree = new Map<string, number>();
     for (const edge of graph.edges) {
@@ -1543,7 +1556,8 @@ export function ResearchGraphPage({
   const normalizedQuery = query.trim().toLowerCase();
   const nodeMatchedIds = new Set<string>();
   const typeMatchedNodes = graph.nodes.filter((node) =>
-    (typeFilter === "all" || node.type === typeFilter)
+    !hiddenNodeIds.has(node.id)
+    && (typeFilter === "all" || node.type === typeFilter)
     && (!hideLowLinkNodes || !lowLinkNodeIds.has(node.id))
   );
 
@@ -1554,6 +1568,7 @@ export function ResearchGraphPage({
   }
 
   const visibleEdges = graph.edges.filter((edge) => {
+    if (hiddenNodeIds.has(edge.from) || hiddenNodeIds.has(edge.to)) return false;
     if (edgeFilter !== "all" && edge.type !== edgeFilter) return false;
     if (hideLowLinkNodes && (lowLinkNodeIds.has(edge.from) || lowLinkNodeIds.has(edge.to))) return false;
     const fromNode = nodeById.get(edge.from);
@@ -1575,12 +1590,10 @@ export function ResearchGraphPage({
   }
 
   const filteredNodes = graph.nodes.filter((node) => filteredNodeIds.has(node.id));
-  const visualNodes = filteredNodes.slice(0, VISUAL_NODE_LIMIT);
+  const visualNodes = filteredNodes;
   const visualNodeIds = new Set(visualNodes.map((node) => node.id));
-  const visualEdges = visibleEdges.filter((edge) => visualNodeIds.has(edge.from) && visualNodeIds.has(edge.to)).slice(0, VISUAL_EDGE_LIMIT);
+  const visualEdges = visibleEdges.filter((edge) => visualNodeIds.has(edge.from) && visualNodeIds.has(edge.to));
   const graphIsTruncated = visualNodes.length < filteredNodes.length || visualEdges.length < visibleEdges.length;
-  const positions = radialGraphPositions(visualNodes, visualEdges, GRAPH_VIEWBOX, typeOrder);
-  const orbitRadii = radialGraphRadii(GRAPH_VIEWBOX);
   const communityByNodeId = useMemo(() => {
     const result = new Map<string, { community: ResearchGraphCommunity; color: string }>();
     graph.summary.communities.forEach((community, index) => {
@@ -1594,28 +1607,9 @@ export function ResearchGraphPage({
   const selected = (selectedId ? filteredNodes.find((node) => node.id === selectedId) : null) || filteredNodes[0] || null;
   const relatedEdges = selected ? visibleEdges.filter((edge) => edge.from === selected.id || edge.to === selected.id) : [];
   const indirectRecommendations = selected ? sharedNeighborRecommendations(selected.id, filteredNodes, visibleEdges) : [];
-  const focusedGraphNodeId = hoveredId || selected?.id || null;
-  const focusedNeighborhood = useMemo(() => {
-    const nodeIds = new Set<string>();
-    const edgeIds = new Set<string>();
-    if (!focusedGraphNodeId) return { nodeIds, edgeIds };
-    nodeIds.add(focusedGraphNodeId);
-    for (const edge of visualEdges) {
-      if (edge.from !== focusedGraphNodeId && edge.to !== focusedGraphNodeId) continue;
-      nodeIds.add(edge.from);
-      nodeIds.add(edge.to);
-      edgeIds.add(edge.id);
-    }
-    return { nodeIds, edgeIds };
-  }, [focusedGraphNodeId, visualEdges]);
   const summary = graphSummaryText(graph, language);
   const hasGraphData = graph.nodes.length > 0;
-  const graphFilterActive = Boolean(normalizedQuery) || typeFilter !== "all" || edgeFilter !== "all" || hideLowLinkNodes;
-  const graphViewBox = useMemo(() => {
-    const width = GRAPH_VIEWBOX.width / zoom;
-    const height = GRAPH_VIEWBOX.height / zoom;
-    return `${GRAPH_VIEWBOX.centerX - width / 2} ${GRAPH_VIEWBOX.centerY - height / 2} ${width} ${height}`;
-  }, [zoom]);
+  const graphFilterActive = Boolean(normalizedQuery) || typeFilter !== "all" || edgeFilter !== "all" || hideLowLinkNodes || hiddenNodeIds.size > 0;
   const readingQuality = status?.readingQuality ?? null;
   const orphanConcepts = readingQuality?.orphanConcepts ?? 0;
   const lowSynthesisConcepts = readingQuality?.lowSynthesisConcepts ?? 0;
@@ -1632,10 +1626,14 @@ export function ResearchGraphPage({
   }, [filteredNodes, selectedId]);
 
   const openNodePath = (node: ResearchGraphNode) => {
-    if (node.path) onOpenPath(resolveVaultPath(node.path));
+    if (node.path) onOpenVaultItem(node.path);
   };
   const revealNodePath = (node: ResearchGraphNode) => {
     if (node.path) onRevealPath(resolveVaultPath(node.path));
+  };
+  const activateGraphNode = (node: ResearchGraphNode) => {
+    setSelectedId(node.id);
+    if (node.path) onOpenVaultItem(node.path);
   };
   const endpointLabel = (id: string) => nodeById.get(id)?.label || id;
   const surpriseReasonLabels = (reasons: ResearchGraphSurpriseReason[]) =>
@@ -1670,236 +1668,141 @@ export function ResearchGraphPage({
     setTypeFilter("all");
     setEdgeFilter("all");
     setHideLowLinkNodes(false);
+    setHiddenNodeIds(new Set());
   };
-  const zoomInGraph = () => setZoom((value) => Math.min(GRAPH_ZOOM_MAX, Number((value + GRAPH_ZOOM_STEP).toFixed(2))));
-  const zoomOutGraph = () => setZoom((value) => Math.max(GRAPH_ZOOM_MIN, Number((value - GRAPH_ZOOM_STEP).toFixed(2))));
-  const resetGraphZoom = () => setZoom(1);
-  const nodeFillColor = (node: ResearchGraphNode) =>
-    colorMode === "community"
-      ? communityByNodeId.get(node.id)?.color || typeColors[node.type]
-      : typeColors[node.type];
+  const sigmaNodes = useMemo<SigmaEvidenceGraphNode[]>(() => (
+    visualNodes.map((node) => {
+      const community = communityByNodeId.get(node.id);
+      return {
+        id: node.id,
+        type: node.type,
+        label: node.label,
+        path: node.path,
+        color: typeColors[node.type],
+        degree: degreeByNodeId.get(node.id) || 0,
+        communityLabel: community?.community.labels[0] || community?.community.id,
+        communityColor: community?.color || typeColors[node.type],
+      };
+    })
+  ), [communityByNodeId, degreeByNodeId, visualNodes]);
+  const sigmaEdges = useMemo<SigmaEvidenceGraphEdge[]>(() => (
+    visualEdges.map((edge) => ({
+      id: edge.id,
+      from: edge.from,
+      to: edge.to,
+      type: edge.type,
+      label: edgeLabel(edge),
+      status: edge.status,
+      weight: graphEdgeWeight(edge),
+    }))
+  ), [language, visualEdges]);
+  const sigmaTypeLabels = useMemo(
+    () => Object.fromEntries(nodeTypes.filter((type) => type !== "all").map((type) => [type, text.nodeTypes[type]])),
+    [text],
+  ) as Record<string, string>;
+  const highlightedNodeIds = normalizedQuery ? nodeMatchedIds : new Set<string>();
+  const insightCount = graph.summary.bridgeNodes.length
+    + graph.summary.surprisingConnections.length
+    + traceabilityWarnings.length
+    + writebacks.length
+    + (knowledgeGaps > 0 ? 1 : 0);
 
   return (
-    <section className={["research-graph-page", className].filter(Boolean).join(" ")}>
-      <div className="graph-summary-bar">
-        <div>
-          <span>{text.summaryStats.sources}</span>
-          <strong>{graph.summary.sourcesPapers}</strong>
+    <section className={["research-graph-page", "graph-shell", className].filter(Boolean).join(" ")}>
+      <div className="graph-topbar">
+        <div className="graph-topbar-main">
+          <div className="graph-title">
+            <Network size={17} />
+            <strong>{text.relationshipMap}</strong>
+          </div>
+          <div className="graph-badges">
+            <span>{visualNodes.length}/{graph.nodes.length} {text.nodes}</span>
+            <span>{visualEdges.length}/{graph.edges.length} {text.edges}</span>
+            {hiddenNodeIds.size > 0 && <span>{hiddenNodeIds.size} {language === "zh" ? "已隐藏" : "hidden"}</span>}
+            {graph.summary.traceabilityBreaks > 0 && <span className="warn">{graph.summary.traceabilityBreaks} {text.summaryStats.traceabilityBreaks}</span>}
+          </div>
         </div>
-        <div>
-          <span>{text.summaryStats.sourceBackedClaims}</span>
-          <strong>{graph.summary.sourceBackedClaims}</strong>
-        </div>
-        <div>
-          <span>{text.summaryStats.sourceOverlap}</span>
-          <strong>{graph.summary.sourceOverlapLinks}</strong>
-        </div>
-        <div>
-          <span>{text.summaryStats.keyConcepts}</span>
-          <strong>{graph.summary.keyConcepts.length}</strong>
-        </div>
-        <div>
-          <span>{text.summaryStats.reviewNodes}</span>
-          <strong>{graph.summary.reviewNodes}</strong>
-        </div>
-        <div>
-          <span>{text.summaryStats.traceabilityBreaks}</span>
-          <strong>{graph.summary.traceabilityBreaks}</strong>
-        </div>
-        <div>
-          <span>{text.summaryStats.writebackInsights}</span>
-          <strong>{graph.summary.writebackInsights}</strong>
-        </div>
-      </div>
 
-      <div className="graph-insight-strip">
-        <div>
-          <strong>{text.researchSummary}</strong>
-          <p>
-            {vaultPath ? text.vaultSummary : text.noVaultSummary}
-          </p>
-          <ul>
-            {summary.map((item) => <li key={item}>{item}</li>)}
-          </ul>
-        </div>
-        <div>
-          <span>{text.graphArtifacts}</span>
-          <strong>{graphArtifacts.length}</strong>
-          <em>{graphArtifacts.slice(0, 3).map((file) => graphArtifactPath(vaultPath, file)).join(", ") || text.noGraphArtifacts}</em>
-          {graphArtifacts.slice(0, 3).map((file) => {
-            const path = graphArtifactPath(vaultPath, file);
-            return (
-              <button key={file.path} className="graph-insight-link" onClick={() => onOpenVaultItem(path)}>
-                <SquareStack size={14} />
-                {file.title || labelFromPath(path)}
-              </button>
-            );
-          })}
-          {graphArtifacts[0] && (
-            <button className="graph-insight-link" onClick={() => onRevealPath(resolveVaultPath(graphArtifactPath(vaultPath, graphArtifacts[0])))}>
-              <FolderOpen size={14} />
-              {text.revealArtifact}
-            </button>
-          )}
-        </div>
-        <div>
-          <span>{text.keyConcepts}</span>
-          <em>{graph.summary.keyConcepts.map((node) => node.label).join(", ") || text.noneYet}</em>
-        </div>
-        <div>
-          <span>{text.knowledgeClusters}</span>
-          <strong>{graph.summary.communities.length}</strong>
-          <em>
-            {graph.summary.largestCommunity
-              ? `${text.largestCluster}: ${graph.summary.largestCommunity.labels.join(", ")}`
-              : text.noCluster}
-          </em>
-          <code>{text.clusterHealth(graph.summary.lowConnectionNodes, graph.summary.sparseCommunities)}</code>
-        </div>
-        <div>
-          <span>{text.bridgeNodes}</span>
-          <em>{graph.summary.bridgeNodes.slice(0, 3).map((bridge) => endpointLabel(bridge.nodeId)).join(", ") || text.noBridgeNodes}</em>
-          {graph.summary.bridgeNodes[0] && (
-            <code>{text.bridgeDetail(graph.summary.bridgeNodes[0].groupCount, graph.summary.bridgeNodes[0].degree)}</code>
-          )}
-          {graph.summary.bridgeNodes.slice(0, 3).map((bridge) => (
-            <button key={bridge.nodeId} className="graph-insight-link" onClick={() => setSelectedId(bridge.nodeId)}>
-              <Network size={14} />
-              {endpointLabel(bridge.nodeId)}
-            </button>
-          ))}
-          {graph.summary.bridgeNodes[0] && (
-            <button className="graph-insight-link" onClick={() => createBridgeResearchTopic(graph.summary.bridgeNodes[0])}>
-              <Lightbulb size={14} />
-              {text.createResearchTopic}
-            </button>
-          )}
-        </div>
-        <div>
-          <span>{text.surprisingConnections}</span>
-          <em>
-            {graph.summary.surprisingConnections.slice(0, 2).map((connection) =>
-              `${endpointLabel(connection.from)} -> ${endpointLabel(connection.to)}`,
-            ).join(", ") || text.noSurprisingConnections}
-          </em>
-          {graph.summary.surprisingConnections[0] && (
-            <code>
-              {text.surpriseDetail(
-                graph.summary.surprisingConnections[0].score,
-                surpriseReasonLabels(graph.summary.surprisingConnections[0].reasons),
-              )}
-            </code>
-          )}
-          {graph.summary.surprisingConnections.slice(0, 3).map((connection) => (
-            <button key={connection.edgeId} className="graph-insight-link" onClick={() => setSelectedId(connection.to)}>
-              <GitCompare size={14} />
-              {endpointLabel(connection.from)} {"->"} {endpointLabel(connection.to)}
-            </button>
-          ))}
-          {graph.summary.surprisingConnections[0] && (
-            <button className="graph-insight-link" onClick={() => createSurprisingConnectionResearchTopic(graph.summary.surprisingConnections[0])}>
-              <Lightbulb size={14} />
-              {text.createResearchTopic}
-            </button>
-          )}
-        </div>
-        <div>
-          <span>{text.evidenceBreaks}</span>
-          <em>{traceabilityWarnings.slice(0, 3).map((warning) => warning.claimId).join(", ") || text.noneSurfaced}</em>
-        </div>
-        <div>
-          <span>{text.knowledgeGaps}</span>
-          <em>{knowledgeGapSummary}</em>
-          {readingQualityReportPath && (
-            <button className="graph-insight-link" onClick={() => onOpenPath(resolveVaultPath(readingQualityReportPath))}>
-              <FolderOpen size={14} />
-              {text.readingQualityReport}
-            </button>
-          )}
-          {knowledgeGaps > 0 && (
-            <button className="graph-insight-link" onClick={createKnowledgeGapResearchTopic}>
-              <Lightbulb size={14} />
-              {text.createResearchTopic}
-            </button>
-          )}
-        </div>
-      </div>
-
-      <div className="graph-control-panel">
-        <label className="graph-search-box">
-          <Search size={15} />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder={text.searchPlaceholder}
-          />
-        </label>
-        <div className="graph-filter-group">
-          <span>{text.nodeType}</span>
-          <div className="graph-filter-row">
-            {nodeTypes.map((type) => (
+        <div className="graph-toolbar">
+          {(searchOpen || normalizedQuery) ? (
+            <label className="graph-search-field">
+              <Search size={14} />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    setQuery("");
+                    setSearchOpen(false);
+                  }
+                }}
+                placeholder={text.searchPlaceholder}
+                autoFocus
+              />
               <button
-                key={type}
-                className={typeFilter === type ? "active" : ""}
-                onClick={() => setTypeFilter(type)}
+                title={normalizedQuery ? (language === "zh" ? "清除搜索" : "Clear search") : (language === "zh" ? "关闭搜索" : "Close search")}
+                aria-label={normalizedQuery ? (language === "zh" ? "清除搜索" : "Clear search") : (language === "zh" ? "关闭搜索" : "Close search")}
+                onClick={() => {
+                  if (normalizedQuery) {
+                    setQuery("");
+                    return;
+                  }
+                  setSearchOpen(false);
+                }}
               >
-                {text.nodeTypes[type]}
+                <X size={13} />
               </button>
-            ))}
-          </div>
-        </div>
-        <div className="graph-filter-group">
-          <span>{text.edgeType}</span>
-          <div className="graph-filter-row">
-            {edgeTypes.map((type) => (
-              <button
-                key={type}
-                className={edgeFilter === type ? "active" : ""}
-                onClick={() => setEdgeFilter(type)}
-              >
-                {text.edgeTypes[type]}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="graph-filter-group">
-          <span>{text.colorMode}</span>
-          <div className="graph-filter-row">
-            <button
-              className={colorMode === "type" ? "active" : ""}
-              onClick={() => setColorMode("type")}
-            >
-              {text.colorByType}
+            </label>
+          ) : (
+            <button className="graph-icon-button" title={text.searchPlaceholder} aria-label={text.searchPlaceholder} onClick={() => setSearchOpen(true)}>
+              <Search size={15} />
             </button>
-            <button
-              className={colorMode === "community" ? "active" : ""}
-              onClick={() => setColorMode("community")}
-            >
-              {text.colorByCommunity}
+          )}
+          <button
+            className={classNames("graph-mode-button", showFilters && "active")}
+            onClick={() => setShowFilters((value) => !value)}
+          >
+            <Filter size={14} />
+            {language === "zh" ? "过滤" : "Filter"}
+          </button>
+          {graphFilterActive && (
+            <button className="graph-mode-button" onClick={resetGraphFilters}>
+              <RotateCcw size={14} />
+              {text.resetGraphFilters}
             </button>
-          </div>
-        </div>
-        <div className="graph-filter-group">
-          <span>{text.quickFilters}</span>
-          <div className="graph-filter-row">
-            <button
-              className={hideLowLinkNodes ? "active" : ""}
-              onClick={() => setHideLowLinkNodes((value) => !value)}
-            >
-              {text.hideLowLinkNodes}
-            </button>
-          </div>
+          )}
+          <button
+            className={classNames("graph-mode-button", colorMode === "type" && "active")}
+            onClick={() => setColorMode("type")}
+          >
+            <Tag size={14} />
+            {text.colorByType}
+          </button>
+          <button
+            className={classNames("graph-mode-button", colorMode === "community" && "active")}
+            onClick={() => setColorMode("community")}
+          >
+            <Layers size={14} />
+            {text.colorByCommunity}
+          </button>
+          <button
+            className={classNames("graph-mode-button", showInsights && "active")}
+            onClick={() => setShowInsights((value) => !value)}
+          >
+            <Lightbulb size={14} />
+            {language === "zh" ? "洞察" : "Insights"}
+            {insightCount > 0 && <span>{insightCount}</span>}
+          </button>
+          <button className="graph-icon-button" title="Obsidian" aria-label="Obsidian" onClick={onOpenObsidian} disabled={!vaultPath}>
+            <SquareStack size={15} />
+          </button>
         </div>
       </div>
 
-      <div className="graph-workspace">
-        <section className="panel graph-panel">
-          <div className="section-head">
-            <h2>{text.relationshipMap}</h2>
-            <span>{visualNodes.length}/{filteredNodes.length} {text.nodes} · {visualEdges.length}/{visibleEdges.length} {text.edges}</span>
-          </div>
+      <div className={classNames("graph-stage", showInsights && "with-insights")}>
+        <div className="graph-canvas-frame">
           {!hasGraphData ? (
-            <div className="graph-empty-state">
+            <div className="graph-empty-state graph-empty-overlay">
               <Network size={30} />
               <strong>{text.noGraphDataTitle}</strong>
               <p>{text.noGraphDataBody}</p>
@@ -1910,7 +1813,7 @@ export function ResearchGraphPage({
               </div>
             </div>
           ) : visualNodes.length === 0 ? (
-            <div className="graph-empty-state">
+            <div className="graph-empty-state graph-empty-overlay">
               <Search size={30} />
               <strong>{text.noGraphNodes}</strong>
               {graphFilterActive && (
@@ -1920,282 +1823,285 @@ export function ResearchGraphPage({
               )}
             </div>
           ) : (
-            <div className="graph-canvas-wrap">
-              <div className="graph-zoom-controls" aria-label={text.relationshipMap}>
-                <button onClick={zoomInGraph} disabled={zoom >= GRAPH_ZOOM_MAX} title={text.zoomIn} aria-label={text.zoomIn}>
-                  <ZoomIn size={14} />
-                </button>
-                <button onClick={zoomOutGraph} disabled={zoom <= GRAPH_ZOOM_MIN} title={text.zoomOut} aria-label={text.zoomOut}>
-                  <ZoomOut size={14} />
-                </button>
-                <button onClick={resetGraphZoom} disabled={zoom === 1} title={text.resetZoom} aria-label={text.resetZoom}>
-                  <Maximize size={14} />
+            <SigmaEvidenceGraph
+              language={language}
+              nodes={sigmaNodes}
+              edges={sigmaEdges}
+              selectedNodeId={selected?.id || null}
+              highlightedNodeIds={highlightedNodeIds}
+              colorMode={colorMode}
+              typeLabels={sigmaTypeLabels}
+              activeType={typeFilter}
+              hiddenNodeCount={hiddenNodeIds.size}
+              onSelectNode={(nodeId) => {
+                const node = nodeById.get(nodeId);
+                if (node) activateGraphNode(node);
+              }}
+              onSelectType={(type) => setTypeFilter(type === "all" ? "all" : type as ResearchNodeType)}
+              onHoverNode={() => undefined}
+              onHideNode={(nodeId) => setHiddenNodeIds((current) => new Set([...current, nodeId]))}
+              onResetHiddenNodes={() => setHiddenNodeIds(new Set())}
+            />
+          )}
+
+          {graphIsTruncated && (
+            <p className="graph-stage-note">{text.limitHint(visualNodes.length, filteredNodes.length, visualEdges.length, visibleEdges.length)}</p>
+          )}
+
+          {showFilters && (
+            <div className="graph-floating-panel graph-filter-panel">
+              <div className="graph-floating-head">
+                <span><Filter size={14} />{language === "zh" ? "图谱过滤器" : "Graph filters"}</span>
+                <button title={language === "zh" ? "关闭" : "Close"} aria-label={language === "zh" ? "关闭" : "Close"} onClick={() => setShowFilters(false)}>
+                  <X size={14} />
                 </button>
               </div>
-              <svg className="research-graph-svg" viewBox={graphViewBox} role="img" aria-label="Research relationship graph">
-                <defs>
-                  <marker id="graph-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-                    <path d="M 0 0 L 10 5 L 0 10 z" />
-                  </marker>
-                </defs>
-                {[orbitRadii.inner, orbitRadii.middle, orbitRadii.outer].map((radius) => (
-                  <circle
-                    key={radius}
-                    className="graph-orbit"
-                    cx={GRAPH_VIEWBOX.centerX}
-                    cy={GRAPH_VIEWBOX.centerY}
-                    r={radius}
-                  />
-                ))}
-                {visualEdges.map((edge) => {
-                  const from = positions.get(edge.from);
-                  const to = positions.get(edge.to);
-                  if (!from || !to) return null;
-                  const active = focusedNeighborhood.edgeIds.has(edge.id);
-                  return (
-                    <line
-                      key={edge.id}
-                      x1={from.x}
-                      y1={from.y}
-                      x2={to.x}
-                      y2={to.y}
-                      markerEnd="url(#graph-arrow)"
-                      className={classNames(edgeStatusClass(edge), active && "active", focusedGraphNodeId && !active && "dimmed")}
-                    />
-                  );
-                })}
-                {visualNodes.map((node) => {
-                  const position = positions.get(node.id);
-                  if (!position) return null;
-                  const active = selected?.id === node.id;
-                  const hovered = hoveredId === node.id;
-                  const related = focusedNeighborhood.nodeIds.has(node.id);
-                  const labelOnRight = position.x >= GRAPH_VIEWBOX.centerX;
-                  return (
-                    <g
-                      key={node.id}
-                      className={classNames(
-                        node.type,
-                        active && "active",
-                        hovered && "hovered",
-                        focusedGraphNodeId && related && "neighbor",
-                        focusedGraphNodeId && !related && "dimmed",
-                      )}
-                      role="button"
-                      tabIndex={0}
-                      aria-label={`${text.nodeTypes[node.type]}: ${node.label}`}
-                      onClick={() => setSelectedId(node.id)}
-                      onKeyDown={(event) => {
-                        if (event.key !== "Enter" && event.key !== " ") return;
-                        event.preventDefault();
-                        setSelectedId(node.id);
-                      }}
-                      onFocus={() => setHoveredId(node.id)}
-                      onBlur={() => setHoveredId((current) => current === node.id ? null : current)}
-                      onMouseEnter={() => setHoveredId(node.id)}
-                      onMouseLeave={() => setHoveredId((current) => current === node.id ? null : current)}
+              <div className="graph-filter-section">
+                <span>{text.quickFilters}</span>
+                <div className="graph-filter-row">
+                  <button
+                    className={hideLowLinkNodes ? "active" : ""}
+                    onClick={() => setHideLowLinkNodes((value) => !value)}
+                  >
+                    {text.hideLowLinkNodes}
+                  </button>
+                </div>
+              </div>
+              <div className="graph-filter-section">
+                <span>{text.nodeType}</span>
+                <div className="graph-filter-row">
+                  {(["all", ...primaryFilterNodeTypes, "note"] as Array<ResearchNodeType | "all">).map((type) => (
+                    <button
+                      key={type}
+                      className={typeFilter === type ? "active" : ""}
+                      onClick={() => setTypeFilter(type)}
                     >
-                      <title>{node.label}</title>
-                      <circle cx={position.x} cy={position.y} r={active ? 13 : 10} fill={nodeFillColor(node)} />
-                      <text
-                        x={position.x + (labelOnRight ? 15 : -15)}
-                        y={position.y + 4}
-                        textAnchor={labelOnRight ? "start" : "end"}
-                      >
-                        {node.label.slice(0, 32)}
-                      </text>
-                    </g>
-                  );
-                })}
-              </svg>
-            </div>
-          )}
-          {graphIsTruncated && (
-            <p className="empty">{text.limitHint(visualNodes.length, filteredNodes.length, visualEdges.length, visibleEdges.length)}</p>
-          )}
-          <div className="graph-legend">
-            {colorMode === "type"
-              ? (Object.keys(typeColors) as ResearchNodeType[]).map((type) => (
-                <span key={type}><i style={{ backgroundColor: typeColors[type] }} />{text.nodeTypes[type]}</span>
-              ))
-              : graph.summary.communities.slice(0, communityColors.length).map((community, index) => (
-                <span key={community.id}>
-                  <i style={{ backgroundColor: communityColors[index % communityColors.length] }} />
-                  {community.labels[0] || community.id}
-                  <em>{community.size} {text.nodes} · {Math.round(community.density * 100)}%</em>
-                </span>
-              ))}
-          </div>
-        </section>
-
-        <section className="panel graph-panel">
-          <div className="section-head">
-            <h2>{text.nodeDetails}</h2>
-            {selected && <span>{text.nodeTypes[selected.type]}</span>}
-          </div>
-          {selected ? (
-            <div className="graph-node-detail">
-              <span className={`status-chip ${nodeStatusClass(selected)}`}>{text.nodeTypes[selected.type]}</span>
-              <strong>{selected.label}</strong>
-              <em>{nodeSecondaryLabel(selected)}</em>
-              {selected.body && <p>{selected.body}</p>}
-              {selected.path && <code>{selected.path}</code>}
-              {selected.metrics && (
-                <div className="graph-node-metrics">
-                  {Object.entries(selected.metrics).map(([metric, value]) => (
-                    <span key={metric}>{graphMetricLabel(metric, language)}: {graphMetricValue(value, language)}</span>
+                      {text.nodeTypes[type]}{type !== "all" ? ` ${nodeCountByType[type] || 0}` : ""}
+                    </button>
                   ))}
                 </div>
-              )}
-              <div className="inline-actions">
-                <button onClick={() => openNodePath(selected)} disabled={!selected.path}><FolderOpen size={14} />{text.open}</button>
-                <button onClick={() => revealNodePath(selected)} disabled={!selected.path}><ExternalLink size={14} />{text.reveal}</button>
-                <button onClick={() => onCopyText("graph node path", selected.path || selected.id)}><Copy size={14} />{text.copy}</button>
-                <button onClick={onOpenObsidian} disabled={!vaultPath}><SquareStack size={14} />Obsidian</button>
               </div>
-              <div className="graph-related">
-                <strong>{text.relatedEdges}</strong>
-                {relatedEdges.length === 0 && <p className="empty">{text.noRelatedEdges}</p>}
-                {relatedEdges.map((edge) => (
-                  <button key={edge.id} onClick={() => setSelectedId(edge.from === selected.id ? edge.to : edge.from)}>
-                    <span>{text.edgeTypes[edge.type]} · {edgeLabel(edge)}</span>
-                    <em>{endpointLabel(edge.from)} {"->"} {endpointLabel(edge.to)}</em>
-                  </button>
-                ))}
-              </div>
-              <div className="graph-related">
-                <strong>{text.indirectRelated}</strong>
-                {indirectRecommendations.length === 0 && <p className="empty">{text.noIndirectRelated}</p>}
-                {indirectRecommendations.map((recommendation) => {
-                  const target = nodeById.get(recommendation.nodeId);
-                  if (!target) return null;
-                  return (
-                    <button key={recommendation.nodeId} onClick={() => setSelectedId(recommendation.nodeId)}>
-                      <span>{target.label} · {text.relevanceScore(recommendation.score)}</span>
-                      <em>
-                        {text.sharedNeighbors}: {recommendation.sharedNeighbors.map(endpointLabel).join(", ")}
-                        {recommendation.typeAffinity ? ` · ${text.typeAffinity}` : ""}
-                      </em>
+              <div className="graph-filter-section">
+                <span>{text.edgeType}</span>
+                <div className="graph-filter-row">
+                  {edgeTypes.map((type) => (
+                    <button
+                      key={type}
+                      className={edgeFilter === type ? "active" : ""}
+                      onClick={() => setEdgeFilter(type)}
+                    >
+                      {text.edgeTypes[type]}
                     </button>
-                  );
-                })}
+                  ))}
+                </div>
               </div>
+              {hiddenNodeIds.size > 0 && (
+                <button className="graph-reset-hidden" onClick={() => setHiddenNodeIds(new Set())}>
+                  <RotateCcw size={13} />
+                  {language === "zh" ? "显示隐藏节点" : "Show hidden nodes"} · {hiddenNodeIds.size}
+                </button>
+              )}
+              <p>{visualNodes.length}/{graph.nodes.length} {text.nodes} · {visualEdges.length}/{graph.edges.length} {text.edges}</p>
             </div>
-          ) : (
-            <p className="empty">{text.noGraphNodes}</p>
           )}
-        </section>
-      </div>
+        </div>
 
-      <div className="graph-list-grid">
-        <section className="panel">
-          <div className="section-head">
-            <h2>{text.nodeList}</h2>
-            <span>{filteredNodes.length}/{graph.nodes.length} {text.nodes}</span>
-          </div>
-          <div className="graph-list">
-            {filteredNodes.length === 0 && <p className="empty">{text.noNodesMatch}</p>}
-            {filteredNodes.map((node) => (
-              <button key={node.id} onClick={() => setSelectedId(node.id)}>
-                <span className={`status-chip ${nodeStatusClass(node)}`}>{text.nodeTypes[node.type]}</span>
-                <strong>{compact(node.label, 120)}</strong>
-                <em>{nodeSecondaryLabel(node)}</em>
-                <code>{node.path || node.id}</code>
+        {showInsights && (
+          <aside className="graph-side-panel">
+            <div className="graph-side-head">
+              <span><Lightbulb size={16} />{language === "zh" ? "图谱洞察" : "Graph insights"}</span>
+              <button title={language === "zh" ? "关闭" : "Close"} aria-label={language === "zh" ? "关闭" : "Close"} onClick={() => setShowInsights(false)}>
+                <X size={15} />
               </button>
-            ))}
-          </div>
-        </section>
+            </div>
 
-        <section className="panel">
-          <div className="section-head">
-            <h2>{text.edgeList}</h2>
-            <span>{visibleEdges.length}/{graph.edges.length} {text.edges}</span>
-          </div>
-          <div className="graph-list">
-            {visibleEdges.length === 0 && <p className="empty">{text.noEdgesMatch}</p>}
-            {visibleEdges.map((edge) => (
-              <button key={edge.id} onClick={() => setSelectedId(edge.to)}>
-                <span className={classNames("status-chip", edgeStatusClass(edge))}>{text.edgeTypes[edge.type]}</span>
-                <strong>{edgeLabel(edge)}</strong>
-                <em>{endpointLabel(edge.from)} {"->"} {endpointLabel(edge.to)}</em>
-                <code>{graphStatusLabel(edge.status, language) || text.linked}</code>
-              </button>
-            ))}
-          </div>
-        </section>
+            {selected && (
+              <section className="graph-side-section graph-selected-node">
+                <div className="graph-section-title">
+                  <span>{text.nodeDetails}</span>
+                  <em>{text.nodeTypes[selected.type]}</em>
+                </div>
+                <span className={`status-chip ${nodeStatusClass(selected)}`}>{text.nodeTypes[selected.type]}</span>
+                <strong>{selected.label}</strong>
+                <em>{nodeSecondaryLabel(selected)}</em>
+                {selected.body && <p>{selected.body}</p>}
+                {selected.path && <code>{selected.path}</code>}
+                {selected.metrics && (
+                  <div className="graph-node-metrics">
+                    {Object.entries(selected.metrics).map(([metric, value]) => (
+                      <span key={metric}>{graphMetricLabel(metric, language)}: {graphMetricValue(value, language)}</span>
+                    ))}
+                  </div>
+                )}
+                <div className="inline-actions">
+                  <button onClick={() => openNodePath(selected)} disabled={!selected.path}><FolderOpen size={14} />{text.open}</button>
+                  <button onClick={() => revealNodePath(selected)} disabled={!selected.path}><ExternalLink size={14} />{text.reveal}</button>
+                  <button onClick={() => onCopyText("graph node path", selected.path || selected.id)}><Copy size={14} />{text.copy}</button>
+                </div>
+              </section>
+            )}
 
-        <section className="panel">
-          <div className="section-head">
-            <h2>{text.evidenceBreakLocator}</h2>
-            <ShieldAlert size={18} />
-          </div>
-          <div className="graph-list">
-            {traceabilityWarnings.length === 0 && <p className="empty">{text.noTraceabilityWarnings}</p>}
-            {traceabilityWarnings.map((warning) => (
-              <button key={warning.warningId} onClick={() => setSelectedId(warningNodeId(warning.warningId))}>
-                <span className={`status-chip ${warning.severity}`}>{warning.severity}</span>
-                <strong>{warning.claimText || warning.claimId}</strong>
-                <em>{warning.sourcePath || warning.sourceId || text.sourceUnknown}</em>
-                <code>{warning.missingAnchor || warning.summary}</code>
-              </button>
-            ))}
-          </div>
-        </section>
+            <section className="graph-side-section">
+              <div className="graph-section-title">
+                <span>{text.researchSummary}</span>
+                <em>{graph.summary.sourcesPapers} {text.summaryStats.sources}</em>
+              </div>
+              <div className="graph-summary-grid">
+                <span>{text.summaryStats.sourceBackedClaims}<strong>{graph.summary.sourceBackedClaims}</strong></span>
+                <span>{text.summaryStats.keyConcepts}<strong>{graph.summary.keyConcepts.length}</strong></span>
+                <span>{text.summaryStats.reviewNodes}<strong>{graph.summary.reviewNodes}</strong></span>
+                <span>{text.summaryStats.writebackInsights}<strong>{graph.summary.writebackInsights}</strong></span>
+              </div>
+              {summary.slice(0, 4).map((item) => <p key={item}>{item}</p>)}
+            </section>
 
-        <section className="panel">
-          <div className="section-head">
-            <h2>{text.conceptSourceLocator}</h2>
-            <Search size={18} />
-          </div>
-          <div className="graph-list">
-            {graph.summary.keyConcepts.length === 0 && <p className="empty">{text.noConceptRelationships}</p>}
-            {graph.summary.keyConcepts.map((concept) => (
-              <button key={concept.id} onClick={() => setSelectedId(concept.id)}>
-                <span className="status-chip concept">{text.nodeTypes.concept}</span>
-                <strong>{concept.label}</strong>
-                <em>{nodeSubtitle(concept.subtitle) || graphStatusLabel(concept.status, language) || concept.path || text.conceptTag}</em>
-                <code>{graph.edges.filter((edge) => edge.to === concept.id || edge.from === concept.id).length} {text.relationships}</code>
-              </button>
-            ))}
-          </div>
-        </section>
+            <section className="graph-side-section">
+              <div className="graph-section-title">
+                <span>{text.bridgeNodes}</span>
+                <em>{graph.summary.bridgeNodes.length}</em>
+              </div>
+              {graph.summary.bridgeNodes.length === 0 && <p className="empty">{text.noBridgeNodes}</p>}
+              {graph.summary.bridgeNodes.slice(0, 5).map((bridge) => (
+                <button key={bridge.nodeId} className="graph-insight-card" onClick={() => setSelectedId(bridge.nodeId)}>
+                  <strong>{endpointLabel(bridge.nodeId)}</strong>
+                  <em>{text.bridgeDetail(bridge.groupCount, bridge.degree)}</em>
+                </button>
+              ))}
+              {graph.summary.bridgeNodes[0] && (
+                <button className="graph-insight-action" onClick={() => createBridgeResearchTopic(graph.summary.bridgeNodes[0])}>
+                  <Lightbulb size={14} />
+                  {text.createResearchTopic}
+                </button>
+              )}
+            </section>
 
-        <section className="panel">
-          <div className="section-head">
-            <h2>{text.writebackInsightTargets}</h2>
-            <GitCompare size={18} />
-          </div>
-          <div className="graph-list">
-            {writebacks.length === 0 && <p className="empty">{text.noWritebacks}</p>}
-            {writebacks.map((proposal) => (
-              <button key={proposal.proposalId} onClick={() => setSelectedId(proposalNodeId(proposal.proposalId))}>
-                <span className={`status-chip ${proposal.status}`}>{proposal.status}</span>
-                <strong>{proposal.title}</strong>
-                <em>{proposal.targetPath}</em>
-                <code>{proposal.updatedAt}</code>
-              </button>
-            ))}
-          </div>
-        </section>
+            <section className="graph-side-section">
+              <div className="graph-section-title">
+                <span>{text.surprisingConnections}</span>
+                <em>{graph.summary.surprisingConnections.length}</em>
+              </div>
+              {graph.summary.surprisingConnections.length === 0 && <p className="empty">{text.noSurprisingConnections}</p>}
+              {graph.summary.surprisingConnections.slice(0, 5).map((connection) => (
+                <button key={connection.edgeId} className="graph-insight-card" onClick={() => setSelectedId(connection.to)}>
+                  <strong>{endpointLabel(connection.from)} {"->"} {endpointLabel(connection.to)}</strong>
+                  <em>{text.surpriseDetail(connection.score, surpriseReasonLabels(connection.reasons))}</em>
+                </button>
+              ))}
+              {graph.summary.surprisingConnections[0] && (
+                <button className="graph-insight-action" onClick={() => createSurprisingConnectionResearchTopic(graph.summary.surprisingConnections[0])}>
+                  <Lightbulb size={14} />
+                  {text.createResearchTopic}
+                </button>
+              )}
+            </section>
 
-        <section className="panel">
-          <div className="section-head">
-            <h2>{text.graphContract}</h2>
-            <Network size={18} />
-          </div>
-          <div className="graph-contract">
-            <p>{text.sourceToClaim}</p>
-            <p>{text.claimToConcept}</p>
-            <p>{text.claimToReview}</p>
-            <p>{text.wikiLink}</p>
-            <p>{text.sourceOverlap}</p>
-            <p>{text.indirectRelatedContract}</p>
-            <p>{text.bridgeNodeContract}</p>
-            <p>{text.surprisingConnectionContract}</p>
-            <p>{text.proposalToTarget}</p>
-            <p>{text.warningToClaim}</p>
-          </div>
-        </section>
+            <section className="graph-side-section">
+              <div className="graph-section-title">
+                <span>{text.relatedEdges}</span>
+                <em>{relatedEdges.length}</em>
+              </div>
+              {relatedEdges.length === 0 && <p className="empty">{text.noRelatedEdges}</p>}
+              {relatedEdges.slice(0, 8).map((edge) => (
+                <button key={edge.id} className="graph-insight-card" onClick={() => setSelectedId(edge.from === selected?.id ? edge.to : edge.from)}>
+                  <strong>{text.edgeTypes[edge.type]} · {edgeLabel(edge)}</strong>
+                  <em>{endpointLabel(edge.from)} {"->"} {endpointLabel(edge.to)}</em>
+                </button>
+              ))}
+            </section>
+
+            <section className="graph-side-section">
+              <div className="graph-section-title">
+                <span>{text.indirectRelated}</span>
+                <em>{indirectRecommendations.length}</em>
+              </div>
+              {indirectRecommendations.length === 0 && <p className="empty">{text.noIndirectRelated}</p>}
+              {indirectRecommendations.slice(0, 6).map((recommendation) => {
+                const target = nodeById.get(recommendation.nodeId);
+                if (!target) return null;
+                return (
+                  <button key={recommendation.nodeId} className="graph-insight-card" onClick={() => setSelectedId(recommendation.nodeId)}>
+                    <strong>{target.label}</strong>
+                    <em>
+                      {text.relevanceScore(recommendation.score)}
+                      {recommendation.typeAffinity ? ` · ${text.typeAffinity}` : ""}
+                    </em>
+                  </button>
+                );
+              })}
+            </section>
+
+            <section className="graph-side-section">
+              <div className="graph-section-title">
+                <span>{text.evidenceBreaks}</span>
+                <em>{traceabilityWarnings.length}</em>
+              </div>
+              {traceabilityWarnings.length === 0 && <p className="empty">{text.noTraceabilityWarnings}</p>}
+              {traceabilityWarnings.slice(0, 5).map((warning) => (
+                <button key={warning.warningId} className="graph-insight-card warn" onClick={() => setSelectedId(warningNodeId(warning.warningId))}>
+                  <strong>{warning.claimText || warning.claimId}</strong>
+                  <em>{warning.sourcePath || warning.sourceId || text.sourceUnknown}</em>
+                </button>
+              ))}
+            </section>
+
+            <section className="graph-side-section">
+              <div className="graph-section-title">
+                <span>{text.knowledgeGaps}</span>
+                <em>{knowledgeGaps}</em>
+              </div>
+              <p>{knowledgeGapSummary}</p>
+              {readingQualityReportPath && (
+                <button className="graph-insight-action" onClick={() => onOpenPath(resolveVaultPath(readingQualityReportPath))}>
+                  <FolderOpen size={14} />
+                  {text.readingQualityReport}
+                </button>
+              )}
+              {knowledgeGaps > 0 && (
+                <button className="graph-insight-action" onClick={createKnowledgeGapResearchTopic}>
+                  <Lightbulb size={14} />
+                  {text.createResearchTopic}
+                </button>
+              )}
+            </section>
+
+            <section className="graph-side-section">
+              <div className="graph-section-title">
+                <span>{text.graphArtifacts}</span>
+                <em>{graphArtifacts.length}</em>
+              </div>
+              {graphArtifacts.length === 0 && <p className="empty">{text.noGraphArtifacts}</p>}
+              {graphArtifacts.slice(0, 4).map((file) => {
+                const path = graphArtifactPath(vaultPath, file);
+                return (
+                  <button key={file.path} className="graph-insight-card" onClick={() => onOpenVaultItem(path)}>
+                    <strong>{file.title || labelFromPath(path)}</strong>
+                    <em>{path}</em>
+                  </button>
+                );
+              })}
+              {graphArtifacts[0] && (
+                <button className="graph-insight-action" onClick={() => onRevealPath(resolveVaultPath(graphArtifactPath(vaultPath, graphArtifacts[0])))}>
+                  <FolderOpen size={14} />
+                  {text.revealArtifact}
+                </button>
+              )}
+            </section>
+
+            <section className="graph-side-section">
+              <div className="graph-section-title">
+                <span>{text.writebackInsightTargets}</span>
+                <em>{writebacks.length}</em>
+              </div>
+              {writebacks.length === 0 && <p className="empty">{text.noWritebacks}</p>}
+              {writebacks.slice(0, 5).map((proposal) => (
+                <button key={proposal.proposalId} className="graph-insight-card" onClick={() => setSelectedId(proposalNodeId(proposal.proposalId))}>
+                  <strong>{proposal.title}</strong>
+                  <em>{proposal.targetPath}</em>
+                </button>
+              ))}
+            </section>
+          </aside>
+        )}
       </div>
     </section>
   );
