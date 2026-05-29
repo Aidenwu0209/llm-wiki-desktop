@@ -4026,6 +4026,28 @@ body[data-shell-panel-resizing="true"] * {
   left: 10px;
 }
 
+.knowledge-bottom .mini-job {
+  grid-template-columns: minmax(0, 1fr);
+  padding: 8px;
+}
+
+.knowledge-bottom .mini-job > .status-chip:not(.inline) {
+  position: static;
+  justify-self: start;
+}
+
+.knowledge-bottom .mini-job strong,
+.knowledge-bottom .mini-job em,
+.knowledge-bottom .mini-job code {
+  min-width: 0;
+}
+
+.knowledge-bottom .mini-job strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .mini-job strong {
   color: #17201d;
   font-size: 13px;
