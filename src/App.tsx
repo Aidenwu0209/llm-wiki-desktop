@@ -1904,10 +1904,11 @@ function App() {
   const progressDone = jobs.filter((job) => job.status === "succeeded").length;
   const activePageCopy = copy.pages[activePage];
   const pageVisible = (...pages: ShellPage[]) => pages.includes(activePage);
+  const graphWorkspaceMode = activePage === "graph";
   const chatWorkspaceMode = activePage === "chat";
   const shellKnowledgeVisible = activePage !== "settings" && !chatWorkspaceMode;
-  const shellInspectorVisible = activePage !== "settings" && !chatWorkspaceMode && (detailDrawerOpen || researchPanelOpen);
-  const shellStatusHeaderVisible = activePage !== "settings" && !chatWorkspaceMode;
+  const shellInspectorVisible = activePage !== "settings" && !graphWorkspaceMode && !chatWorkspaceMode && (detailDrawerOpen || researchPanelOpen);
+  const shellStatusHeaderVisible = activePage !== "settings" && !graphWorkspaceMode && !chatWorkspaceMode;
   const activeReadingPath = detailSelection.kind === "source" ? detailSelection.file.path : (readingHistory[readingHistoryIndex]?.path || "");
   const navRailToggleLabel = navRailExpanded
     ? (interfaceLanguage === "zh" ? "收起导航" : "Collapse nav")
@@ -3698,6 +3699,7 @@ function App() {
       className={classNames(
         "app-shell",
         activePage !== "settings" && "nashsu-aligned-shell",
+        activePage === "graph" && "graph-mode",
         navRailExpanded && "nav-rail-expanded",
         `interface-${interfaceLanguage}`,
         activePage === "settings" && "settings-mode",
@@ -3900,7 +3902,7 @@ function App() {
               <Languages size={15} />
               <span>{copy.languageToggle}</span>
             </button>
-            {activePage !== "settings" && !chatWorkspaceMode && (
+            {shellStatusHeaderVisible && (
               <button
                 className="sidebar-toggle"
                 type="button"
