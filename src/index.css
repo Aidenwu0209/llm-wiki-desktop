@@ -2298,8 +2298,12 @@ body[data-shell-panel-resizing="true"] * {
 }
 
 .browser.concept-browser {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
   margin-bottom: 12px;
+}
+
+.app-shell.nashsu-aligned-shell.inspector-open .browser.concept-browser {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
 }
 
 .file-column {
@@ -2314,10 +2318,13 @@ body[data-shell-panel-resizing="true"] * {
 
 .file-column button,
 .log-item {
-  display: block;
+  display: grid;
+  align-content: center;
+  gap: 4px;
   width: 100%;
   height: auto;
   min-height: 48px;
+  min-width: 0;
   text-align: left;
   border-color: #d8ded9;
   padding: 8px 10px;
@@ -2332,14 +2339,17 @@ body[data-shell-panel-resizing="true"] * {
 .file-column strong,
 .log-item span {
   display: block;
-  overflow-wrap: anywhere;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 13px;
 }
 
 .file-column span,
 .log-item em {
   display: block;
-  margin-top: 4px;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

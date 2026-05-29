@@ -5067,12 +5067,16 @@ function FileColumn({ title, files, language, onSelect }: { title: string; files
     <div className="file-column">
       <h3>{title}</h3>
       {files.length === 0 && <p className="empty">{resolvedLanguage === "zh" ? "无" : "None"}</p>}
-      {files.map((file) => (
-        <button key={file.path} onClick={() => onSelect(file)}>
-          <strong>{file.title || file.name}</strong>
-          <span>{fileStatusLabel(file, resolvedLanguage)}</span>
-        </button>
-      ))}
+      {files.map((file) => {
+        const label = file.title || file.name;
+        const statusLabel = fileStatusLabel(file, resolvedLanguage);
+        return (
+          <button key={file.path} title={`${label}\n${statusLabel}\n${file.path}`} onClick={() => onSelect(file)}>
+            <strong>{label}</strong>
+            <span>{statusLabel}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }
