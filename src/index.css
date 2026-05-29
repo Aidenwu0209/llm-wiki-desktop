@@ -101,6 +101,20 @@ textarea {
   grid-template-columns: 168px var(--knowledge-sidebar-width, 286px) minmax(0, 1fr);
 }
 
+.app-shell.nashsu-aligned-shell.chat-workspace-mode,
+.app-shell.nashsu-aligned-shell.chat-workspace-mode:not(.inspector-open) {
+  grid-template-columns: 64px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "nav workspace";
+  align-content: stretch;
+  background: #ffffff;
+}
+
+.app-shell.nashsu-aligned-shell.chat-workspace-mode.nav-rail-expanded,
+.app-shell.nashsu-aligned-shell.chat-workspace-mode.nav-rail-expanded:not(.inspector-open) {
+  grid-template-columns: 168px minmax(0, 1fr);
+}
+
 .app-shell.settings-mode {
   grid-template-columns: 64px minmax(0, 1fr);
   grid-template-areas: "nav workspace";
@@ -1385,6 +1399,25 @@ body[data-shell-panel-resizing="true"] * {
 .nashsu-aligned-shell.graph-mode .workspace {
   gap: 8px;
   padding: 10px 12px 12px;
+}
+
+.nashsu-aligned-shell.chat-workspace-mode .workspace {
+  gap: 0;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: #ffffff;
+  padding: 0;
+}
+
+.nashsu-aligned-shell.chat-workspace-mode .icon-sidebar {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+}
+
+.nashsu-aligned-shell.chat-workspace-mode .topbar {
+  display: none;
 }
 
 .nashsu-aligned-shell .topbar {
@@ -8090,5 +8123,475 @@ button.primary:hover:not(:disabled),
 
   .answer-workspace-panel .chat-answer-draft {
     min-height: 260px;
+  }
+}
+
+.wiki-chat-page.chat-search-workbench {
+  display: grid;
+  grid-template-columns: 210px minmax(460px, 1fr) 336px;
+  gap: 0;
+  align-items: stretch;
+  min-height: 0;
+  height: calc(100vh - 224px);
+  overflow: hidden;
+  border: 1px solid #d5ddd8;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 16px 42px rgba(23, 32, 29, 0.08);
+}
+
+.chat-workspace-mode .wiki-chat-page.chat-search-workbench {
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.wiki-chat-sidebar,
+.wiki-chat-main,
+.wiki-chat-references {
+  min-width: 0;
+  min-height: 0;
+}
+
+.wiki-chat-sidebar,
+.wiki-chat-references {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: #fbfcfa;
+  padding: 10px;
+}
+
+.wiki-chat-sidebar {
+  border-right: 1px solid #e1e7e2;
+}
+
+.wiki-chat-references {
+  border-left: 1px solid #e1e7e2;
+}
+
+.wiki-chat-sidebar-head,
+.wiki-chat-pane-title,
+.wiki-chat-provider-bar,
+.wiki-chat-target-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.wiki-chat-sidebar-head {
+  justify-content: space-between;
+  min-height: 34px;
+}
+
+.wiki-chat-sidebar-head h2 {
+  margin: 0;
+  color: #17201d;
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+.wiki-chat-sidebar-head span,
+.wiki-chat-pane-title span,
+.wiki-chat-provider-bar span,
+.wiki-chat-provider-bar em,
+.wiki-chat-target-row span {
+  color: #64706a;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.wiki-chat-icon-button {
+  width: 30px;
+  min-height: 30px;
+  padding: 0;
+}
+
+.wiki-chat-new-chat {
+  min-height: 30px;
+  width: 100%;
+  flex: 1 1 auto;
+  justify-content: center;
+  padding: 0 10px;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.wiki-chat-history,
+.wiki-chat-search-panel,
+.wiki-chat-evidence-map,
+.wiki-chat-selected-result,
+.wiki-chat-model-details,
+.proposal-reference-panel {
+  min-width: 0;
+  border: 1px solid #d8ded9;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.wiki-chat-history,
+.wiki-chat-search-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 8px;
+}
+
+.wiki-chat-history {
+  flex: 1 1 auto;
+}
+
+.wiki-chat-search-panel {
+  flex: 1 1 auto;
+}
+
+.wiki-chat-context-panel {
+  flex: 0 0 auto;
+}
+
+.wiki-chat-context-panel .wiki-chat-result-list {
+  max-height: 300px;
+}
+
+.wiki-chat-pane-title {
+  justify-content: space-between;
+  min-height: 28px;
+  margin-bottom: 7px;
+}
+
+.wiki-chat-pane-title strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: #17201d;
+  font-size: 12px;
+}
+
+.wiki-chat-history-list,
+.wiki-chat-result-list,
+.wiki-chat-reference-list,
+.wiki-chat-references .proposal-ref-list {
+  display: grid;
+  gap: 7px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.wiki-chat-history-list button {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+  height: auto;
+  min-height: 52px;
+  border-color: transparent;
+  background: transparent;
+  padding: 8px;
+  text-align: left;
+}
+
+.wiki-chat-history-list button:hover:not(:disabled),
+.wiki-chat-history-list button.active {
+  border-color: #d8ded9;
+  background: #f4f8f2;
+}
+
+.wiki-chat-history-list span,
+.wiki-chat-result strong {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #17201d;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.wiki-chat-history-list em,
+.wiki-chat-result em {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #64706a;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.wiki-chat-search-controls {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 8px;
+}
+
+.wiki-chat-search-controls label {
+  position: relative;
+  display: block;
+}
+
+.wiki-chat-search-controls label svg {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  color: #64706a;
+}
+
+.wiki-chat-search-controls input {
+  padding-left: 32px;
+}
+
+.wiki-chat-result {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  border: 1px solid #d8ded9;
+  border-radius: 8px;
+  background: #fbfcfa;
+  padding: 9px;
+  cursor: pointer;
+}
+
+.wiki-chat-result.selected {
+  border-color: #245b93;
+  background: #f3f8fb;
+  box-shadow: inset 3px 0 0 #245b93;
+}
+
+.wiki-chat-result > div:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.wiki-chat-result .status-chip {
+  width: fit-content;
+}
+
+.wiki-chat-result p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  color: #40514a;
+  font-size: 12px;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.wiki-chat-result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wiki-chat-result-actions button {
+  min-height: 27px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+.wiki-chat-main {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  background: #ffffff;
+}
+
+.wiki-chat-provider-bar {
+  border-bottom: 1px solid #e1e7e2;
+  background: #fbfcfa;
+  padding: 9px 12px;
+}
+
+.wiki-chat-provider-bar strong {
+  color: #17201d;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.wiki-chat-provider-bar span,
+.wiki-chat-provider-bar em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wiki-chat-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px;
+}
+
+.wiki-chat-message {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  min-width: 0;
+}
+
+.wiki-chat-message.user {
+  flex-direction: row-reverse;
+}
+
+.wiki-chat-avatar {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: #eef2ee;
+  color: #40514a;
+}
+
+.wiki-chat-message.user .wiki-chat-avatar {
+  background: #183850;
+  color: #ffffff;
+}
+
+.wiki-chat-bubble {
+  display: grid;
+  gap: 6px;
+  max-width: min(78%, 760px);
+  min-width: 0;
+  border-radius: 8px;
+  background: #f2f5f0;
+  padding: 10px 12px;
+  color: #26312d;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.wiki-chat-message.user .wiki-chat-bubble {
+  background: #183850;
+  color: #ffffff;
+}
+
+.wiki-chat-message.answer .wiki-chat-bubble {
+  width: min(92%, 880px);
+  max-width: min(92%, 880px);
+}
+
+.wiki-chat-bubble strong,
+.wiki-chat-bubble p,
+.wiki-chat-bubble em {
+  margin: 0;
+}
+
+.wiki-chat-bubble em {
+  color: #755a24;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.wiki-chat-answer-bubble {
+  background: #ffffff;
+  border: 1px solid #d8ded9;
+  padding: 0;
+}
+
+.wiki-chat-answer-bubble .model-answer-status {
+  margin: 10px 10px 0;
+}
+
+.wiki-chat-answer-bubble .chat-answer-draft {
+  border: 0;
+  border-radius: 8px;
+  min-height: 260px;
+  max-height: none;
+  background: #ffffff;
+}
+
+.wiki-chat-composer {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid #e1e7e2;
+  background: #fbfcfa;
+  padding: 10px 12px 12px;
+}
+
+.wiki-chat-composer textarea {
+  min-height: 68px;
+  max-height: 150px;
+  resize: vertical;
+}
+
+.wiki-chat-target-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.wiki-chat-composer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.wiki-chat-composer-actions button {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.wiki-chat-references {
+  overflow: auto;
+}
+
+.wiki-chat-reference-list,
+.wiki-chat-references .proposal-ref-list {
+  max-height: none;
+}
+
+.wiki-chat-model-details {
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+}
+
+.wiki-chat-selected-result {
+  padding: 10px;
+}
+
+@media (max-width: 1360px) {
+  .wiki-chat-page.chat-search-workbench {
+    grid-template-columns: 200px minmax(380px, 1fr) 300px;
+  }
+}
+
+.app-shell.inspector-open .wiki-chat-page.chat-search-workbench {
+  grid-template-columns: minmax(210px, 0.44fr) minmax(330px, 1fr);
+  height: auto;
+  overflow: visible;
+}
+
+.app-shell.inspector-open .wiki-chat-sidebar,
+.app-shell.inspector-open .wiki-chat-main {
+  min-height: 620px;
+}
+
+.app-shell.inspector-open .wiki-chat-references {
+  grid-column: 1 / -1;
+  height: 380px;
+  max-height: 380px;
+  border-top: 1px solid #e1e7e2;
+  border-left: 0;
+}
+
+@media (max-width: 1120px) {
+  .wiki-chat-page.chat-search-workbench {
+    grid-template-columns: minmax(240px, 0.46fr) minmax(380px, 1fr);
+    height: auto;
+    overflow: visible;
+  }
+
+  .wiki-chat-references {
+    grid-column: 1 / -1;
+    border-top: 1px solid #e1e7e2;
+    border-left: 0;
   }
 }
