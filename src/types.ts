@@ -380,10 +380,25 @@ export type LlmProviderCenterSettings = {
 
 export type ProviderAdapterId =
   | "ernie-ai-studio"
-  | "openai-compatible"
-  | "deepseek"
-  | "local-codex"
+  | "anthropic"
   | "local-claude"
+  | "local-codex"
+  | "openai"
+  | "google"
+  | "deepseek"
+  | "groq"
+  | "xai"
+  | "nvidia-nim"
+  | "kimi"
+  | "kimi-cn"
+  | "zhipu"
+  | "minimax-global"
+  | "minimax-cn"
+  | "bailian-coding"
+  | "xiaomi-mimo"
+  | "volcengine-ark"
+  | "ollama-local"
+  | "ollama-cloud"
   | "custom";
 
 export type ProviderAdapterStatus =
