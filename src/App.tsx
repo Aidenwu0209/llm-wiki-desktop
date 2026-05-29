@@ -3682,10 +3682,11 @@ function App() {
       className={classNames(
         "app-shell",
         activePage !== "settings" && "nashsu-aligned-shell",
+        activePage === "graph" && "graph-mode",
         navRailExpanded && "nav-rail-expanded",
         `interface-${interfaceLanguage}`,
         activePage === "settings" && "settings-mode",
-        activePage !== "settings" && (detailDrawerOpen || researchPanelOpen) && "inspector-open",
+        activePage !== "settings" && activePage !== "graph" && (detailDrawerOpen || researchPanelOpen) && "inspector-open",
         dragActive && "drag-active",
       )}
       onDragOver={(event) => {
@@ -3901,7 +3902,7 @@ function App() {
         {error && <pre className="error-box">{error}</pre>}
         {restoreError && <pre className="error-box subtle">{restoreError}</pre>}
 
-        {activePage !== "settings" && (
+        {activePage !== "settings" && activePage !== "graph" && (
           <PageStatusHeader
             title={activePageCopy.title}
             subtitle={activePageCopy.subtitle}
@@ -4607,7 +4608,7 @@ function App() {
         )}
       </section>
 
-      {activePage !== "settings" && (detailDrawerOpen || researchPanelOpen) && (
+      {activePage !== "settings" && activePage !== "graph" && (detailDrawerOpen || researchPanelOpen) && (
         <aside
           className={classNames("preview-sidebar", researchPanelOpen && "research-open", detailDrawerOpen && researchPanelOpen && "split-panels")}
           aria-label={interfaceLanguage === "zh" ? "预览、检查器和深度研究" : "Preview, inspector, and Deep Research"}

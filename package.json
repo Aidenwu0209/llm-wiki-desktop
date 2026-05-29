@@ -29,8 +29,11 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@react-sigma/core": "^5.0.6",
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-dialog": "^2.7.0",
+    "graphology": "^0.26.0",
+    "graphology-layout-forceatlas2": "^0.10.1",
     "katex": "^0.16.47",
     "lucide-react": "^0.468.0",
     "mermaid": "^11.15.0",
@@ -39,7 +42,8 @@
     "react-markdown": "^10.1.0",
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
-    "remark-math": "^6.0.0"
+    "remark-math": "^6.0.0",
+    "sigma": "^3.0.3"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.10.1",
