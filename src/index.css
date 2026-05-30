@@ -96,10 +96,6 @@ textarea {
   background: #f5f6f3;
 }
 
-.app-shell.nav-rail-expanded {
-  --nav-rail-width: 168px;
-}
-
 .app-shell.nashsu-aligned-shell:not(.inspector-open) {
   grid-template-columns: var(--nav-rail-width) var(--knowledge-sidebar-width, 286px) minmax(0, 1fr);
   grid-template-areas: "nav tree workspace";
@@ -119,6 +115,10 @@ textarea {
   grid-template-columns: var(--nav-rail-width) minmax(0, 1fr);
   grid-template-areas: "nav workspace";
   background: #f7f8f5;
+}
+
+.app-shell.nav-rail-expanded {
+  --nav-rail-width: 168px;
 }
 
 .app-shell.nav-rail-expanded .icon-sidebar {
