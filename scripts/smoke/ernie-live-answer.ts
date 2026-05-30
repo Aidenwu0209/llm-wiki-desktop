@@ -400,7 +400,7 @@ function parseProviderAnswer(text: string) {
     const parsed = JSON.parse(candidate);
     return {
       answer: typeof parsed.answer === "string" ? parsed.answer : text,
-      citations: stringArray(parsed.citations).concat(extractCitations(typeof parsed.answer === "string" ? parsed.answer : "")),
+      citations: citationArray(parsed.citations).concat(extractCitations(typeof parsed.answer === "string" ? parsed.answer : "")),
       unsupported_claims: stringArray(parsed.unsupported_claims),
       warnings: stringArray(parsed.warnings),
     };
@@ -412,6 +412,26 @@ function parseProviderAnswer(text: string) {
 function stringArray(value: unknown) {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+function citationArray(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (typeof item === "string") return normalizeCitationId(item);
+      if (item && typeof item === "object") {
+        const record = item as Record<string, unknown>;
+        for (const key of ["evidence_id", "evidenceId", "id"]) {
+          if (typeof record[key] === "string") return normalizeCitationId(record[key]);
+        }
+      }
+      return "";
+    })
+    .filter((item) => item.length > 0);
+}
+
+function normalizeCitationId(value: string) {
+  return value.trim().replace(/^\[+/, "").replace(/\]+$/, "");
 }
 
 function extractCitations(value: string) {
@@ -429,7 +449,7 @@ function resultForQuestion(params: {
   provider: ProviderResponse;
 }) {
   const parsed = parseProviderAnswer(params.provider.answer);
-  const selectedIds = params.evidence.map((item) => item.evidence_id);
+  const selectedIds = Array.from(new Set(params.evidence.map((item) => item.evidence_id)));
   const citations = Array.from(new Set(parsed.citations));
   const covered = params.question.required_evidence_ids.filter((id) => citations.some((citation) => citation === id || citation.includes(id) || id.includes(citation)));
   const warnings = [...parsed.warnings];
@@ -583,9 +603,20 @@ function percent(value: number) {
 }
 
 function renderReport(output: any) {
-  const rows = output.questions.map((item: QuestionResult) => (
-    `| ${item.id} | ${item.status} | ${item.selected_evidence_ids.join(", ") || "none"} | ${item.citations.join(", ") || "none"} | ${item.unsupported_claims.length} | ${item.warnings.join("; ") || "none"} |`
-  )).join("\n");
+  const rows = output.questions.map((item: QuestionResult) => {
+    const cells = [
+      item.id,
+      item.status,
+      formatLatency(item.latency_ms),
+      item.answer,
+      item.selected_evidence_ids.join(", ") || "none",
+      item.citations.join(", ") || "none",
+      item.unsupported_claims.join("; ") || "none",
+      item.warnings.join("; ") || "none",
+      String(item.raw_document_sent),
+    ].map(markdownTableCell);
+    return `| ${cells.join(" | ")} |`;
+  }).join("\n");
   return `# ERNIE Live Evidence Answer Smoke Report
 
 Generated at: ${output.generated_at}
@@ -613,8 +644,8 @@ API key source: \`${output.provider.api_key_env}\`
 
 ## Questions
 
-| Question | Status | Selected evidence ids | Citations | Unsupported claims | Warnings |
-| --- | --- | --- | --- | ---: | --- |
+| Question | Status | Latency | Answer | Selected evidence ids | Citations | Unsupported claims | Warnings | Raw document sent |
+| --- | --- | ---: | --- | --- | --- | --- | --- | --- |
 ${rows}
 
 ## Known Limitations
@@ -623,6 +654,18 @@ ${rows}
 - This smoke does not create, apply, or approve writeback proposals.
 - Public CI should run only the no-key and mock-provider contract path; live ERNIE requires a local \`${ERNIE_AI_STUDIO_API_KEY_ENV}\`.
 `;
+}
+
+function formatLatency(value: number | null) {
+  return typeof value === "number" ? `${value} ms` : "n/a";
+}
+
+function markdownTableCell(value: string) {
+  return value
+    .replace(/\s+/g, " ")
+    .replace(/\|/g, "\\|")
+    .trim()
+    .slice(0, 700) || "none";
 }
 
 async function runSelfTest() {
@@ -667,6 +710,7 @@ async function runSelfTest() {
   assert(mocked.output.metrics.unsupported_claim_count >= 1, "mock provider should surface unsupported claims");
   assert(mocked.output.questions.some((item: QuestionResult) => item.citations.includes("demo:p2:evidence-map")), "mock provider should surface citations");
   assert(mocked.output.questions.find((item: QuestionResult) => item.kind === "no_evidence")?.status === "refused", "Q3 must refuse no-evidence questions");
+  assert(citationArray(["[demo:p2:evidence-map]", { evidence_id: "demo:p1:artifact" }]).join(",") === "demo:p2:evidence-map,demo:p1:artifact", "citation parser should normalize bracketed ids and object ids");
   const customEnv = "CUSTOM_AI_STUDIO_API_KEY";
   const previousCustomEnv = process.env[customEnv];
   process.env[customEnv] = "custom-secret-token";
