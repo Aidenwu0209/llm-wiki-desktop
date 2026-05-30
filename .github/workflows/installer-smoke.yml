@@ -73,6 +73,7 @@ jobs:
           }
 
           $programFilesX86 = ${env:ProgramFiles(x86)}
+          $expectedExeNames = @("LLM Wiki.exe", "llm-wiki-desktop.exe")
           $candidateRoots = @()
           $exe = $null
 
@@ -96,12 +97,18 @@ jobs:
                 Select-Object FullName, Length
             }
 
-            $exe = $candidateRoots |
-              ForEach-Object {
-                Get-ChildItem -Path $_ -Recurse -Filter "LLM Wiki.exe" -File -ErrorAction SilentlyContinue
-              } |
-              Sort-Object FullName |
-              Select-Object -First 1
+            foreach ($expectedExeName in $expectedExeNames) {
+              $exe = $candidateRoots |
+                ForEach-Object {
+                  Get-ChildItem -Path $_ -Recurse -Filter $expectedExeName -File -ErrorAction SilentlyContinue
+                } |
+                Sort-Object FullName |
+                Select-Object -First 1
+
+              if ($exe) {
+                break
+              }
+            }
 
             if ($exe) {
               break
@@ -110,7 +117,7 @@ jobs:
           }
 
           if (-not $exe) {
-            throw "Installed application executable not found under known installer roots."
+            throw "Installed application executable not found under known installer roots. Expected one of: $($expectedExeNames -join ', ')"
           }
           Write-Host "Installed executable: $($exe.FullName)"
         shell: pwsh
