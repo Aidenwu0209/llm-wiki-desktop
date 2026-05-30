@@ -65,34 +65,49 @@ jobs:
             Remove-Item -Recurse -Force $installDir
           }
           New-Item -ItemType Directory -Force -Path $installDir | Out-Null
-          $process = Start-Process -FilePath ".\installer.exe" -ArgumentList "/S", "/D=$installDir" -Wait -PassThru
+          $argumentLine = "/S /D=$installDir"
+          Write-Host "Running installer with arguments: $argumentLine"
+          $process = Start-Process -FilePath ".\installer.exe" -ArgumentList $argumentLine -Wait -PassThru
           if ($process.ExitCode -ne 0) {
             throw "Installer exited with code $($process.ExitCode)"
           }
 
           $programFilesX86 = ${env:ProgramFiles(x86)}
-          $candidateRoots = @(
-            $installDir,
-            (Join-Path $env:LOCALAPPDATA "Programs\LLM Wiki"),
-            (Join-Path $env:LOCALAPPDATA "Programs"),
-            (Join-Path $env:LOCALAPPDATA "LLM Wiki"),
-            (Join-Path $env:ProgramFiles "LLM Wiki"),
-            $(if ($programFilesX86) { Join-Path $programFilesX86 "LLM Wiki" })
-          ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+          $candidateRoots = @()
+          $exe = $null
 
-          foreach ($root in $candidateRoots) {
-            Write-Host "Inspecting install root: $root"
-            Get-ChildItem -Path $root -Depth 3 -ErrorAction SilentlyContinue |
-              Where-Object { $_.Name -like "*LLM*" -or $_.Name -like "*Wiki*" } |
-              Select-Object FullName, Length
+          for ($attempt = 1; $attempt -le 12; $attempt++) {
+            Write-Host "Install inspection attempt $attempt"
+            $candidateRoots = @(
+              $installDir,
+              (Join-Path $env:LOCALAPPDATA "Programs\LLM Wiki"),
+              (Join-Path $env:LOCALAPPDATA "Programs"),
+              (Join-Path $env:LOCALAPPDATA "LLM Wiki"),
+              $env:LOCALAPPDATA,
+              $env:APPDATA,
+              (Join-Path $env:ProgramFiles "LLM Wiki"),
+              $(if ($programFilesX86) { Join-Path $programFilesX86 "LLM Wiki" })
+            ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+
+            foreach ($root in $candidateRoots) {
+              Write-Host "Inspecting install root: $root"
+              Get-ChildItem -Path $root -Depth 3 -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -like "*LLM*" -or $_.Name -like "*Wiki*" } |
+                Select-Object FullName, Length
+            }
+
+            $exe = $candidateRoots |
+              ForEach-Object {
+                Get-ChildItem -Path $_ -Recurse -Filter "LLM Wiki.exe" -File -ErrorAction SilentlyContinue
+              } |
+              Sort-Object FullName |
+              Select-Object -First 1
+
+            if ($exe) {
+              break
+            }
+            Start-Sleep -Seconds 5
           }
-
-          $exe = $candidateRoots |
-            ForEach-Object {
-              Get-ChildItem -Path $_ -Recurse -Filter "LLM Wiki.exe" -File -ErrorAction SilentlyContinue
-            } |
-            Sort-Object FullName |
-            Select-Object -First 1
 
           if (-not $exe) {
             throw "Installed application executable not found under known installer roots."
