@@ -1,140 +1,141 @@
-# PaddleOCR-VL-1.5 Real Parse Run Report
+# PaddleOCR-VL Live Parse Run Report
 
 ## Purpose
 
-Add a reproducible, optional live OCR smoke path for PaddleOCR-VL-1.5 so maintainers can prove that a public PDF or image sample produces real parser artifacts that satisfy the desktop artifact contract.
+Record a real PaddleOCR hosted OCR run against a DeepSeek PDF sample and prove that the desktop live smoke adapter produces the required artifact contract:
 
-This report is intentionally not a dry-run success record. Live run not executed in this PR; script and report template added. Maintainer must run with the configured PaddleOCR API key environment variable, defaulting to `PADDLEOCR_API_KEY`.
+```text
+combined.md
+ocr-output.json
+chunks.jsonl
+manifest.json
+```
+
+This is a live run, not a fixture or dry run. It uses the maintainer-provided endpoint and API key through environment variables only; the key value is not written to this report or the generated artifacts.
+
+Related issue: https://github.com/Aidenwu0209/llm-wiki-desktop/issues/210
 
 ## Repository State
 
-- Commit before this change: `968315acee7ac5b6a649a33480d1e2d4c20c75b5`
-- Branch during implementation: `benchmark/artifact-manifest-contract-summary`
-- Report status: `template_added_not_live_executed`
+- Commit before this change: `7b7986b875be91f439b7b27a32ca22ce2574ec05`
+- Branch during implementation: `wu/paddleocr-vl16-live-run-20260530`
+- Report status: `live_executed`
 
 ## Run Environment
 
-Fill after the live smoke:
-
 | Field | Value |
 | --- | --- |
-| OS | `<macOS / Windows / Linux version>` |
-| Node.js | `<node --version>` |
-| npm | `<npm --version>` |
-| Network | `<online / restricted>` |
-| PaddleOCR endpoint host | `<host only, no path query or token>` |
-| Model | `<OPEN_LLM_WIKI_LAYOUT_MODEL or paddleocr-vl-1.5>` |
+| OS | macOS 26.4, build 25E246 |
+| Node.js | `v22.22.2` |
+| npm | `10.9.7` |
+| Network | online |
+| PaddleOCR endpoint host | `paddleocr.aistudio-app.com` |
+| Model | `PaddleOCR-VL-1.6` |
+| API key env var | `PADDLEOCR_API_KEY` |
 
 ## Input Sample
 
-Use a public sample only. For the local DeepSeek validation workspace, one acceptable input is a PDF from:
+The local DeepSeek corpus contained 22 PDFs. This live smoke used one representative PDF from that corpus:
 
 ```text
-../deepseek_paper/
+deepseek_paper/DeepSeek-OCR_2510.18234.pdf
 ```
 
-Example command path:
-
-```bash
-../deepseek_paper/DeepSeek-OCR_2510.18234.pdf
-```
-
-Do not move, rename, overwrite, or commit files from `deepseek_paper/`.
-
-## Environment Variables
-
-The live smoke script reads these names only:
-
-```bash
-PADDLEOCR_API_KEY
-PADDLEOCR_API_KEY_ENV
-OPEN_LLM_WIKI_LAYOUT_ENDPOINT
-OPEN_LLM_WIKI_LAYOUT_MODEL
-```
-
-`PADDLEOCR_API_KEY_ENV` is optional. When unset, the script reads the key from `PADDLEOCR_API_KEY`. When set, it must contain an environment variable name such as `MY_PADDLEOCR_KEY`; the key value is then read from that variable. The same override can be passed with `--api-key-env-var`.
-
-Do not paste values into this report, README files, issue comments, screenshots, logs, or PR descriptions.
+The raw PDF was not modified, moved, renamed, or committed.
 
 ## Live Run Command
 
 ```bash
-export OPEN_LLM_WIKI_LAYOUT_ENDPOINT="<paddleocr job endpoint>"
-export OPEN_LLM_WIKI_LAYOUT_MODEL="paddleocr-vl-1.5"
-read -rsp "PADDLEOCR_API_KEY: " PADDLEOCR_API_KEY
-export PADDLEOCR_API_KEY
+export OPEN_LLM_WIKI_LAYOUT_ENDPOINT="https://paddleocr.aistudio-app.com/api/v2/ocr/jobs"
+export OPEN_LLM_WIKI_LAYOUT_MODEL="PaddleOCR-VL-1.6"
+read -rs PADDLEOCR_API_KEY
 npm run ocr:live-smoke -- \
-  --input ../deepseek_paper/DeepSeek-OCR_2510.18234.pdf \
-  --out artifacts/smoke/paddleocr-vl15/
+  --input "<LLM_WIKI_WORKSPACE>/deepseek_paper/DeepSeek-OCR_2510.18234.pdf" \
+  --out "<LLM_WIKI_WORKSPACE>/runs/20260530-150403-paddleocr-vl-artifacts/paddleocr-vl16/DeepSeek-OCR_2510.18234" \
+  --timeout-ms 600000 \
+  --poll-interval-ms 5000
 ```
 
-Custom key env example:
+## Artifact Output
 
-```bash
-export PADDLEOCR_API_KEY_ENV="MY_PADDLEOCR_KEY"
-read -rsp "MY_PADDLEOCR_KEY: " MY_PADDLEOCR_KEY
-export MY_PADDLEOCR_KEY
-npm run ocr:live-smoke -- \
-  --api-key-env-var MY_PADDLEOCR_KEY \
-  --input ../deepseek_paper/DeepSeek-OCR_2510.18234.pdf \
-  --out artifacts/smoke/paddleocr-vl15/
-```
-
-If the service requires a newer model label, set `OPEN_LLM_WIKI_LAYOUT_MODEL` to that value before running. The script records the selected model in `manifest.json`.
-
-## Expected Output Files
-
-The live smoke must produce all of these files only after a real service response:
+Local-only artifact directory:
 
 ```text
-artifacts/smoke/paddleocr-vl15/combined.md
-artifacts/smoke/paddleocr-vl15/ocr-output.json
-artifacts/smoke/paddleocr-vl15/chunks.jsonl
-artifacts/smoke/paddleocr-vl15/manifest.json
+<LLM_WIKI_WORKSPACE>/runs/20260530-150403-paddleocr-vl-artifacts/paddleocr-vl16/DeepSeek-OCR_2510.18234/
 ```
 
-If the configured key environment variable or `OPEN_LLM_WIKI_LAYOUT_ENDPOINT` is missing, the script exits with `missing_key` or `missing_endpoint` and must not generate a fake success manifest.
+Generated files:
+
+```text
+combined.md
+ocr-output.json
+chunks.jsonl
+manifest.json
+```
+
+Artifact sizes from the final run:
+
+| File | Lines | Bytes |
+| --- | ---: | ---: |
+| `combined.md` | 581 | 83068 |
+| `ocr-output.json` | 16030 | 603433 |
+| `chunks.jsonl` | 22 | 86236 |
+| `manifest.json` | 25 | 847 |
 
 ## Manifest Summary
 
-Fill after the live smoke:
-
 | Field | Value |
 | --- | --- |
-| `source_id` | `<from manifest>` |
-| `source_path` | `<redacted if needed>` |
-| `source_sha256` | `<sha256>` |
-| `artifact_sha256` | `<sha256>` |
-| `parser` | `<parser>` |
-| `parser_model` | `<model>` |
-| `parser_version` | `<version or unreported>` |
-| `api_key_env_var` | `<configured key env var name, not the key value>` |
-| `page_count` | `<number>` |
-| `chunk_count` | `<number>` |
-| `latency_ms` | `<number>` |
-| `limitations` | `<array>` |
-| `external_upload` | `<true for hosted endpoint, false for localhost>` |
-| `endpoint_host` | `<host only>` |
+| `parser` | `paddleocr-vl15-live-smoke` |
+| `parser_model` | `PaddleOCR-VL-1.6` |
+| `parser_version` | `unreported` |
+| `api_key_env_var` | `PADDLEOCR_API_KEY` |
+| `source_path` | `../../deepseek_paper/DeepSeek-OCR_2510.18234.pdf` |
+| `source_sha256` | `a7297788968f8ad9ed21bcd273110814e4889efbbc99bfea86dca12205797a90` |
+| `artifact_sha256` | `c8fe949b9551d0010a703532373342fcf6aa75cd37dd85f0b17774af10405917` |
+| `page_count` | `22` |
+| `chunk_count` | `22` |
+| `latency_ms` | `13706` |
+| `external_upload` | `true` |
+| `endpoint_host` | `paddleocr.aistudio-app.com` |
+| `limitations` | `parser_version_unreported_by_service`, `markdown_url_unreported_by_service` |
+
+The artifact hash was recomputed from `combined.md`, `ocr-output.json`, and `chunks.jsonl` and matched `manifest.json`.
+
+## Adapter Fix Found During The Run
+
+The first live attempt exposed a contract bug in the smoke adapter: the initial PaddleOCR API response returned only `data.jobId`. The adapter treated that as a completed response instead of polling `/jobs/{jobId}`, which produced placeholder Markdown and a false-looking success manifest.
+
+The fix makes a job-id-only response pending, polls until the async job returns result URLs, downloads the JSON result, and then generates `combined.md`, `ocr-output.json`, `chunks.jsonl`, and `manifest.json` from the actual OCR output.
+
+## Validation
+
+```bash
+npm run test:ocr-live-contract
+npm run typecheck
+npm run ocr:live-smoke -- --validate-manifest "<artifact-dir>/manifest.json"
+```
+
+Results:
+
+```text
+test:ocr-live-contract passed: 10 tests
+typecheck passed after npm ci refreshed this worktree's dependencies
+manifest_valid
+```
+
+Secret scan for the final artifact directory found no raw API key, bearer token, unredacted signature query, `access_token=`, or `api_key=` strings.
 
 ## Raw Document Upload
 
-- Live run in this PR: `no`
-- Raw document uploaded in this PR: `no`
-- Expected behavior when running against hosted PaddleOCR: `external_upload: true`
-- Expected behavior when running against localhost: `external_upload: false`
+- Live run in this PR: `yes`
+- Raw document uploaded in this PR: `yes`
+- Upload target: `paddleocr.aistudio-app.com`
+- Approval basis: maintainer supplied the PaddleOCR endpoint, token, and model for this run.
+- Committed artifacts: `no`; generated OCR artifacts remain local-only under `runs/`.
 
-The script does not upload anything until the configured key environment variable, `OPEN_LLM_WIKI_LAYOUT_ENDPOINT`, `--input`, and `--out` are all present.
+## Known Limits
 
-## Key Handling
-
-- The API key is read from `PADDLEOCR_API_KEY` by default, or from the variable named by `PADDLEOCR_API_KEY_ENV` / `--api-key-env-var`.
-- The key is passed only in request headers for the live smoke process.
-- The script redacts bearer tokens, known secret values, and token-like URL query parameters from diagnostics and `ocr-output.json`.
-- The manifest records only `endpoint_host`, not the full endpoint URL.
-
-## Failure Items And Known Limits
-
-- Live OCR was not executed by this PR because the key was not available as a process environment variable during implementation.
-- The script supports a common multipart job API and polling contract; maintainers should update only this smoke adapter if the deployed PaddleOCR endpoint uses a different wire format.
-- `parser_version` is recorded as `unreported` when the service response does not expose a version.
-- Generated `artifacts/smoke/**` evidence is local smoke output and should not be committed unless reviewed for sensitive content.
+- This live smoke validates one DeepSeek PDF sample, not the full 22-PDF corpus.
+- The provider did not report `parser_version`.
+- The provider returned `jsonUrl` but not `markdownUrl`; `combined.md` was assembled from Markdown text inside the downloaded JSONL result.

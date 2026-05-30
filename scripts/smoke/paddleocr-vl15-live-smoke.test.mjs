@@ -5,7 +5,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { endpointHost, normalizeEnvVarName, redactText, resolveApiKeyEnvVar, validateLiveManifest } from "./paddleocr-vl15-live-smoke.mjs";
+import { detectResultUrls, endpointHost, isPendingJob, normalizeEnvVarName, redactText, resolveApiKeyEnvVar, validateLiveManifest } from "./paddleocr-vl15-live-smoke.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../..");
@@ -45,9 +45,27 @@ test("endpoint_host keeps only host and port", () => {
 
 test("redaction removes provider secrets from diagnostic text", () => {
   const secret = "abc123";
-  const redacted = redactText(`Authorization: Bearer ${secret} and ${"token"}=secret-value`, [secret]);
+  const redacted = redactText(`Authorization: Bearer ${secret} and ${"token"}=secret-value https://example.com/result.json?signature=abc`, [secret]);
   assert.doesNotMatch(redacted, /abc123|secret-value/);
+  assert.doesNotMatch(redacted, /signature=abc/);
   assert.match(redacted, /\[redacted\]/);
+});
+
+test("PaddleOCR job result URLs are detected from official async response shape", () => {
+  const urls = detectResultUrls({
+    data: {
+      resultUrl: {
+        jsonUrl: "https://example.com/result.json?signature=abc",
+        markdownUrl: "https://example.com/result.md?signature=abc",
+      },
+    },
+  });
+  assert.equal(urls.jsonUrl, "https://example.com/result.json?signature=abc");
+  assert.equal(urls.markdownUrl, "https://example.com/result.md?signature=abc");
+});
+
+test("initial PaddleOCR job id response is treated as pending", () => {
+  assert.equal(isPendingJob({ code: 0, msg: "Success", data: { jobId: "54105445113155584" } }), true);
 });
 
 test("custom API key environment variable name is supported", () => {
