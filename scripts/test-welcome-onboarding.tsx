@@ -71,7 +71,7 @@ for (const text of [
 
 for (const text of [
   "OCR + ERNIE Evidence Flow",
-  "Parse with PaddleOCR-VL-1.5",
+  "Use PaddleOCR-VL Document Parsing Skill",
   "Evidence Map",
   "ERNIE Answer",
   "Writeback Proposal",
@@ -81,7 +81,7 @@ for (const text of [
 
 for (const text of [
   "OCR + ERNIE 证据工作流",
-  "使用 PaddleOCR-VL-1.5 解析",
+  "使用 PaddleOCR-VL 文档解析技能",
   "文心一言回答",
   "写回提案",
 ]) {

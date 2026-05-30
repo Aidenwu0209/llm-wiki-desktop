@@ -93,7 +93,7 @@ const settingsNav: Array<{ id: SettingsSection; label: string; icon: typeof Sett
   { id: "llm", label: "LLM Models", icon: Bot },
   { id: "embeddings", label: "Embeddings", icon: Database },
   { id: "captioning", label: "Image Captioning", icon: Image },
-  { id: "ocr-parser", label: "OCR Parser", icon: FileText },
+  { id: "ocr-parser", label: "PaddleOCR-VL Document Parsing Skill", icon: FileText },
   { id: "web-search", label: "Web Search", icon: Search },
   { id: "network", label: "Network", icon: Network },
   { id: "agent-api", label: "Agent API", icon: TerminalSquare },
@@ -113,7 +113,7 @@ const settingsCopy = {
       llm: "大语言模型",
       embeddings: "向量模型",
       captioning: "图像描述",
-      "ocr-parser": "OCR 解析器",
+      "ocr-parser": "PaddleOCR-VL 文档解析技能",
       "web-search": "网页搜索",
       network: "网络",
       "agent-api": "Agent API",
@@ -189,16 +189,16 @@ const settingsCopy = {
     blocked: "已阻止",
     allowCloudParser: "允许 layout-api 使用云解析器",
     ocrProvider: "OCR Provider",
-    ocrTitle: "OCR 解析器",
-    ocrSubtitle: "配置 PaddleOCR-VL-1.5 的服务地址、模型和 API key 环境变量。真实 parse 会把 endpoint 作为 runtime `--api-url` 参数传入，并通过子进程环境覆盖传递 token / model；桌面端不会保存 key 明文。PDF / 图片默认优先使用该 parser；未配置时 ingest plan 会明确阻塞，不会上传 raw document。",
-    ocrEnable: "启用 PaddleOCR-VL-1.5 配置",
+    ocrTitle: "PaddleOCR-VL 文档解析技能",
+    ocrSubtitle: "配置 PaddleOCR-VL 文档解析技能的服务地址、模型和 API key 环境变量。真实 parse 会把 endpoint 作为 runtime `--api-url` 参数传入，并通过子进程环境覆盖传递 token / model；桌面端不会保存 key 明文。PDF / 图片默认优先使用该 parser；未配置时 ingest plan 会明确阻塞，不会上传 raw document。",
+    ocrEnable: "启用 PaddleOCR-VL 文档解析技能",
     ocrEndpoint: "Endpoint / Service URL",
     ocrEndpointPlaceholder: "https://your-paddleocr-service.example.com/v1",
     ocrModel: "模型",
     ocrStatus: "状态",
     testParser: "测试解析器",
     dryRun: "Dry run",
-    noRawUpload: "Test parser 只验证配置和 key 可见性，不上传 raw document，也不会写回知识库。真实解析只会在启用 OCR Parser、配置 endpoint 且进程可见所选 API key 环境变量后运行，并由 runtime 生成可校验的 artifact contract 元数据。",
+    noRawUpload: "Test parser 只验证配置和 key 可见性，不上传 raw document，也不会写回知识库。真实解析只会在启用 PaddleOCR-VL 文档解析技能、配置 endpoint 且进程可见所选 API key 环境变量后运行，并由 runtime 生成可校验的 artifact contract 元数据。",
     statusMissingKey: "missing_key",
     statusMissingEndpoint: "missing_endpoint",
     statusReady: "ready",
@@ -276,16 +276,16 @@ const settingsCopy = {
     blocked: "blocked",
     allowCloudParser: "Allow cloud parser for layout-api",
     ocrProvider: "OCR provider",
-    ocrTitle: "OCR Parser",
-    ocrSubtitle: "Configure the PaddleOCR-VL-1.5 service URL, model, and API key environment variable. Real parse passes the endpoint as the runtime `--api-url` argument and passes token / model through child-process environment overrides; the desktop app never stores the key value. PDF / image parsing defaults to this parser; the ingest plan blocks clearly until it is configured and never uploads raw documents while unconfigured.",
-    ocrEnable: "Enable PaddleOCR-VL-1.5 config",
+    ocrTitle: "PaddleOCR-VL Document Parsing Skill",
+    ocrSubtitle: "Configure the PaddleOCR-VL document parsing skill service URL, model, and API key environment variable. Real parse passes the endpoint as the runtime `--api-url` argument and passes token / model through child-process environment overrides; the desktop app never stores the key value. PDF / image parsing defaults to this parser; the ingest plan blocks clearly until it is configured and never uploads raw documents while unconfigured.",
+    ocrEnable: "Enable PaddleOCR-VL Document Parsing Skill",
     ocrEndpoint: "Endpoint / Service URL",
     ocrEndpointPlaceholder: "https://your-paddleocr-service.example.com/v1",
     ocrModel: "Model",
     ocrStatus: "Status",
     testParser: "Test parser",
     dryRun: "Dry run",
-    noRawUpload: "Test parser only validates config and key visibility. It does not upload raw documents or write back to the vault. Real parsing runs only after OCR Parser is enabled, an endpoint is configured, and the selected API key environment variable is visible to the desktop process, then the runtime must emit verifiable artifact-contract metadata.",
+    noRawUpload: "Test parser only validates config and key visibility. It does not upload raw documents or write back to the vault. Real parsing runs only after PaddleOCR-VL Document Parsing Skill is enabled, an endpoint is configured, and the selected API key environment variable is visible to the desktop process, then the runtime must emit verifiable artifact-contract metadata.",
     statusMissingKey: "missing_key",
     statusMissingEndpoint: "missing_endpoint",
     statusReady: "ready",
@@ -933,7 +933,7 @@ export function RuntimeSettingsPanel({
       <label className="field-label">
         {text.defaultPdfParser}
         <select value={settings.defaultPdfParser} onChange={(event) => updateSettings({ defaultPdfParser: event.target.value })}>
-          <option value={PADDLEOCR_VL15_PROVIDER_ID}>PaddleOCR-VL-1.5 / OCR-first</option>
+          <option value={PADDLEOCR_VL15_PROVIDER_ID}>PaddleOCR-VL Document Parsing Skill / OCR-first</option>
           <option value="auto">auto / local-first</option>
           <option value="local-text">local-text</option>
           <option value="layout-api">layout-api</option>
@@ -943,11 +943,11 @@ export function RuntimeSettingsPanel({
         <div className={ocrParser.enabled ? "settings-notice" : "settings-notice danger"}>
           {ocrParser.enabled
             ? (isZh
-              ? `PaddleOCR 会使用 OCR Parser 分区的 endpoint 和 ${ocrParser.apiKeyEnvVar || PADDLEOCR_VL15_API_KEY_ENV}；未通过配置检查时 ingest plan 会保持阻塞。`
-              : `PaddleOCR uses the endpoint and ${ocrParser.apiKeyEnvVar || PADDLEOCR_VL15_API_KEY_ENV} from the OCR Parser section; the ingest plan remains blocked until the config is checkable.`)
+              ? `PaddleOCR 会使用 PaddleOCR-VL 文档解析技能分区的 endpoint 和 ${ocrParser.apiKeyEnvVar || PADDLEOCR_VL15_API_KEY_ENV}；未通过配置检查时 ingest plan 会保持阻塞。`
+              : `PaddleOCR uses the endpoint and ${ocrParser.apiKeyEnvVar || PADDLEOCR_VL15_API_KEY_ENV} from the PaddleOCR-VL Document Parsing Skill section; the ingest plan remains blocked until the config is checkable.`)
             : (isZh
-              ? "已选择 PaddleOCR 默认解析器，但 OCR Parser 还未启用。请到 OCR Parser 分区配置，或显式切回 auto/local-text。"
-              : "PaddleOCR is selected as the default parser, but OCR Parser is not enabled. Configure OCR Parser or explicitly switch back to auto/local-text.")}
+              ? "已选择 PaddleOCR 默认解析器，但 PaddleOCR-VL 文档解析技能还未启用。请到 PaddleOCR-VL 文档解析技能分区配置，或显式切回 auto/local-text。"
+              : "PaddleOCR is selected as the default parser, but PaddleOCR-VL Document Parsing Skill is not enabled. Configure PaddleOCR-VL Document Parsing Skill or explicitly switch back to auto/local-text.")}
         </div>
       )}
       <div className={cloudParserBlocked ? "settings-notice danger" : "settings-notice"}>

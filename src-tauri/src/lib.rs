@@ -26,7 +26,7 @@ const ERNIE_AI_STUDIO_DEFAULT_MODEL: &str = "ernie-5.1";
 const ERNIE_AI_STUDIO_FALLBACK_MODELS: [&str; 2] = ["ernie-4.0-turbo-128k", "ernie-3.5-8k"];
 const PADDLEOCR_VL15_PROVIDER_ID: &str = "paddleocr-vl15";
 const PADDLEOCR_VL15_API_KEY_ENV: &str = "PADDLEOCR_API_KEY";
-const PADDLEOCR_VL15_DEFAULT_MODEL: &str = "PaddleOCR-VL-1.5";
+const PADDLEOCR_VL15_DEFAULT_MODEL: &str = "PaddleOCR-VL-1.6";
 const PADDLEOCR_LAYOUT_TOKEN_ENV: &str = "OPEN_LLM_WIKI_LAYOUT_TOKEN";
 const PADDLEOCR_LAYOUT_MODEL_ENV: &str = "OPEN_LLM_WIKI_LAYOUT_MODEL";
 const PADDLEOCR_LAYOUT_ENDPOINT_ENV: &str = "OPEN_LLM_WIKI_LAYOUT_ENDPOINT";
@@ -7205,7 +7205,7 @@ fn paddleocr_config_state(settings: &DesktopSettings) -> Result<PaddleOcrConfigS
         return Ok(PaddleOcrConfigState {
             ready: false,
             endpoint,
-            message: "PaddleOCR-VL-1.5 is selected but OCR Parser is disabled in Settings"
+            message: "PaddleOCR-VL Document Parsing Skill is selected but disabled in Settings"
                 .to_string(),
         });
     }
@@ -7213,7 +7213,7 @@ fn paddleocr_config_state(settings: &DesktopSettings) -> Result<PaddleOcrConfigS
         return Ok(PaddleOcrConfigState {
             ready: false,
             endpoint,
-            message: "PaddleOCR-VL-1.5 is selected but no service URL is configured".to_string(),
+            message: "PaddleOCR-VL Document Parsing Skill is selected but no service URL is configured".to_string(),
         });
     }
     if read_llm_api_key(Some(&ocr.api_key_env_var))?.is_none() {
@@ -7221,7 +7221,7 @@ fn paddleocr_config_state(settings: &DesktopSettings) -> Result<PaddleOcrConfigS
             ready: false,
             endpoint,
             message: format!(
-                "PaddleOCR-VL-1.5 is selected but {} is not visible to this desktop process",
+                "PaddleOCR-VL Document Parsing Skill is selected but {} is not visible to this desktop process",
                 ocr.api_key_env_var
             ),
         });
@@ -7229,7 +7229,7 @@ fn paddleocr_config_state(settings: &DesktopSettings) -> Result<PaddleOcrConfigS
     Ok(PaddleOcrConfigState {
         ready: true,
         endpoint,
-        message: "PaddleOCR-VL-1.5 parser configuration is ready".to_string(),
+        message: "PaddleOCR-VL Document Parsing Skill configuration is ready".to_string(),
     })
 }
 
@@ -7237,7 +7237,7 @@ fn paddleocr_runtime_config(settings: &DesktopSettings) -> Result<PaddleOcrRunti
     let state = paddleocr_config_state(settings)?;
     if !state.ready {
         return Err(format!(
-            "{}. Open Settings -> OCR Parser, enable PaddleOCR-VL-1.5, set the service URL, and expose {} before parsing.",
+            "{}. Open Settings -> PaddleOCR-VL Document Parsing Skill, enable it, set the service URL, and expose {} before parsing.",
             state.message, settings.ocr_parser.api_key_env_var
         ));
     }
@@ -7269,10 +7269,10 @@ fn parser_plan_for_source(
         if state.ready {
             return Ok(Some(SourceParserPlan {
                 reason:
-                    "PDF/image requires a PaddleOCR-VL-1.5 artifact before corpus ingest can run"
+                    "PDF/image requires a PaddleOCR-VL Document Parsing Skill artifact before corpus ingest can run"
                         .to_string(),
                 parser_hint: format!(
-                    "{} # PaddleOCR-VL-1.5 via Settings -> OCR Parser; model: {}; token source: {}",
+                    "{} # PaddleOCR-VL Document Parsing Skill via Settings; model: {}; token source: {}",
                     runtime_parser_hint_for_source(
                         source,
                         artifact,
@@ -7282,7 +7282,7 @@ fn parser_plan_for_source(
                     paddleocr_model(&settings.ocr_parser.model),
                     settings.ocr_parser.api_key_env_var
                 ),
-                next_action_label: "Parse with PaddleOCR-VL-1.5, then run the ingest pipeline"
+                next_action_label: "Parse with PaddleOCR-VL Document Parsing Skill, then run the ingest pipeline"
                     .to_string(),
                 current_state: None,
                 uses_network: true,
@@ -7291,11 +7291,11 @@ fn parser_plan_for_source(
         return Ok(Some(SourceParserPlan {
             reason: state.message,
             parser_hint: format!(
-                "Settings -> OCR Parser: enable PaddleOCR-VL-1.5, set a service URL, and expose {}; or choose auto/local-text as an explicit fallback",
+                "Settings -> PaddleOCR-VL Document Parsing Skill: enable it, set a service URL, and expose {}; or choose auto/local-text as an explicit fallback",
                 settings.ocr_parser.api_key_env_var
             ),
             next_action_label:
-                "Configure PaddleOCR-VL-1.5 before parsing, or choose an explicit local fallback parser"
+                "Configure PaddleOCR-VL Document Parsing Skill before parsing, or choose an explicit local fallback parser"
                     .to_string(),
             current_state: Some("paddleocr_config_required".to_string()),
             uses_network: false,
@@ -14271,7 +14271,7 @@ fn parse_pdf_artifacts(
         }
         if !parser_supports_source(&selected_parser, &source) {
             return Err(format!(
-                "selected parser '{}' cannot parse {}; choose PaddleOCR-VL-1.5 or layout-api for image sources",
+                "selected parser '{}' cannot parse {}; choose PaddleOCR-VL Document Parsing Skill or layout-api for image sources",
                 selected_parser,
                 rel_path(vault, &source)
             ));
@@ -15197,7 +15197,7 @@ mod tests {
     fn paddleocr_provider_contract_defaults_are_stable() {
         assert_eq!(PADDLEOCR_VL15_PROVIDER_ID, "paddleocr-vl15");
         assert_eq!(PADDLEOCR_VL15_API_KEY_ENV, "PADDLEOCR_API_KEY");
-        assert_eq!(PADDLEOCR_VL15_DEFAULT_MODEL, "PaddleOCR-VL-1.5");
+        assert_eq!(PADDLEOCR_VL15_DEFAULT_MODEL, "PaddleOCR-VL-1.6");
         assert_eq!(default_pdf_parser(), PADDLEOCR_VL15_PROVIDER_ID);
         let settings = default_ocr_parser_settings();
         assert!(!settings.enabled);
@@ -15795,13 +15795,13 @@ mod tests {
         assert_eq!(entry.current_state, "paddleocr_config_required");
         assert_eq!(
             entry.next_action_label,
-            "Configure PaddleOCR-VL-1.5 before parsing, or choose an explicit local fallback parser"
+            "Configure PaddleOCR-VL Document Parsing Skill before parsing, or choose an explicit local fallback parser"
         );
         assert_eq!(entry.inputs, vec!["raw/paper.pdf".to_string()]);
         assert!(entry
             .command
             .iter()
-            .any(|item| item.contains("Settings -> OCR Parser")));
+            .any(|item| item.contains("Settings -> PaddleOCR-VL Document Parsing Skill")));
         assert!(entry
             .outputs
             .iter()
@@ -15840,7 +15840,7 @@ mod tests {
         assert_eq!(entry.current_state, "parse_required");
         assert_eq!(
             entry.next_action_label,
-            "Parse with PaddleOCR-VL-1.5, then run the ingest pipeline"
+            "Parse with PaddleOCR-VL Document Parsing Skill, then run the ingest pipeline"
         );
         let hint = entry.parser_hint.as_deref().expect("parser hint");
         assert!(hint.contains("--parser layout-api"));
