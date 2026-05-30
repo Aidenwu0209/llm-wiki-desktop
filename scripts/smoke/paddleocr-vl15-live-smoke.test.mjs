@@ -5,7 +5,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { detectResultUrls, endpointHost, isPendingJob, normalizeEnvVarName, redactText, resolveApiKeyEnvVar, validateLiveManifest } from "./paddleocr-vl15-live-smoke.mjs";
+import { detectResultUrls, downloadOcrResult, endpointHost, isPendingJob, normalizeEnvVarName, redactText, resolveApiKeyEnvVar, validateLiveManifest } from "./paddleocr-vl15-live-smoke.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../..");
@@ -66,6 +66,13 @@ test("PaddleOCR job result URLs are detected from official async response shape"
 
 test("initial PaddleOCR job id response is treated as pending", () => {
   assert.equal(isPendingJob({ code: 0, msg: "Success", data: { jobId: "54105445113155584" } }), true);
+});
+
+test("synchronous PaddleOCR page results are preserved without result URLs", async () => {
+  const pages = [{ text: "already completed OCR text" }];
+  const result = await downloadOcrResult({ pages }, 1000);
+  assert.equal(result.pages, pages);
+  assert.deepEqual(result.result_urls, { jsonUrl: null, markdownUrl: null });
 });
 
 test("custom API key environment variable name is supported", () => {

@@ -270,7 +270,9 @@ function parseJsonl(text) {
 
 async function downloadOcrResult(jobResult, timeoutMs) {
   const urls = detectResultUrls(jobResult);
-  const downloaded = { job: jobResult };
+  const downloaded = jobResult && typeof jobResult === "object" && !Array.isArray(jobResult)
+    ? { ...jobResult, job: jobResult }
+    : { job: jobResult };
   if (urls.jsonUrl) {
     const jsonlText = await fetchResultText(urls.jsonUrl, timeoutMs);
     downloaded.result_jsonl = parseJsonl(jsonlText);
@@ -586,6 +588,7 @@ export {
   REQUIRED_MANIFEST_FIELDS,
   DEFAULT_API_KEY_ENV_VAR,
   detectResultUrls,
+  downloadOcrResult,
   LiveOcrSmokeError,
   endpointHost,
   isLocalEndpoint,
