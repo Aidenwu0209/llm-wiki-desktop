@@ -122,6 +122,15 @@ function redactText(value, secrets) {
   }
   output = output.replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]");
   output = output.replace(/((?:[?&]|\b)(?:token|access_token|api_key|key|signature)=)[^&\s"]+/gi, "$1[redacted]");
+  output = output.replace(/\bhttps?:\/\/[^\s<>"')]+/gi, (match) => {
+    try {
+      const url = new URL(match);
+      if (url.search) url.search = "?[redacted]";
+      return url.toString();
+    } catch {
+      return match;
+    }
+  });
   return output;
 }
 
@@ -163,6 +172,11 @@ async function postOcrJob(endpoint, apiKey, model, inputPath, timeoutMs) {
     const bytes = await fs.readFile(inputPath);
     const form = new FormData();
     form.set("model", model);
+    form.set("optionalPayload", JSON.stringify({
+      useDocOrientationClassify: false,
+      useDocUnwarping: false,
+      useChartRecognition: false,
+    }));
     form.set("return_format", "json");
     form.set("output_format", "markdown");
     form.set("file", new Blob([bytes], { type: contentTypeFor(inputPath) }), path.basename(inputPath));
@@ -217,6 +231,59 @@ async function parseHttpJson(response, apiKey) {
   return json;
 }
 
+async function fetchResultText(url, timeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    const text = await response.text();
+    if (!response.ok) {
+      throw new LiveOcrSmokeError("result_download_failed", `HTTP ${response.status} while downloading OCR result: ${text.slice(0, 800)}`);
+    }
+    return text;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function detectResultUrls(value) {
+  const resultUrl = value?.resultUrl || value?.result_url || value?.data?.resultUrl || value?.data?.result_url || {};
+  return {
+    jsonUrl: resultUrl.jsonUrl || resultUrl.json_url || value?.jsonUrl || value?.json_url || value?.data?.jsonUrl || value?.data?.json_url || null,
+    markdownUrl: resultUrl.markdownUrl || resultUrl.markdown_url || value?.markdownUrl || value?.markdown_url || value?.data?.markdownUrl || value?.data?.markdown_url || null,
+  };
+}
+
+function parseJsonl(text) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return { raw_text: line };
+      }
+    });
+}
+
+async function downloadOcrResult(jobResult, timeoutMs) {
+  const urls = detectResultUrls(jobResult);
+  const downloaded = jobResult && typeof jobResult === "object" && !Array.isArray(jobResult)
+    ? { ...jobResult, job: jobResult }
+    : { job: jobResult };
+  if (urls.jsonUrl) {
+    const jsonlText = await fetchResultText(urls.jsonUrl, timeoutMs);
+    downloaded.result_jsonl = parseJsonl(jsonlText);
+  }
+  if (urls.markdownUrl) {
+    downloaded.result_markdown = await fetchResultText(urls.markdownUrl, timeoutMs);
+  }
+  downloaded.result_urls = urls;
+  return downloaded;
+}
+
 function detectPollUrl(endpoint, value) {
   const candidates = [
     value?.url,
@@ -231,7 +298,13 @@ function detectPollUrl(endpoint, value) {
     value?.data?.pollUrl,
   ].filter((item) => typeof item === "string" && item.trim());
   if (candidates.length) return new URL(candidates[0], endpoint).toString();
-  const jobId = [
+  const jobId = findJobId(value);
+  if (!jobId) return null;
+  return new URL(`${endpoint.replace(/\/$/, "")}/${encodeURIComponent(String(jobId))}`).toString();
+}
+
+function findJobId(value) {
+  return [
     value?.job_id,
     value?.jobId,
     value?.id,
@@ -239,8 +312,6 @@ function detectPollUrl(endpoint, value) {
     value?.data?.jobId,
     value?.data?.id,
   ].find((item) => typeof item === "string" || typeof item === "number");
-  if (!jobId) return null;
-  return new URL(`${endpoint.replace(/\/$/, "")}/${encodeURIComponent(String(jobId))}`).toString();
 }
 
 function statusText(value) {
@@ -249,6 +320,9 @@ function statusText(value) {
 
 function isPendingJob(value) {
   const status = statusText(value);
+  if (!status && findJobId(value) && !detectResultUrls(value).jsonUrl && !detectResultUrls(value).markdownUrl) {
+    return true;
+  }
   return ["pending", "queued", "running", "processing", "created", "submitted", "in_progress"].includes(status);
 }
 
@@ -287,19 +361,43 @@ function deepFindNumber(value, keys) {
 }
 
 function extractPages(value) {
+  const officialResultPages = Array.isArray(value?.result_jsonl)
+    ? value.result_jsonl.flatMap((item) => {
+      const candidates = [
+        item?.result?.layoutParsingResults,
+        item?.layoutParsingResults,
+        item?.data?.result?.layoutParsingResults,
+      ].filter(Array.isArray);
+      return candidates[0] || [];
+    })
+    : [];
+  if (officialResultPages.length) return officialResultPages;
   const candidates = [value?.pages, value?.data?.pages, value?.result?.pages, value?.output?.pages].filter(Array.isArray);
   return candidates[0] || [];
 }
 
+function pageMarkdownText(page) {
+  if (typeof page === "string") return page;
+  const direct = [
+    page?.markdown?.text,
+    page?.markdown_text,
+    page?.markdownText,
+    page?.text,
+    page?.content,
+    page?.ocr_text,
+    page?.page_text,
+  ].find((item) => typeof item === "string" && item.trim());
+  if (direct) return direct;
+  return deepFindStrings(page, ["markdown", "text", "content", "ocr_text", "page_text"]).join("\n\n");
+}
+
 function extractMarkdown(value) {
+  if (typeof value?.result_markdown === "string" && value.result_markdown.trim()) return value.result_markdown.trim();
   const direct = deepFindStrings(value, ["combined_md", "combined_markdown", "markdown", "markdown_text", "md"]);
   if (direct.length) return direct.join("\n\n");
   const pages = extractPages(value);
   const pageTexts = pages
-    .map((page) => {
-      if (typeof page === "string") return page;
-      return deepFindStrings(page, ["markdown", "text", "content", "ocr_text", "page_text"]).join("\n\n");
-    })
+    .map((page) => pageMarkdownText(page))
     .filter(Boolean);
   if (pageTexts.length) return pageTexts.map((text, index) => `## Page ${index + 1}\n\n${text}`).join("\n\n");
   return "No markdown text was returned by the OCR service. Inspect ocr-output.json for the provider response shape.\n";
@@ -321,7 +419,7 @@ function extractChunks(value, sourcePath) {
       evidence_id: `ocr:page:${index + 1}`,
       source_path: sourcePath,
       page: index + 1,
-      text: typeof page === "string" ? page : deepFindStrings(page, ["text", "content", "markdown", "ocr_text", "page_text"]).join("\n\n"),
+      text: pageMarkdownText(page),
     }));
   }
   return [{
@@ -374,7 +472,8 @@ async function writeArtifacts(args) {
 
   const started = Date.now();
   const initial = await postOcrJob(endpoint, apiKey, model, inputPath, args.timeoutMs);
-  const result = await pollOcrJob(endpoint, apiKey, initial, args.timeoutMs, args.pollIntervalMs);
+  const jobResult = await pollOcrJob(endpoint, apiKey, initial, args.timeoutMs, args.pollIntervalMs);
+  const result = await downloadOcrResult(jobResult, args.timeoutMs);
   const latencyMs = Date.now() - started;
   const secrets = [apiKey, endpoint];
   const sanitized = sanitizeForArtifact(result, secrets);
@@ -383,11 +482,16 @@ async function writeArtifacts(args) {
   const sourcePath = path.relative(process.cwd(), inputPath).split(path.sep).join("/");
   const markdown = extractMarkdown(sanitized);
   const chunks = extractChunks(sanitized, sourcePath).filter((chunk) => chunk.text?.trim());
-  const pageCount = numberOrFallback(deepFindNumber(sanitized, ["page_count", "pageCount", "pages"]), Math.max(1, extractPages(sanitized).length || 1));
+  const pageCount = numberOrFallback(
+    deepFindNumber(sanitized, ["page_count", "pageCount", "pages", "totalPages", "extractedPages"]),
+    Math.max(1, extractPages(sanitized).length || 1),
+  );
   const parserVersion = deepFindStrings(sanitized, ["parser_version", "model_version", "version"])[0] || "unreported";
   const limitations = [
     ...(parserVersion === "unreported" ? ["parser_version_unreported_by_service"] : []),
     ...(chunks.length === 0 ? ["no_chunks_extracted_from_provider_shape"] : []),
+    ...(!sanitized.result_markdown ? ["markdown_url_unreported_by_service"] : []),
+    ...(!sanitized.result_jsonl && !sanitized.result_markdown ? ["result_urls_missing_from_provider_response"] : []),
   ];
 
   await fs.mkdir(outDir, { recursive: true });
@@ -483,9 +587,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 export {
   REQUIRED_MANIFEST_FIELDS,
   DEFAULT_API_KEY_ENV_VAR,
+  detectResultUrls,
+  downloadOcrResult,
   LiveOcrSmokeError,
   endpointHost,
   isLocalEndpoint,
+  isPendingJob,
   normalizeEnvVarName,
   parseArgs,
   redactText,
