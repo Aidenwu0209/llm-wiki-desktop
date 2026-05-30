@@ -80,8 +80,9 @@ textarea {
 }
 
 .app-shell {
+  --nav-rail-width: 168px;
   display: grid;
-  grid-template-columns: 168px minmax(0, 1fr);
+  grid-template-columns: var(--nav-rail-width) minmax(0, 1fr);
   grid-template-areas: "nav workspace";
   height: 100vh;
   min-height: 100vh;
@@ -89,46 +90,35 @@ textarea {
 }
 
 .app-shell.nashsu-aligned-shell {
-  grid-template-columns: 64px var(--knowledge-sidebar-width, 286px) minmax(0, 1fr) var(--preview-sidebar-width, 382px);
+  --nav-rail-width: 64px;
+  grid-template-columns: var(--nav-rail-width) var(--knowledge-sidebar-width, 286px) minmax(0, 1fr) var(--preview-sidebar-width, 382px);
   grid-template-areas: "nav tree workspace preview";
   background: #f5f6f3;
 }
 
-.app-shell.nashsu-aligned-shell.nav-rail-expanded {
-  grid-template-columns: 168px var(--knowledge-sidebar-width, 286px) minmax(0, 1fr) var(--preview-sidebar-width, 382px);
-}
-
 .app-shell.nashsu-aligned-shell:not(.inspector-open) {
-  grid-template-columns: 64px var(--knowledge-sidebar-width, 286px) minmax(0, 1fr);
+  grid-template-columns: var(--nav-rail-width) var(--knowledge-sidebar-width, 286px) minmax(0, 1fr);
   grid-template-areas: "nav tree workspace";
-}
-
-.app-shell.nashsu-aligned-shell.nav-rail-expanded:not(.inspector-open) {
-  grid-template-columns: 168px var(--knowledge-sidebar-width, 286px) minmax(0, 1fr);
 }
 
 .app-shell.nashsu-aligned-shell.chat-workspace-mode,
 .app-shell.nashsu-aligned-shell.chat-workspace-mode:not(.inspector-open) {
-  grid-template-columns: 64px minmax(0, 1fr);
+  grid-template-columns: var(--nav-rail-width) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   grid-template-areas: "nav workspace";
   align-content: stretch;
   background: #ffffff;
 }
 
-.app-shell.nashsu-aligned-shell.chat-workspace-mode.nav-rail-expanded,
-.app-shell.nashsu-aligned-shell.chat-workspace-mode.nav-rail-expanded:not(.inspector-open) {
-  grid-template-columns: 168px minmax(0, 1fr);
-}
-
 .app-shell.settings-mode {
-  grid-template-columns: 64px minmax(0, 1fr);
+  --nav-rail-width: 64px;
+  grid-template-columns: var(--nav-rail-width) minmax(0, 1fr);
   grid-template-areas: "nav workspace";
   background: #f7f8f5;
 }
 
-.app-shell.settings-mode.nav-rail-expanded {
-  grid-template-columns: 168px minmax(0, 1fr);
+.app-shell.nav-rail-expanded {
+  --nav-rail-width: 168px;
 }
 
 .app-shell.nav-rail-expanded .icon-sidebar {
@@ -1063,14 +1053,14 @@ body[data-shell-panel-resizing="true"] * {
 
 @media (max-width: 1440px) {
   .app-shell.nashsu-aligned-shell {
-    grid-template-columns: 64px var(--knowledge-sidebar-width, 264px) minmax(0, 1fr) var(--preview-sidebar-width, 340px);
+    grid-template-columns: var(--nav-rail-width) var(--knowledge-sidebar-width, 264px) minmax(0, 1fr) var(--preview-sidebar-width, 340px);
   }
 }
 
 @media (max-width: 1100px) {
   .app-shell.nashsu-aligned-shell,
   .app-shell.nashsu-aligned-shell.inspector-open {
-    grid-template-columns: 64px var(--knowledge-sidebar-width, 264px) minmax(0, 1fr);
+    grid-template-columns: var(--nav-rail-width) var(--knowledge-sidebar-width, 264px) minmax(0, 1fr);
     grid-template-areas: "nav tree workspace";
   }
 
@@ -1083,7 +1073,7 @@ body[data-shell-panel-resizing="true"] * {
   .app-shell.nashsu-aligned-shell,
   .app-shell.nashsu-aligned-shell:not(.inspector-open),
   .app-shell.nashsu-aligned-shell.inspector-open {
-    grid-template-columns: 64px minmax(0, 1fr);
+    grid-template-columns: var(--nav-rail-width) minmax(0, 1fr);
     grid-template-areas: "nav workspace";
   }
 
@@ -7433,11 +7423,9 @@ body[data-shell-panel-resizing="true"] * {
 
 @media (max-width: 760px) {
   .app-shell,
-  .app-shell.nav-rail-expanded,
-  .app-shell.nashsu-aligned-shell.nav-rail-expanded,
-  .app-shell.nashsu-aligned-shell.nav-rail-expanded:not(.inspector-open),
   .app-shell.settings-mode {
-    grid-template-columns: 76px minmax(0, 1fr);
+    --nav-rail-width: 76px;
+    grid-template-columns: var(--nav-rail-width) minmax(0, 1fr);
   }
 
   .icon-sidebar,
