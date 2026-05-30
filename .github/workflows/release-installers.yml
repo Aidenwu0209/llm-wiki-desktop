@@ -66,15 +66,16 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           mkdir -p release-assets
-          mapfile -t files < <(find src-tauri/target -path "*/bundle/dmg/*.dmg" -type f | sort)
-          if [ "${#files[@]}" -eq 0 ]; then
+          count=0
+          while IFS= read -r file; do
+            base="$(basename "$file" .dmg)"
+            cp "$file" "release-assets/${base}-${{ matrix.name }}.dmg"
+            count=$((count + 1))
+          done < <(find src-tauri/target -path "*/bundle/dmg/*.dmg" -type f | sort)
+          if [ "$count" -eq 0 ]; then
             echo "No macOS DMG files found" >&2
             exit 1
           fi
-          for file in "${files[@]}"; do
-            base="$(basename "$file" .dmg)"
-            cp "$file" "release-assets/${base}-${{ matrix.name }}.dmg"
-          done
         shell: bash
 
       - name: Prepare Windows release asset
@@ -106,12 +107,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.inputs.release_tag }}
         run: |
-          mapfile -t files < <(find release-assets -maxdepth 1 -type f -name "*.dmg" | sort)
-          if [ "${#files[@]}" -eq 0 ]; then
+          count=0
+          for file in release-assets/*.dmg; do
+            if [ ! -f "$file" ]; then
+              continue
+            fi
+            gh release upload "$RELEASE_TAG" "$file" --clobber
+            count=$((count + 1))
+          done
+          if [ "$count" -eq 0 ]; then
             echo "No macOS DMG files found" >&2
             exit 1
           fi
-          gh release upload "$RELEASE_TAG" "${files[@]}" --clobber
         shell: bash
 
       - name: Upload Windows installer to GitHub Release
