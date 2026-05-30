@@ -1,0 +1,78 @@
+name: Installer Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "GitHub Release tag to smoke-test installers from"
+        required: true
+        default: "v0.1.0-rc1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: installer-smoke-${{ github.event.inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  smoke-macos:
+    name: Smoke macOS DMG
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: Download macOS DMG
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          url="https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/LLM.Wiki_0.1.0_universal-macos-universal.dmg"
+          curl -L --fail --silent --show-error -o mac.dmg "$url"
+          shasum -a 256 mac.dmg
+
+      - name: Verify and inspect DMG
+        run: |
+          set -euo pipefail
+          hdiutil verify mac.dmg
+          mkdir -p dmg-mount
+          hdiutil attach -readonly -nobrowse -mountpoint dmg-mount mac.dmg
+          trap 'hdiutil detach dmg-mount || true' EXIT
+          test -d "dmg-mount/LLM Wiki.app"
+          test -f "dmg-mount/LLM Wiki.app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleName" "dmg-mount/LLM Wiki.app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "dmg-mount/LLM Wiki.app/Contents/Info.plist"
+          codesign --verify --deep --strict --verbose=2 "dmg-mount/LLM Wiki.app" || true
+          spctl -a -vv "dmg-mount/LLM Wiki.app" || true
+
+  smoke-windows:
+    name: Smoke Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Download Windows installer
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.release_tag }}
+        run: |
+          $url = "https://github.com/${{ github.repository }}/releases/download/$env:RELEASE_TAG/LLM.Wiki_0.1.0_x64-setup-windows-x64.exe"
+          Invoke-WebRequest -Uri $url -OutFile "installer.exe"
+          Get-FileHash -Algorithm SHA256 "installer.exe"
+        shell: pwsh
+
+      - name: Run silent install and inspect output
+        run: |
+          $installDir = Join-Path $env:RUNNER_TEMP "llm-wiki-smoke"
+          if (Test-Path $installDir) {
+            Remove-Item -Recurse -Force $installDir
+          }
+          New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+          $process = Start-Process -FilePath ".\installer.exe" -ArgumentList "/S", "/D=$installDir" -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "Installer exited with code $($process.ExitCode)"
+          }
+          Get-ChildItem -Path $installDir -Recurse | Select-Object FullName, Length
+          $exe = Join-Path $installDir "LLM Wiki.exe"
+          if (-not (Test-Path $exe)) {
+            throw "Installed application executable not found at $exe"
+          }
+          Write-Host "Installed executable: $exe"
+        shell: pwsh
