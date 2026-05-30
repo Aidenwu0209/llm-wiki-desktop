@@ -1,93 +1,40 @@
-# Issue Drafts To Create
+# 中文路线 Issue 索引
 
-These are maintainer-reviewed issue drafts. They are not external user feedback, and they should not be presented as requests from real users unless maintainers later attach verified feedback.
+本轮快速交付已通过 GitHub CLI 创建中文 roadmap issues。此文件保留为索引；如果后续环境无法使用 `gh issue create`，再把待创建 issue 草稿追加到这里。
 
-## [P0] Run real PaddleOCR-VL-1.5 parse smoke
+## P0
 
-Labels: `p0`, `validation`, `parser`
+- [#210 [P0] 真实运行 PaddleOCR-VL-1.5 解析 smoke](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/210)
+- [#211 [P0] 真实运行 ERNIE evidence-first answer smoke](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/211)
+- [#212 [P0] 发布 v0.1.0-rc1 unsigned release candidate](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/212)
 
-Goal: Run a live PaddleOCR-VL-1.5 parse smoke with a maintainer-approved test document and publish a redacted report.
+## P1
 
-Acceptance criteria:
+- [#213 [P1] 完成 macOS clean-profile 手动 vault smoke](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/213)
+- [#214 [P1] 收集第一轮真实用户反馈](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/214)
+- [#217 [P1] 完成 Windows packaged smoke](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/217)
 
-- Endpoint, model, and API key environment variable are documented without exposing secrets.
-- The report states whether raw document bytes left the local machine.
-- Generated artifacts are validated against the parser artifact contract.
-- Private raw documents and unredacted outputs are not committed.
+## P2
 
-## [P0] Run ERNIE live evidence-answer smoke
+- [#218 [P2] 支持 query writeback new-file proposal](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/218)
+- [#219 [P2] 补齐 Obsidian 式全 vault search-index](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/219)
+- [#220 [P2] 增强 backlinks-plus 阅读关系](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/220)
 
-Labels: `p0`, `validation`, `provider`
+## Good First Issue
 
-Goal: Run a live ERNIE evidence-answer smoke using synthetic or approved public evidence.
+- [#215 [good first issue] 补充 release 截图清单](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/215)
+- [#216 [good first issue] 补充 ERNIE 配置 FAQ](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/216)
 
-Acceptance criteria:
+## 后续追加格式
 
-- `AI_STUDIO_API_KEY` setup is documented without exposing the key.
-- The report distinguishes live response from mock or dry-run behavior.
-- Evidence IDs and citations are checked.
-- No private prompts, raw documents, or secrets are committed.
+```markdown
+## [优先级] 中文标题
 
-## [P0] Publish v0.1.0-rc1
+Labels: `documentation`, `enhancement` 或 `good first issue`
 
-Labels: `p0`, `release`
+目标：
 
-Goal: Prepare and publish the v0.1.0-rc1 release candidate materials.
+验收标准：
 
-Acceptance criteria:
-
-- Release readiness checklist is complete.
-- Known limitations are documented.
-- Changelog has a v0.1.0-rc1 section.
-- Artifacts are clearly marked as unsigned/local if signing is not complete.
-
-## [P1] Add user feedback round 1
-
-Labels: `p1`, `research`
-
-Goal: Collect and summarize first-round user feedback without fabricating users or testimonials.
-
-Acceptance criteria:
-
-- Feedback source and consent boundaries are documented.
-- Private user data is removed or summarized.
-- Findings separate observed issues from maintainer interpretation.
-- Follow-up issues are created for actionable items.
-
-## [P1] Improve center reading workspace
-
-Labels: `p1`, `ui`, `reading-workspace`
-
-Goal: Improve the center reading workspace for source, concept, review, and proposal navigation.
-
-Acceptance criteria:
-
-- Reading context is easier to keep while navigating related files.
-- Proposal-first writeback remains intact.
-- Tests cover vault path resolution and preview behavior.
-- UI screenshots are included if visible changes are made.
-
-## [good first issue] Add FAQ for AI_STUDIO_API_KEY setup
-
-Labels: `good first issue`, `docs`, `provider`
-
-Goal: Add a short FAQ explaining how to configure `AI_STUDIO_API_KEY` for ERNIE provider checks.
-
-Acceptance criteria:
-
-- The FAQ says not to commit or paste the API key.
-- It explains how to set the environment variable for local development.
-- It links to provider setup docs if available.
-- It avoids claiming a live check passed unless the contributor actually ran one.
-
-## [good first issue] Add screenshot checklist for release notes
-
-Labels: `good first issue`, `docs`, `release`
-
-Goal: Add a release-note screenshot checklist that keeps private data out of public materials.
-
-Acceptance criteria:
-
-- Checklist covers private paths, raw documents, API keys, local usernames, and unpublished data.
-- It references existing screenshot locations.
-- It distinguishes demo screenshots from live user data.
+安全边界：
+```

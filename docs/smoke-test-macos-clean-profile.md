@@ -6,6 +6,14 @@ This smoke test verifies that LLM Wiki Desktop can complete dependency installat
 
 The test must preserve the project runtime-first boundary: desktop manages vault selection, import entry points, task orchestration, status display, and recovery, while knowledge generation, QA, review queue, and writeback approval remain owned by the open-llm-wiki runtime. The smoke must not upload raw documents, bypass proposal-first writeback, auto-write `concepts/` or `sources/`, or invent user approval.
 
+## 快速交付状态
+
+- 自动 smoke：按现有记录，`npm run smoke:macos` 已完成依赖安装、测试、前端构建、Rust tests 和本地打包路径。
+- `build:app`：按现有记录，已生成本地 unsigned `.app` / `.dmg`；这不等同于 signed、notarized 或 production-ready。
+- 手动 vault workflow：仍需人工复验。临时 vault 创建、导入 sample、plan ingest 和 dashboard 检查在上一轮记录中是 partial / blocked，不能写成 full pass。
+- 当前阻塞：Finder picker 自动化在 macOS picker / Accessibility 权限处受限；当前环境无法完成完整手动 UI workflow 证据采集。
+- 跟踪 issue：[#213 [P1] 完成 macOS clean-profile 手动 vault smoke](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/213)。
+
 ## 2. Environment
 
 Record these values for every run. The scripted smoke logs the command-backed values automatically, including the commit hash.

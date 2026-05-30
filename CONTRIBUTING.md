@@ -83,4 +83,4 @@ Do not bypass:
 
 ## License Note
 
-This repository does not yet declare a project license. Maintainers must choose and commit a real license before public release, redistribution, or broad external contribution.
+This repository is licensed under Apache-2.0. By contributing, you agree that your contributions are provided under the same license unless maintainers explicitly document a different arrangement.

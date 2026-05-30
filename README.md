@@ -19,7 +19,7 @@ Agent / API 集成必须先通过只读 readiness gate；当前契约见 [`docs/
 
 ## 开源治理
 
-- License: pending maintainer decision; do not publish or redistribute as open source until a real license is selected.
+- License: Apache-2.0，见 [`LICENSE`](LICENSE)。
 - Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md)。
 - Security: [`SECURITY.md`](SECURITY.md)。
 - Code of Conduct: [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)。
