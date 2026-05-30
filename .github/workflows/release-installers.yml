@@ -1,0 +1,126 @@
+name: Release Installers
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Git tag / GitHub Release to build and upload installers for"
+        required: true
+        default: "v0.1.0-rc1"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-installers-${{ github.event.inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  build-installers:
+    name: Build installer (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-x64
+            os: macos-13
+            bundle_args: "--bundles dmg"
+          - name: macos-arm64
+            os: macos-latest
+            bundle_args: "--bundles dmg"
+          - name: windows-x64
+            os: windows-latest
+            bundle_args: "--bundles nsis"
+
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.release_tag }}
+
+      - name: Verify release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.inputs.release_tag }}
+        run: gh release view "$RELEASE_TAG" --json tagName,isPrerelease,isDraft,url
+        shell: bash
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build installer
+        run: npx tauri build ${{ matrix.bundle_args }}
+
+      - name: Prepare macOS release asset
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p release-assets
+          mapfile -t files < <(find src-tauri/target/release/bundle/dmg -maxdepth 1 -type f -name "*.dmg" | sort)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No macOS DMG files found" >&2
+            exit 1
+          fi
+          for file in "${files[@]}"; do
+            base="$(basename "$file" .dmg)"
+            cp "$file" "release-assets/${base}-${{ matrix.name }}.dmg"
+          done
+        shell: bash
+
+      - name: Prepare Windows release asset
+        if: runner.os == 'Windows'
+        run: |
+          New-Item -ItemType Directory -Force -Path "release-assets" | Out-Null
+          $files = Get-ChildItem -Path "src-tauri/target/release/bundle/nsis" -Filter "*.exe" -File | Sort-Object FullName
+          if ($files.Count -eq 0) {
+            throw "No Windows NSIS installer files found"
+          }
+          foreach ($file in $files) {
+            $target = Join-Path "release-assets" "$($file.BaseName)-${{ matrix.name }}$($file.Extension)"
+            Copy-Item $file.FullName $target
+          }
+        shell: pwsh
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llm-wiki-${{ matrix.name }}-${{ github.event.inputs.release_tag }}
+          path: release-assets/*
+          if-no-files-found: error
+
+      - name: Upload macOS installer to GitHub Release
+        if: runner.os == 'macOS'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.inputs.release_tag }}
+        run: |
+          mapfile -t files < <(find release-assets -maxdepth 1 -type f -name "*.dmg" | sort)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No macOS DMG files found" >&2
+            exit 1
+          fi
+          gh release upload "$RELEASE_TAG" "${files[@]}" --clobber
+        shell: bash
+
+      - name: Upload Windows installer to GitHub Release
+        if: runner.os == 'Windows'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.inputs.release_tag }}
+        run: |
+          $files = Get-ChildItem -Path "release-assets" -Filter "*.exe" -File | Sort-Object FullName
+          if ($files.Count -eq 0) {
+            throw "No Windows NSIS installer files found"
+          }
+          gh release upload $env:RELEASE_TAG @($files.FullName) --clobber
+        shell: pwsh
