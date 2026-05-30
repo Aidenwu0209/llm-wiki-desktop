@@ -66,7 +66,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           mkdir -p release-assets
-          mapfile -t files < <(find src-tauri/target/release/bundle/dmg -maxdepth 1 -type f -name "*.dmg" | sort)
+          mapfile -t files < <(find src-tauri/target -path "*/bundle/dmg/*.dmg" -type f | sort)
           if [ "${#files[@]}" -eq 0 ]; then
             echo "No macOS DMG files found" >&2
             exit 1
@@ -81,7 +81,9 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           New-Item -ItemType Directory -Force -Path "release-assets" | Out-Null
-          $files = Get-ChildItem -Path "src-tauri/target/release/bundle/nsis" -Filter "*.exe" -File | Sort-Object FullName
+          $files = Get-ChildItem -Path "src-tauri/target" -Recurse -Filter "*.exe" -File |
+            Where-Object { $_.FullName -match "[\\/]bundle[\\/]nsis[\\/]" } |
+            Sort-Object FullName
           if ($files.Count -eq 0) {
             throw "No Windows NSIS installer files found"
           }
