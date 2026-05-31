@@ -1019,7 +1019,7 @@ const initialDesktopSettings: DesktopSettings = {
     providerId: "paddleocr-vl15",
     endpoint: "",
     apiKeyEnvVar: "PADDLEOCR_API_KEY",
-    model: "PaddleOCR-VL-1.5",
+    model: "PaddleOCR-VL-1.6",
   },
   llmProviderCenter: {
     activeProviderId: null,

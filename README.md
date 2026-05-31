@@ -57,7 +57,7 @@ open "src-tauri/target/release/bundle/macos/LLM Wiki.app"
 Welcome 页同时展示评委可直接理解的 OCR + ERNIE 演示路径：
 
 ```text
-PDF / Image -> PaddleOCR-VL-1.5 -> Markdown / JSON Artifact
+PDF / Image -> PaddleOCR-VL Document Parsing Skill -> Markdown / JSON Artifact
 -> LLM Wiki Runtime -> Evidence Map -> ERNIE Answer -> Writeback Proposal
 ```
 
@@ -65,7 +65,7 @@ PDF / Image -> PaddleOCR-VL-1.5 -> Markdown / JSON Artifact
 
 1. Create or open a Vault / 创建或打开知识库。
 2. Submit PDFs or images / 提交 PDF 或图片。
-3. Parse with PaddleOCR-VL-1.5 / 使用 PaddleOCR-VL-1.5 解析。
+3. Use PaddleOCR-VL Document Parsing Skill / 使用 PaddleOCR-VL 文档解析技能。
 4. Ask with ERNIE using evidence / 使用文心一言基于证据问答。
 5. Create a writeback proposal / 创建可审核写回提案。
 
@@ -82,7 +82,7 @@ PDF / Image -> PaddleOCR-VL-1.5 -> Markdown / JSON Artifact
 3. 点击 `规划 ingest` 检查哪些资料可解析、哪些已发布、哪些被阻塞。
 4. 选中任一资料，可以在中间预览 artifact，并在右侧查看 path、hash、parser、claims、concepts 和 traceability。
 
-桌面端会按 SHA-256 跳过重复资料。PDF / 图片默认优先使用 PaddleOCR-VL-1.5；未启用 OCR Parser、未配置 endpoint 或所选 API key 环境变量（默认 `PADDLEOCR_API_KEY`）不可见时，ingest plan 会明确阻塞且不会上传 raw document。用户也可以显式切回 `auto/local-text` 本地 fallback。
+桌面端会按 SHA-256 跳过重复资料。PDF / 图片默认优先使用 PaddleOCR-VL 文档解析技能；未启用该技能、未配置 endpoint 或所选 API key 环境变量（默认 `PADDLEOCR_API_KEY`）不可见时，ingest plan 会明确阻塞且不会上传 raw document。用户也可以显式切回 `auto/local-text` 本地 fallback。
 
 ### 4. 运行处理流程
 
@@ -163,7 +163,7 @@ log-archive/desktop/
 - 桌面端不重写历史 QA report。
 - 桌面端不默认上传 raw documents。
 - 桌面端不静默应用 query writeback；默认写入 `reviews/query-writeback/` proposal artifact，写入 `concepts/` 必须先审批。
-- 桌面端只对 Markdown / txt 做可审计 staging；PDF / 图片通过 runtime parser 生成 parsed Markdown artifact。默认 `paddleocr-vl15` 只有在 OCR Parser 已启用、endpoint 已配置且所选 API key 环境变量可见时才会上传到该 endpoint；`auto/local-text` fallback 不上传文档。
+- 桌面端只对 Markdown / txt 做可审计 staging；PDF / 图片通过 runtime parser 生成 parsed Markdown artifact。默认 `paddleocr-vl15` 只有在 PaddleOCR-VL 文档解析技能已启用、endpoint 已配置且所选 API key 环境变量可见时才会上传到该 endpoint；`auto/local-text` fallback 不上传文档。
 - 所有 source page、claim、QA、contradiction、concept 写入都通过 open-llm-wiki 脚本完成，桌面端只保存任务日志、ingest plan、staging manifest、桌面 ingest registry、桌面 action/queue/impact contract 和 `raw/inbox/` 导入结果。
 
 ## Ingest 编排
