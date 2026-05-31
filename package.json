@@ -26,6 +26,7 @@
     "prebuild:app": "node scripts/clean-stale-bundles.mjs",
     "build:app": "tauri build",
     "smoke:macos": "bash scripts/smoke/macos-clean-profile.sh",
+    "smoke:macos:bundle": "bash scripts/smoke/macos-bundle-launch.sh",
     "smoke:windows": "powershell -ExecutionPolicy Bypass -File scripts/smoke/windows-dev.ps1",
     "preview": "vite preview",
     "tauri": "tauri"

@@ -80,4 +80,9 @@ echo "Running npm run build:app as a required smoke step. Missing scripts or bui
 run npm run build:app
 
 echo
+echo "==> Built app launch smoke"
+echo "Launching the packaged app and requiring at least one visible macOS window."
+run npm run smoke:macos:bundle
+
+echo
 echo "Finished: $(date)"

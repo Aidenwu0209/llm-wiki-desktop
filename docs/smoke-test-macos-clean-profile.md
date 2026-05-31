@@ -56,9 +56,10 @@ npm test
 npm run build
 cd src-tauri && cargo test
 cd .. && npm run build:app
+npm run smoke:macos:bundle
 ```
 
-If `build:app` is missing or fails, the smoke is failed. Do not use `--if-present`, skip the command, or treat a partial frontend build as a packaged desktop pass.
+If `build:app` is missing or fails, the smoke is failed. Do not use `--if-present`, skip the command, or treat a partial frontend build as a packaged desktop pass. The bundle launch smoke is also required: a packaged app that starts a process but creates zero visible windows is a failed macOS release candidate.
 
 ## 5. Minimal Vault Workflow
 
@@ -101,6 +102,7 @@ Fill in `Actual Result` and `Status` during the smoke run. Do not prefill or inf
 | Frontend build | `npm run build` | TypeScript and Vite production build complete and write `dist/`. | Completed during `npm run smoke:macos`; Vite wrote `dist/`. The existing large chunk warning was emitted. | Pass |
 | Rust tests | `cd src-tauri && cargo test` | Rust test suite passes from the Tauri crate directory. | Completed during `npm run smoke:macos`; 123 Rust tests passed, 0 failed. | Pass |
 | Tauri package | `cd .. && npm run build:app` | Local `.app` and configured bundle artifacts are created. | Completed during `npm run smoke:macos`; unsigned local `.app` and `.dmg` bundles were produced. | Pass |
+| Packaged app launch | `npm run smoke:macos:bundle` | The packaged app process starts and creates at least one visible macOS window. | Added after the 2026-05-31 bad-DMG check; not part of the 2026-05-28 recorded run. | Not run in recorded run |
 | Minimal vault workflow | Manual desktop smoke | Temporary sample import can be planned/refreshed without real provider keys, uploads, or unapproved writeback. | Completed on 2026-05-31 CST against release DMG `LLM.Wiki_0.1.0_universal-macos-universal.dmg` from `v0.1.0-rc1`. The release App created disposable vault `manual-vault-smoke`, imported `manual-vault-smoke-sample.md`, planned ingest as `stageable=1` / `blocked=0`, opened Dashboard and Raw Sources, and opened Wiki Chat. Chat local search returned the imported inbox file; ordinary Send generated a local deterministic evidence draft with `Use ERNIE` disabled and no provider call. The release App displayed the non-blocking `/.cache/llm-wiki-desktop` state-save error, fixed by this PR. | Pass with non-blocking warning |
 
 ## 6.1 Actual Run Notes
@@ -115,6 +117,7 @@ Fill in `Actual Result` and `Status` during the smoke run. Do not prefill or inf
 - Built DMG bundle: `src-tauri/target/release/bundle/dmg/LLM Wiki_0.1.0_aarch64.dmg`.
 - Manual app launch: passed; the built app opened and rendered the Welcome screen.
 - Manual temporary vault workflow, 2026-05-31 release DMG run: passed with a non-blocking standalone cache warning. See `docs/reports/smoke-macos-release-manual-vault-20260531-summary.md`.
+- Current smoke script now also runs `npm run smoke:macos:bundle` after packaging. For public assets, run the underlying script with `--require-signature` against the exact mounted or copied release app.
 
 ## 7. Artifacts
 
@@ -131,7 +134,7 @@ Keep these artifacts after each run:
 ## 8. Known Limitations
 
 - App notarization: not covered.
-- Apple Developer ID signing: not covered.
+- Apple Developer ID signing: optional by default for local RC smoke; required for public release assets via `--require-signature`.
 - Provider-backed QA: not covered when no provider key is available.
 - Windows testing: not part of this macOS clean-profile smoke.
 - Historical 2026-05-28 manual temporary vault flow was partial because macOS denied further Accessibility control to `osascript` during Finder picker automation.

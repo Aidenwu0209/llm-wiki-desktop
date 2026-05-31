@@ -13,7 +13,7 @@ use std::process::{Command, Stdio};
 use std::sync::{mpsc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use zip::ZipArchive;
 
 const MAX_VAULT_TEXT_PREVIEW_BYTES: u64 = 64 * 1024;
@@ -20328,10 +20328,35 @@ fn open_obsidian_vault(vault_path: String) -> Result<VaultEntryNote, String> {
     Ok(entry)
 }
 
+fn ensure_main_window(app: &tauri::App) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.show()?;
+        window.set_focus()?;
+        return Ok(());
+    }
+
+    tauri::WebviewWindowBuilder::new(
+        app,
+        "main",
+        tauri::WebviewUrl::App("index.html".into()),
+    )
+    .title("LLM Wiki")
+    .inner_size(1360.0, 860.0)
+    .min_inner_size(980.0, 680.0)
+    .resizable(true)
+    .build()?;
+
+    Ok(())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            ensure_main_window(app)?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             load_app_state,
             save_interface_language,

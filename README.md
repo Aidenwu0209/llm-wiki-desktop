@@ -243,6 +243,7 @@ npm run dev:web
 npm test
 npm run build
 npm run build:app
+npm run smoke:macos:bundle
 ```
 
 脚本约定：
@@ -255,6 +256,7 @@ npm run build:app
 | `npm test` | 运行 TypeScript typecheck 和 Rust tests。 |
 | `npm run build` | 运行 typecheck 并生成前端 `dist/`。 |
 | `npm run build:app` | 运行 Tauri 本地应用打包。 |
+| `npm run smoke:macos:bundle` | 打开打包后的 macOS `.app`，并确认进程启动后至少创建一个可见窗口。 |
 | `./scripts/test.sh` | shell 入口，等同于 `npm test`。 |
 | `./scripts/build-app.sh` | shell 入口，等同于 `npm run build:app`。 |
 
@@ -273,6 +275,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 ```bash
 npm ci
 npm run build:app
+npm run smoke:macos:bundle
 ```
 
 打包完成后检查产物：
@@ -313,6 +316,7 @@ npm ci
 npm run build
 cargo test --manifest-path src-tauri/Cargo.toml
 npm run build:app
+npm run smoke:macos:bundle
 ```
 
 手动验收：
@@ -327,7 +331,8 @@ npm run build:app
 8. 打开 Graph，确认 source / claim / concept / review / proposal / warning 关系可用于追踪 evidence。
 9. 未获得明确人工批准时，确认 writeback 没有静默写入 `concepts/` 或 `sources/`。
 10. 如批准并 apply 了 proposal，再运行 lint/eval 或对应 runtime validation。
-11. 记录本地 app 路径、vault 路径、Obsidian entry file、writeback proposal 路径和验证命令结果。
+11. 公开发布资产需要额外对最终 mounted/copied app 运行 `bash scripts/smoke/macos-bundle-launch.sh --app <path> --require-signature`。
+12. 记录本地 app 路径、vault 路径、Obsidian entry file、writeback proposal 路径和验证命令结果。
 
 ## Known limitations
 
