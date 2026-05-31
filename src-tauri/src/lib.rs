@@ -7213,7 +7213,9 @@ fn paddleocr_config_state(settings: &DesktopSettings) -> Result<PaddleOcrConfigS
         return Ok(PaddleOcrConfigState {
             ready: false,
             endpoint,
-            message: "PaddleOCR-VL Document Parsing Skill is selected but no service URL is configured".to_string(),
+            message:
+                "PaddleOCR-VL Document Parsing Skill is selected but no service URL is configured"
+                    .to_string(),
         });
     }
     if read_llm_api_key(Some(&ocr.api_key_env_var))?.is_none() {
