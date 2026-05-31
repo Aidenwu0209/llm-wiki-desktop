@@ -114,7 +114,7 @@ Fill in `Actual Result` and `Status` during the smoke run. Do not prefill or inf
 - Built app bundle: `src-tauri/target/release/bundle/macos/LLM Wiki.app`.
 - Built DMG bundle: `src-tauri/target/release/bundle/dmg/LLM Wiki_0.1.0_aarch64.dmg`.
 - Manual app launch: passed; the built app opened and rendered the Welcome screen.
-- Manual temporary vault workflow, 2026-05-31 release DMG run: passed with a non-blocking standalone cache warning. See `artifacts/smoke/macos/smoke-macos-release-manual-vault-20260531-summary.md`.
+- Manual temporary vault workflow, 2026-05-31 release DMG run: passed with a non-blocking standalone cache warning. See `docs/reports/smoke-macos-release-manual-vault-20260531-summary.md`.
 
 ## 7. Artifacts
 
@@ -126,7 +126,7 @@ Keep these artifacts after each run:
 - Tauri DMG path, when produced: `src-tauri/target/release/bundle/dmg/`
 - Diagnostic bundle path, if a future supported diagnostic CLI produces one.
 - Failure screenshot path, if the manual app smoke requires a screenshot.
-- Manual release-vault screenshot directory, when committed after privacy review: `artifacts/smoke/macos/release-manual-vault-YYYYMMDD/`
+- Manual release-vault screenshot directory, when kept as local evidence after privacy review: `artifacts/smoke/macos/release-manual-vault-YYYYMMDD/`
 
 ## 8. Known Limitations
 

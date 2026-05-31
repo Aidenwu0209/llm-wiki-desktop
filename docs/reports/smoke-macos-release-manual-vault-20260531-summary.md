@@ -45,12 +45,6 @@ Boundary checks:
 - No writeback proposal was applied.
 - Signing, notarization, stapling, and Developer ID distribution were not claimed.
 
-Screenshots:
+Screenshot evidence:
 
-- `release-manual-vault-20260531/01-release-welcome-create-project.png`
-- `release-manual-vault-20260531/02-dashboard-after-create-cache-error.png`
-- `release-manual-vault-20260531/03-raw-sources-after-import.png`
-- `release-manual-vault-20260531/04-raw-sources-after-plan-details.png`
-- `release-manual-vault-20260531/05-dashboard-after-plan.png`
-- `release-manual-vault-20260531/06-chat-local-evidence-draft.png`
-
+Screenshots were captured during the manual smoke but are not committed. They are local run evidence and may contain desktop paths or other private context.
