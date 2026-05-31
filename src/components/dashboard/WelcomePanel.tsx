@@ -39,7 +39,6 @@ type WelcomePanelProps = {
   onToggleLanguage: () => void;
   onSelectVault: (path: string) => void;
   onCreateVault: () => void;
-  onViewDemoTour?: () => void;
   onCreateProject?: (draft: NewWikiProjectDraft) => boolean | Promise<boolean>;
   onChooseParentDirectory?: () => Promise<string | null>;
 };
@@ -66,12 +65,8 @@ const welcomeCopy = {
     continue: "继续",
     recentProjects: "最近项目",
     noRecent: "还没有最近项目。",
-    demoDetected: "Demo 和已检测项目",
-    noSuggestions: "没有找到已生成的知识库建议。",
-    openDemo: "打开 DeepSeek 演示知识库",
-    viewDemoTour: "查看 Demo Tour",
-    syntheticDemo: "合成示例",
-    demoDescription: "打开合成示例，不会导入真实资料。",
+    detectedProjects: "已检测项目",
+    noSuggestions: "没有找到已生成的知识库项目。",
     createTitle: "创建新的 Wiki 项目",
     createSubtitle: "选择本地项目模板。运行时保持本地优先，写回保持先提案后写回。",
     projectName: "项目名称",
@@ -99,12 +94,8 @@ const welcomeCopy = {
     continue: "Continue",
     recentProjects: "Recent Projects",
     noRecent: "No recent projects yet.",
-    demoDetected: "Demo & Detected",
-    noSuggestions: "No generated vault suggestions found.",
-    openDemo: "Open DeepSeek demo vault",
-    viewDemoTour: "View Demo Tour",
-    syntheticDemo: "Synthetic demo",
-    demoDescription: "Open the synthetic tour without importing real material.",
+    detectedProjects: "Detected Projects",
+    noSuggestions: "No generated wiki projects found.",
     createTitle: "Create New Wiki Project",
     createSubtitle: "Choose a local project template. The runtime stays local-first and proposal-first.",
     projectName: "Project Name",
@@ -170,7 +161,6 @@ export function WelcomePanel({
   onToggleLanguage,
   onSelectVault,
   onCreateVault,
-  onViewDemoTour,
   onCreateProject,
   onChooseParentDirectory,
   modalOnly,
@@ -186,8 +176,6 @@ export function WelcomePanel({
 
   const recentVaults = Array.from(new Set(appState?.recentVaults ?? []));
   const suggestionByPath = new Map(suggestions.map((item) => [item.path, item]));
-  const deepseekVaults = suggestions.filter((item) => item.kind === "deepseek");
-  const demoVault = deepseekVaults[0];
   const lastVault = appState?.lastSelectedVault || recentVaults[0] || "";
   const visibleRecent = recentVaults.slice(0, 5);
   const detectedProjects = useMemo(() => suggestions.filter((item) => item.exists).slice(0, 4), [suggestions]);
@@ -195,7 +183,6 @@ export function WelcomePanel({
   const selectedTemplateText = text.templates[selectedTemplate.id];
   const parentWhitespaceComponents = useMemo(() => pathWhitespaceComponents(parentDirectory), [parentDirectory]);
   const lastVaultRiskParts = useMemo(() => pathWhitespaceComponents(lastVault), [lastVault]);
-  const demoVaultRiskParts = useMemo(() => pathWhitespaceComponents(demoVault?.path ?? ""), [demoVault?.path]);
 
   const resetCreateState = () => {
     setProjectName("");
@@ -378,25 +365,10 @@ export function WelcomePanel({
 
         <section>
           <div className="section-head compact">
-            <h3>{text.demoDetected}</h3>
+            <h3>{text.detectedProjects}</h3>
             <span>{detectedProjects.length}</span>
           </div>
           {detectedProjects.length === 0 && <p className="empty">{text.noSuggestions}</p>}
-          {demoVault?.exists && (
-            <button onClick={() => onSelectVault(demoVault.path)}>
-              <strong>{text.openDemo}</strong>
-              <span className="inline-state ok">demo</span>
-              <code>{visiblePath(demoVault.path)}</code>
-              <PathRiskNotice message={text.projectPathWhitespaceWarning} parts={demoVaultRiskParts} />
-            </button>
-          )}
-          {!demoVault?.exists && onViewDemoTour && (
-            <button type="button" onClick={onViewDemoTour}>
-              <strong>{text.viewDemoTour}</strong>
-              <span className="inline-state ok">{text.syntheticDemo}</span>
-              <code>{text.demoDescription}</code>
-            </button>
-          )}
           {detectedProjects.map((item) => {
             const pathRiskParts = pathWhitespaceComponents(item.path);
             return (
