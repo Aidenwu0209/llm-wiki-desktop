@@ -6,17 +6,17 @@ export const ERNIE_AI_STUDIO_DEFAULT_MODEL = "ernie-5.1";
 export const ERNIE_AI_STUDIO_FALLBACK_MODELS = ["ernie-4.0-turbo-128k", "ernie-3.5-8k"];
 
 export const PADDLEOCR_VL15_PROVIDER_ID = "paddleocr-vl15";
-export const PADDLEOCR_VL15_DISPLAY_NAME = "PaddleOCR-VL-1.5";
+export const PADDLEOCR_VL15_DISPLAY_NAME = "PaddleOCR-VL Document Parsing Skill";
 export const PADDLEOCR_VL15_API_KEY_ENV = "PADDLEOCR_API_KEY";
-export const PADDLEOCR_VL15_DEFAULT_MODEL = "PaddleOCR-VL-1.5";
+export const PADDLEOCR_VL15_DEFAULT_MODEL = "PaddleOCR-VL-1.6";
 export const PADDLEOCR_VL15_DEFAULT_ENDPOINT = "";
 
 export const paddleOcrVl15Provider = {
   id: PADDLEOCR_VL15_PROVIDER_ID,
   displayName: PADDLEOCR_VL15_DISPLAY_NAME,
   name: PADDLEOCR_VL15_DISPLAY_NAME,
-  subtitle: "Default OCR parser for PDF/image ingest, gated by endpoint and the configured API key env var.",
-  subtitleZh: "PDF / 图片 ingest 默认 OCR parser，由 endpoint 和配置的 API key 环境变量门控。",
+  subtitle: "PaddleOCR-VL document parsing skill for PDF/image ingest, gated by endpoint and the configured API key env var.",
+  subtitleZh: "PaddleOCR-VL 文档解析技能，用于 PDF / 图片 ingest，由 endpoint 和配置的 API key 环境变量门控。",
   providerType: "hosted",
   apiKeyEnv: PADDLEOCR_VL15_API_KEY_ENV,
   defaultModel: PADDLEOCR_VL15_DEFAULT_MODEL,

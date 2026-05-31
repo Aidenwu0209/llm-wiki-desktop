@@ -5,7 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 
-const DEFAULT_MODEL = "paddleocr-vl-1.5";
+const DEFAULT_MODEL = "PaddleOCR-VL-1.6";
 const DEFAULT_API_KEY_ENV_VAR = "PADDLEOCR_API_KEY";
 const API_KEY_ENV_VAR_SETTING = "PADDLEOCR_API_KEY_ENV";
 const REQUIRED_MANIFEST_FIELDS = [

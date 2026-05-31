@@ -823,7 +823,7 @@ const shellCopy: Record<UiLanguage, {
       createVaultPath: "请先填写要创建的知识库绝对路径。",
       createProject: "请填写 Project Name 并选择 Parent Directory。",
       dropNoPath: "拖拽事件没有提供本地文件路径，请使用导入文件或导入文件夹按钮。",
-      openProjectWebUnavailable: "当前浏览器预览无法打开本地目录。请使用 Tauri 桌面端打开项目，或先查看 Demo Tour。",
+      openProjectWebUnavailable: "当前浏览器预览无法打开本地目录。请使用 Tauri 桌面端打开项目。",
     },
   },
   en: {
@@ -949,7 +949,7 @@ const shellCopy: Record<UiLanguage, {
       createVaultPath: "Enter an absolute path for the vault first.",
       createProject: "Enter a Project Name and choose a Parent Directory.",
       dropNoPath: "The drag event did not provide local file paths. Use Import files or Import folder.",
-      openProjectWebUnavailable: "This browser preview cannot open local folders. Use the Tauri desktop app to open a project, or start with the Demo Tour.",
+      openProjectWebUnavailable: "This browser preview cannot open local folders. Use the Tauri desktop app to open a project.",
     },
   },
 };
@@ -1019,7 +1019,7 @@ const initialDesktopSettings: DesktopSettings = {
     providerId: "paddleocr-vl15",
     endpoint: "",
     apiKeyEnvVar: "PADDLEOCR_API_KEY",
-    model: "PaddleOCR-VL-1.5",
+    model: "PaddleOCR-VL-1.6",
   },
   llmProviderCenter: {
     activeProviderId: null,
@@ -3686,7 +3686,6 @@ function App() {
           onToggleLanguage={toggleInterfaceLanguage}
           onChooseVault={chooseVault}
           onSelectVault={selectVault}
-          onViewDemoTour={loadDemoTour}
           createOpen={createProjectOpen}
           onCreateOpenChange={setCreateProjectOpen}
           onCreateVault={handleCreateVault}
@@ -3851,7 +3850,6 @@ function App() {
           onToggleLanguage={toggleInterfaceLanguage}
           onChooseVault={chooseVault}
           onSelectVault={selectVault}
-          onViewDemoTour={loadDemoTour}
           createOpen={createProjectOpen}
           onCreateOpenChange={setCreateProjectOpen}
           onCreateVault={handleCreateVault}
@@ -3945,7 +3943,6 @@ function App() {
             onToggleLanguage={toggleInterfaceLanguage}
             onChooseVault={chooseVault}
             onSelectVault={selectVault}
-            onViewDemoTour={loadDemoTour}
             createOpen={createProjectOpen}
             onCreateOpenChange={setCreateProjectOpen}
             onCreateVault={handleCreateVault}

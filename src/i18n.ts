@@ -21,13 +21,13 @@ export const WELCOME_ONBOARDING_COPY = {
     steps: [
       "创建或打开知识库",
       "提交 PDF 或图片",
-      "使用 PaddleOCR-VL-1.5 解析",
+      "使用 PaddleOCR-VL 文档解析技能",
       "使用文心一言基于证据问答",
       "创建可审核写回提案",
     ],
     flow: [
       "PDF / 图片",
-      "PaddleOCR-VL-1.5",
+      "PaddleOCR-VL 文档解析技能",
       "Markdown / JSON Artifact",
       "LLM Wiki Runtime",
       "Evidence Map",
@@ -45,13 +45,13 @@ export const WELCOME_ONBOARDING_COPY = {
     steps: [
       "Create or open a Vault",
       "Submit PDFs or images",
-      "Parse with PaddleOCR-VL-1.5",
+      "Use PaddleOCR-VL Document Parsing Skill",
       "Ask with ERNIE using evidence",
       "Create a writeback proposal",
     ],
     flow: [
       "PDF / Image",
-      "PaddleOCR-VL-1.5",
+      "PaddleOCR-VL Document Parsing Skill",
       "Markdown / JSON Artifact",
       "LLM Wiki Runtime",
       "Evidence Map",

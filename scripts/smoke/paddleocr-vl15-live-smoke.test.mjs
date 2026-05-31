@@ -18,7 +18,7 @@ const fixtureManifest = {
   source_sha256: "9".repeat(64),
   artifact_sha256: "a".repeat(64),
   parser: "paddleocr-vl15-live-smoke",
-  parser_model: "paddleocr-vl-1.5",
+  parser_model: "PaddleOCR-VL-1.6",
   parser_version: "fixture-contract",
   page_count: 1,
   chunk_count: 2,
