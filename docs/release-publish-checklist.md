@@ -48,7 +48,7 @@ npm run build:app
 - [ ] 不得声称已提供 production installer。
 - [ ] 不得声称真实 PaddleOCR live parse 已完成，除非 [#210](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/210) 有脱敏 live report。
 - [ ] 不得声称真实 ERNIE live answer 已完成，除非 [#211](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/211) 有脱敏 live report。
-- [ ] 不得声称 macOS manual vault smoke 已 full pass，除非 [#213](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/213) 有人工复验记录。
+- [x] macOS manual vault smoke 需要真实人工复验记录；2026-05-31 release DMG run 已提交到 `artifacts/smoke/macos/smoke-macos-release-manual-vault-20260531-summary.md`，并记录非阻塞 standalone cache warning。
 - [ ] 不得声称 Windows packaged smoke 已完成，除非 [#217](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/217) 有记录。
 
 ## 发布后跟踪

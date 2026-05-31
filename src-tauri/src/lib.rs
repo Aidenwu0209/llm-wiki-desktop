@@ -1634,8 +1634,8 @@ fn workspace_root() -> PathBuf {
     workspace_root_from_path(&current).unwrap_or(current)
 }
 
-fn workspace_root_for_vault(vault: &Path) -> PathBuf {
-    workspace_root_from_path(vault).unwrap_or_else(workspace_root)
+fn workspace_root_for_vault(vault: &Path) -> Option<PathBuf> {
+    workspace_root_from_path(vault)
 }
 
 fn app_state_path_for_workspace(root: &Path) -> PathBuf {
@@ -5118,10 +5118,17 @@ fn save_last_selected_vault(vault_path: String) -> Result<DesktopAppState, Strin
     let vault = PathBuf::from(vault_path);
     require_existing_dir(&vault, "vault")?;
     let workspace = workspace_root_for_vault(&vault);
-    let mut state = load_app_state_from_workspace(&workspace);
+    let mut state = workspace
+        .as_ref()
+        .map(|workspace| load_app_state_from_workspace(workspace))
+        .unwrap_or_else(load_app_state_from_disk);
     push_recent_vault(&mut state, &vault);
-    save_app_state_to_workspace(&workspace, &state)?;
-    mirror_app_state_to_launch_scope(&state, &workspace)?;
+    if let Some(workspace) = workspace {
+        save_app_state_to_workspace(&workspace, &state)?;
+        mirror_app_state_to_launch_scope(&state, &workspace)?;
+    } else {
+        save_app_state_to_disk(&state)?;
+    }
     Ok(state)
 }
 
@@ -18438,6 +18445,16 @@ mod tests {
             .is_file());
 
         let _ = fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn standalone_selected_vault_does_not_invent_workspace_cache_scope() {
+        let vault = test_vault("standalone-state");
+        create_minimal_vault(&vault).expect("create minimal vault");
+
+        assert!(workspace_root_for_vault(&vault).is_none());
+
+        let _ = fs::remove_dir_all(vault);
     }
 
     #[test]
