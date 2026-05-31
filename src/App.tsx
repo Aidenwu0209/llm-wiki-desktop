@@ -4608,12 +4608,12 @@ function App() {
           <div className="impact-list compact">
             {impactEdges.length === 0 && <p className="empty">{interfaceLanguage === "zh" ? "暂无影响边。" : "No impact edges."}</p>}
             {impactEdges.map((edge) => (
-              <button key={edge.edgeId}>
+              <div className="impact-row" key={edge.edgeId}>
                 <span className={classNames("status-chip", edge.status)}>{edge.status}</span>
                 <strong>{edge.fromType}{" -> "}{edge.toType}</strong>
                 <em>{edge.relationship}</em>
                 <code>{edge.fromId}{" -> "}{edge.toId}</code>
-              </button>
+              </div>
             ))}
           </div>
         </section>

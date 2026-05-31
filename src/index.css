@@ -2577,6 +2577,7 @@ body[data-shell-panel-resizing="true"] * {
 .ingest-list button,
 .contract-list button,
 .impact-list button,
+.impact-list .impact-row,
 .registry-list button,
 .work-item {
   position: relative;
@@ -2693,6 +2694,7 @@ body[data-shell-panel-resizing="true"] * {
 .ingest-list button > .status-chip:not(.inline),
 .contract-list button > .status-chip:not(.inline),
 .impact-list button > .status-chip:not(.inline),
+.impact-list .impact-row > .status-chip:not(.inline),
 .registry-list button > .status-chip:not(.inline),
 .graph-list button > .status-chip:not(.inline),
 .graph-node-list button > .status-chip:not(.inline),

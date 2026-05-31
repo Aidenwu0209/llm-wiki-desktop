@@ -20335,16 +20335,12 @@ fn ensure_main_window(app: &tauri::App) -> tauri::Result<()> {
         return Ok(());
     }
 
-    tauri::WebviewWindowBuilder::new(
-        app,
-        "main",
-        tauri::WebviewUrl::App("index.html".into()),
-    )
-    .title("LLM Wiki")
-    .inner_size(1360.0, 860.0)
-    .min_inner_size(980.0, 680.0)
-    .resizable(true)
-    .build()?;
+    tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
+        .title("LLM Wiki")
+        .inner_size(1360.0, 860.0)
+        .min_inner_size(980.0, 680.0)
+        .resizable(true)
+        .build()?;
 
     Ok(())
 }
