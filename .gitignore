@@ -11,3 +11,4 @@ src-tauri/gen/
 vite.config.js
 vite.config.d.ts
 benchmarks/results/
+artifacts/smoke/

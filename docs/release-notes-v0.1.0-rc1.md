@@ -33,7 +33,7 @@
 - 不自动上传 raw documents。
 - 不自动 apply writeback。
 - 不把 fixture、dry-run、template、自测或配置门禁写成 live 成功。
-- macOS clean-profile 手动 vault workflow 仍需人工复验：[#213](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/213)。
+- macOS clean-profile 手动 vault workflow 已在 2026-05-31 用 release DMG 复验；发布后的源码修复补齐独立 release App 误写 `/.cache/llm-wiki-desktop` 的非阻塞 state fallback：[#213](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/213)。
 - Windows packaged smoke 仍需完成：[#217](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/217)。
 
 ## 发布候选验证范围

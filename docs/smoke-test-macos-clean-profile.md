@@ -10,8 +10,8 @@ The test must preserve the project runtime-first boundary: desktop manages vault
 
 - 自动 smoke：按现有记录，`npm run smoke:macos` 已完成依赖安装、测试、前端构建、Rust tests 和本地打包路径。
 - `build:app`：按现有记录，已生成本地 unsigned `.app` / `.dmg`；这不等同于 signed、notarized 或 production-ready。
-- 手动 vault workflow：仍需人工复验。临时 vault 创建、导入 sample、plan ingest 和 dashboard 检查在上一轮记录中是 partial / blocked，不能写成 full pass。
-- 当前阻塞：Finder picker 自动化在 macOS picker / Accessibility 权限处受限；当前环境无法完成完整手动 UI workflow 证据采集。
+- 手动 vault workflow：2026-05-31 已使用 GitHub release `v0.1.0-rc1` 的 macOS DMG 完成 release App 人工复验，覆盖临时 vault 创建、sample 导入、manual plan、Dashboard、Raw Sources 和 Wiki Chat。
+- 当前非阻塞发现：`v0.1.0-rc1` release App 在独立 DMG 启动场景会显示 `failed to create /.cache/llm-wiki-desktop: Read-only file system (os error 30)`；该错误不阻塞本轮 workflow，本 PR 修复 standalone selected-vault state fallback。
 - 跟踪 issue：[#213 [P1] 完成 macOS clean-profile 手动 vault smoke](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/213)。
 
 ## 2. Environment
@@ -101,7 +101,7 @@ Fill in `Actual Result` and `Status` during the smoke run. Do not prefill or inf
 | Frontend build | `npm run build` | TypeScript and Vite production build complete and write `dist/`. | Completed during `npm run smoke:macos`; Vite wrote `dist/`. The existing large chunk warning was emitted. | Pass |
 | Rust tests | `cd src-tauri && cargo test` | Rust test suite passes from the Tauri crate directory. | Completed during `npm run smoke:macos`; 123 Rust tests passed, 0 failed. | Pass |
 | Tauri package | `cd .. && npm run build:app` | Local `.app` and configured bundle artifacts are created. | Completed during `npm run smoke:macos`; unsigned local `.app` and `.dmg` bundles were produced. | Pass |
-| Minimal vault workflow | Manual desktop smoke | Temporary sample import can be planned/refreshed without real provider keys, uploads, or unapproved writeback. | Partially completed. The built `.app` launched and showed the Welcome screen. A disposable vault and sample file were prepared under `<tmp>/llm-wiki-macos-clean-profile-smoke/`. Folder selection was attempted through the macOS picker, but UI automation lost Accessibility permission before the temporary vault could be opened and the sample import/plan/dashboard flow could be completed. No provider key was requested, no upload was performed, and no writeback was applied. | Partial / blocked |
+| Minimal vault workflow | Manual desktop smoke | Temporary sample import can be planned/refreshed without real provider keys, uploads, or unapproved writeback. | Completed on 2026-05-31 CST against release DMG `LLM.Wiki_0.1.0_universal-macos-universal.dmg` from `v0.1.0-rc1`. The release App created disposable vault `manual-vault-smoke`, imported `manual-vault-smoke-sample.md`, planned ingest as `stageable=1` / `blocked=0`, opened Dashboard and Raw Sources, and opened Wiki Chat. Chat local search returned the imported inbox file; ordinary Send generated a local deterministic evidence draft with `Use ERNIE` disabled and no provider call. The release App displayed the non-blocking `/.cache/llm-wiki-desktop` state-save error, fixed by this PR. | Pass with non-blocking warning |
 
 ## 6.1 Actual Run Notes
 
@@ -114,7 +114,7 @@ Fill in `Actual Result` and `Status` during the smoke run. Do not prefill or inf
 - Built app bundle: `src-tauri/target/release/bundle/macos/LLM Wiki.app`.
 - Built DMG bundle: `src-tauri/target/release/bundle/dmg/LLM Wiki_0.1.0_aarch64.dmg`.
 - Manual app launch: passed; the built app opened and rendered the Welcome screen.
-- Manual temporary vault workflow: not completed; see Known Limitations.
+- Manual temporary vault workflow, 2026-05-31 release DMG run: passed with a non-blocking standalone cache warning. See `docs/reports/smoke-macos-release-manual-vault-20260531-summary.md`.
 
 ## 7. Artifacts
 
@@ -126,6 +126,7 @@ Keep these artifacts after each run:
 - Tauri DMG path, when produced: `src-tauri/target/release/bundle/dmg/`
 - Diagnostic bundle path, if a future supported diagnostic CLI produces one.
 - Failure screenshot path, if the manual app smoke requires a screenshot.
+- Manual release-vault screenshot directory, when kept as local evidence after privacy review: `artifacts/smoke/macos/release-manual-vault-YYYYMMDD/`
 
 ## 8. Known Limitations
 
@@ -133,4 +134,5 @@ Keep these artifacts after each run:
 - Apple Developer ID signing: not covered.
 - Provider-backed QA: not covered when no provider key is available.
 - Windows testing: not part of this macOS clean-profile smoke.
-- Manual temporary vault import/plan/dashboard flow was attempted but not completed in this run because macOS denied further Accessibility control to `osascript` during Finder picker automation. This is an evidence limitation for this run, not a product pass claim. A follow-up run should complete the manual UI steps from a human-controlled clean profile or with Accessibility permission granted before starting the smoke.
+- Historical 2026-05-28 manual temporary vault flow was partial because macOS denied further Accessibility control to `osascript` during Finder picker automation.
+- The 2026-05-31 release DMG manual vault workflow completed, but it exposed a non-blocking standalone cache state error in the published RC. The fix belongs to source after the RC DMG and should be validated in the next packaged build.
