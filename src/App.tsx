@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -1906,6 +1906,7 @@ function App() {
   const pageVisible = (...pages: ShellPage[]) => pages.includes(activePage);
   const graphWorkspaceMode = activePage === "graph";
   const chatWorkspaceMode = activePage === "chat";
+  const researchPanelCanRender = activePage !== "settings" && !graphWorkspaceMode && !chatWorkspaceMode;
   const shellKnowledgeVisible = activePage !== "settings" && !chatWorkspaceMode;
   const shellInspectorVisible = activePage !== "settings" && !graphWorkspaceMode && !chatWorkspaceMode && (detailDrawerOpen || researchPanelOpen);
   const shellStatusHeaderVisible = activePage !== "settings" && !graphWorkspaceMode && !chatWorkspaceMode;
@@ -1922,6 +1923,13 @@ function App() {
       "--preview-sidebar-width": `${previewSidebarWidth}px`,
     } as CSSProperties)
     : undefined;
+  const openResearchPanelWorkspace = useCallback(() => {
+    if (!researchPanelCanRender) {
+      setActivePage("dashboard");
+    }
+    setDetailDrawerOpen(false);
+    setResearchPanelOpen(true);
+  }, [researchPanelCanRender]);
 
   useEffect(() => {
     if (typeof localStorage === "undefined") return;
@@ -2759,8 +2767,7 @@ function App() {
     setQueryDraft(null);
     setWritebackApplyStatus(null);
     setError(null);
-    setActivePage("chat");
-    setResearchPanelOpen(true);
+    openResearchPanelWorkspace();
   }
 
   async function handleCreateResearchProposal(topic: string) {
@@ -2793,8 +2800,7 @@ function App() {
     setQueryDraft(null);
     setWritebackApplyStatus(null);
     setError(null);
-    setActivePage("chat");
-    setResearchPanelOpen(true);
+    openResearchPanelWorkspace();
   }
 
   async function handleOpenObsidian() {
@@ -3218,11 +3224,11 @@ function App() {
         detail: isZh ? "打开右侧研究面板，生成 evidence-first 写回提案。" : "Open the right research panel for evidence-first proposals.",
         keywords: ["deep research", "query", "writeback", "proposal"],
         disabled: !vaultPath,
-        run: () => setResearchPanelOpen(true),
+        run: openResearchPanelWorkspace,
       },
     ];
     return [...actionItems, ...navItems, ...fileItems];
-  }, [busy, copy, interfaceLanguage, runnableIngest, runtimeRunning, status?.files, vaultPath]);
+  }, [busy, copy, interfaceLanguage, openResearchPanelWorkspace, runnableIngest, runtimeRunning, status?.files, vaultPath]);
 
   const commandPaletteResults = useMemo(() => {
     const query = commandQuery.trim().toLowerCase();
@@ -3750,12 +3756,11 @@ function App() {
             title={researchPanelLabel}
             aria-label={researchPanelLabel}
             onClick={() => {
-              if (activePage === "settings") {
-                setActivePage("chat");
-                setResearchPanelOpen(true);
+              if (researchPanelOpen && researchPanelCanRender) {
+                setResearchPanelOpen(false);
                 return;
               }
-              setResearchPanelOpen((open) => !open);
+              openResearchPanelWorkspace();
             }}
           >
             <Search size={19} />
