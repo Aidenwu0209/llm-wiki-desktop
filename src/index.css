@@ -8951,3 +8951,110 @@ button.primary:hover:not(:disabled),
     border-left: 0;
   }
 }
+
+@media (max-width: 760px) {
+  .wiki-chat-page.chat-search-workbench,
+  .chat-workspace-mode .wiki-chat-page.chat-search-workbench,
+  .app-shell.inspector-open .wiki-chat-page.chat-search-workbench {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .wiki-chat-sidebar,
+  .wiki-chat-main,
+  .wiki-chat-references,
+  .app-shell.inspector-open .wiki-chat-sidebar,
+  .app-shell.inspector-open .wiki-chat-main {
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .wiki-chat-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid #e1e7e2;
+  }
+
+  .wiki-chat-references,
+  .app-shell.inspector-open .wiki-chat-references {
+    grid-column: auto;
+    height: auto;
+    max-height: none;
+    border-top: 1px solid #e1e7e2;
+    border-left: 0;
+  }
+
+  .wiki-chat-provider-bar,
+  .wiki-chat-pane-title,
+  .wiki-chat-target-row {
+    align-items: start;
+  }
+
+  .wiki-chat-provider-bar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wiki-chat-provider-bar strong,
+  .wiki-chat-provider-bar span,
+  .wiki-chat-provider-bar em {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .wiki-chat-thread {
+    min-height: 320px;
+    padding: 12px;
+  }
+
+  .wiki-chat-bubble,
+  .wiki-chat-message.answer .wiki-chat-bubble {
+    width: auto;
+    max-width: 100%;
+  }
+
+  .wiki-chat-target-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .question-chips.compact {
+    max-height: 150px;
+  }
+
+  .question-chips button,
+  .wiki-chat-composer-actions button,
+  .wiki-chat-result-actions button,
+  .wiki-chat-references .inline-actions button {
+    min-width: 0;
+    white-space: normal;
+  }
+
+  .wiki-chat-composer-actions,
+  .wiki-chat-result-actions,
+  .wiki-chat-references .inline-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    justify-content: stretch;
+  }
+
+  .wiki-chat-composer-actions button,
+  .wiki-chat-result-actions button,
+  .wiki-chat-references .inline-actions button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .evidence-pill-grid button {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .wiki-chat-result em,
+  .wiki-chat-history-list em,
+  .evidence-pill-grid button em {
+    white-space: normal;
+  }
+}
