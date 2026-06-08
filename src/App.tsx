@@ -1789,6 +1789,7 @@ function pipelineState(index: number, status: VaultStatus | null, plan: IngestPl
 
 function App() {
   const shellRef = useRef<HTMLElement | null>(null);
+  const projectSwitcherRef = useRef<HTMLDivElement | null>(null);
   const projectSwitcherTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [interfaceLanguage, setInterfaceLanguage] = useState<UiLanguage>(() =>
     normalizeUiLanguage(typeof localStorage === "undefined" ? null : localStorage.getItem(INTERFACE_LANGUAGE_STORAGE_KEY)),
@@ -2958,6 +2959,17 @@ function App() {
   useEffect(() => {
     if (!projectSwitcherOpen) return;
 
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && projectSwitcherRef.current?.contains(target)) return;
+      setProjectSwitcherOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setProjectSwitcherOpen(false);
+      projectSwitcherTriggerRef.current?.focus();
+    };
     const updateProjectSwitcherPosition = () => {
       const trigger = projectSwitcherTriggerRef.current;
       if (!trigger) return;
@@ -2988,9 +3000,13 @@ function App() {
     };
 
     updateProjectSwitcherPosition();
+    document.addEventListener("pointerdown", closeOnOutsidePointer, true);
+    document.addEventListener("keydown", closeOnEscape);
     window.addEventListener("resize", updateProjectSwitcherPosition);
     window.addEventListener("scroll", updateProjectSwitcherPosition, true);
     return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer, true);
+      document.removeEventListener("keydown", closeOnEscape);
       window.removeEventListener("resize", updateProjectSwitcherPosition);
       window.removeEventListener("scroll", updateProjectSwitcherPosition, true);
     };
@@ -3775,6 +3791,7 @@ function App() {
           <span className="nav-label">{navRailToggleLabel}</span>
         </button>
         <div
+          ref={projectSwitcherRef}
           className="rail-project-switcher"
           onBlur={(event) => {
             const nextTarget = event.relatedTarget;
