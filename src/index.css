@@ -7656,6 +7656,7 @@ button.primary:hover:not(:disabled),
   display: grid;
   gap: 14px;
   width: min(760px, 100%);
+  min-width: 0;
   max-height: calc(100vh - 56px);
   overflow: auto;
   border: 1px solid #b8c5bc;
@@ -7670,6 +7671,11 @@ button.primary:hover:not(:disabled),
   align-items: start;
   justify-content: space-between;
   gap: 14px;
+  min-width: 0;
+}
+
+.project-modal-head > div {
+  min-width: 0;
 }
 
 .project-modal-head h2 {
@@ -8105,24 +8111,79 @@ button.primary:hover:not(:disabled),
 
 .template-picker {
   display: grid;
-  grid-template-columns: repeat(5, minmax(108px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 118px), 1fr));
   gap: 8px;
+  min-width: 0;
 }
 
 .template-card strong {
   font-size: 13px;
 }
 
+.template-card {
+  min-width: 0;
+}
+
+.template-card strong,
+.template-card em {
+  overflow-wrap: anywhere;
+}
+
 .directory-picker {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
+  min-width: 0;
 }
 
 .project-form-grid {
   display: grid;
-  grid-template-columns: minmax(180px, 0.55fr) minmax(260px, 1fr);
+  grid-template-columns: minmax(0, 0.55fr) minmax(0, 1fr);
   gap: 10px;
+}
+
+@media (max-width: 520px) {
+  .project-modal-backdrop {
+    align-items: start;
+    justify-items: center;
+    overflow: auto;
+    padding: 12px;
+  }
+
+  .project-modal {
+    width: 100%;
+    max-height: calc(100dvh - 24px);
+    padding: 14px;
+  }
+
+  .project-modal-head {
+    gap: 10px;
+  }
+
+  .project-modal-head .logo-mark,
+  .project-modal-head .brand-logo {
+    width: 38px;
+    height: 38px;
+  }
+
+  .template-picker {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .project-form-grid,
+  .directory-picker {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .project-modal-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .project-modal-actions button {
+    width: 100%;
+    justify-content: center;
+  }
 }
 
 .chat-search-page.chat-search-workbench {
