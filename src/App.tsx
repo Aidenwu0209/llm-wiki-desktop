@@ -822,6 +822,7 @@ const shellCopy: Record<UiLanguage, {
     errors: {
       createVaultPath: "请先填写要创建的知识库绝对路径。",
       createProject: "请填写 Project Name 并选择 Parent Directory。",
+      createProjectWebUnavailable: "当前浏览器预览无法创建本地目录。请使用 Tauri 桌面端创建项目。",
       dropNoPath: "拖拽事件没有提供本地文件路径，请使用导入文件或导入文件夹按钮。",
       openProjectWebUnavailable: "当前浏览器预览无法打开本地目录。请使用 Tauri 桌面端打开项目。",
     },
@@ -948,6 +949,7 @@ const shellCopy: Record<UiLanguage, {
     errors: {
       createVaultPath: "Enter an absolute path for the vault first.",
       createProject: "Enter a Project Name and choose a Parent Directory.",
+      createProjectWebUnavailable: "This browser preview cannot create local folders. Use the Tauri desktop app to create a project.",
       dropNoPath: "The drag event did not provide local file paths. Use Import files or Import folder.",
       openProjectWebUnavailable: "This browser preview cannot open local folders. Use the Tauri desktop app to open a project.",
     },
@@ -2351,6 +2353,10 @@ function App() {
   }
 
   async function chooseParentDirectory() {
+    if (!isTauriAvailable()) {
+      setError(copy.errors.createProjectWebUnavailable);
+      return null;
+    }
     const picked = await open({ directory: true, multiple: false, title: copy.dialogs.chooseParent });
     return typeof picked === "string" ? picked : null;
   }
@@ -2378,6 +2384,10 @@ function App() {
   async function handleCreateProject(draft: NewWikiProjectDraft) {
     if (!draft.projectName.trim() || !draft.parentDirectory.trim()) {
       setError(copy.errors.createProject);
+      return false;
+    }
+    if (!isTauriAvailable()) {
+      setError(copy.errors.createProjectWebUnavailable);
       return false;
     }
     const targetPath = joinLocalPath(draft.parentDirectory, projectSlug(draft.projectName));
