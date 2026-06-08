@@ -7460,6 +7460,10 @@ body[data-shell-panel-resizing="true"] * {
     grid-template-columns: var(--nav-rail-width) minmax(0, 1fr);
   }
 
+  .app-shell.nav-rail-expanded {
+    --nav-rail-width: 76px;
+  }
+
   .icon-sidebar,
   .app-shell.nav-rail-expanded .icon-sidebar,
   .nashsu-aligned-shell.nav-rail-expanded .icon-sidebar {
