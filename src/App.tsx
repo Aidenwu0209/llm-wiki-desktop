@@ -1854,6 +1854,15 @@ function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const copy = shellCopy[interfaceLanguage];
+  const desktopActionWebUnavailable = interfaceLanguage === "zh"
+    ? "当前浏览器预览无法执行桌面端动作。请使用 Tauri 桌面端运行处理流程、打开 Obsidian 或保存设置。"
+    : "This browser preview cannot run desktop actions. Use the Tauri desktop app to run pipelines, open Obsidian, or save settings.";
+  const guardDesktopAction = () => {
+    if (isTauriAvailable()) return true;
+    setError(desktopActionWebUnavailable);
+    setBusy(null);
+    return false;
+  };
   const researchPanelLabel = interfaceLanguage === "zh" ? "深度研究" : "Deep Research";
   const previewSidebarTitle = detailDrawerOpen
     ? (interfaceLanguage === "zh" ? "阅读工作区" : "Reading workspace")
@@ -2091,6 +2100,7 @@ function App() {
   const openVaultItem = async (path?: string | null) => {
     if (!vaultPath || !path) return;
     if (focusVaultItem(path)) return;
+    if (!guardDesktopAction()) return;
     try {
       await openVaultPath(vaultPath, path);
     } catch (err) {
@@ -2099,6 +2109,7 @@ function App() {
   };
   const openVaultItemInObsidian = async (path?: string | null) => {
     if (!vaultPath || !path) return;
+    if (!guardDesktopAction()) return;
     try {
       await openVaultPath(vaultPath, path);
     } catch (err) {
@@ -2108,6 +2119,7 @@ function App() {
   const openWorkspacePath = async (path?: string | null) => {
     if (!path) return;
     if (focusVaultItem(path)) return;
+    if (!guardDesktopAction()) return;
     try {
       await openPath(vaultFilePath(path));
     } catch (err) {
@@ -2116,6 +2128,7 @@ function App() {
   };
   const revealResolvedPath = async (path: string) => {
     if (!path) return;
+    if (!guardDesktopAction()) return;
     try {
       await revealPath(path);
     } catch (err) {
@@ -2287,6 +2300,7 @@ function App() {
 
   async function refresh(path = vaultPath) {
     if (!path) return;
+    if (!guardDesktopAction()) return;
     setBusy("inspect");
     setError(null);
     try {
@@ -2347,6 +2361,7 @@ function App() {
   }
 
   async function chooseRuntime() {
+    if (!guardDesktopAction()) return;
     const picked = await open({ directory: true, multiple: false, title: copy.dialogs.chooseRuntime });
     if (typeof picked !== "string") return;
     setDesktopSettings((current) => ({ ...current, runtimePath: picked }));
@@ -2420,6 +2435,7 @@ function App() {
 
   async function handleSaveSettings() {
     if (!vaultPath) return;
+    if (!guardDesktopAction()) return;
     setBusy("save_settings");
     setError(null);
     try {
@@ -2434,6 +2450,7 @@ function App() {
 
   async function handleImportPaths(paths: string[]) {
     if (!vaultPath || paths.length === 0) return;
+    if (!guardDesktopAction()) return;
     setBusy("import");
     setError(null);
     try {
@@ -2449,6 +2466,7 @@ function App() {
   }
 
   async function handleImportFiles() {
+    if (!guardDesktopAction()) return;
     const picked = await open({
       directory: false,
       multiple: true,
@@ -2460,6 +2478,7 @@ function App() {
   }
 
   async function handleImportFolder() {
+    if (!guardDesktopAction()) return;
     const picked = await open({ directory: true, multiple: true, title: copy.dialogs.importFolder });
     const paths = Array.isArray(picked) ? picked.filter((item): item is string => typeof item === "string") : typeof picked === "string" ? [picked] : [];
     await handleImportPaths(paths);
@@ -2480,6 +2499,7 @@ function App() {
 
   async function handleRuntime(kind: string) {
     if (!vaultPath) return;
+    if (!guardDesktopAction()) return;
     setBusy(`start:${kind}`);
     setError(null);
     setLiveLogLines([]);
@@ -2497,6 +2517,7 @@ function App() {
 
   async function handlePlanIngest() {
     if (!vaultPath) return;
+    if (!guardDesktopAction()) return;
     setBusy("plan_ingest");
     setError(null);
     try {
@@ -2512,6 +2533,7 @@ function App() {
 
   async function handleRepairTemplates() {
     if (!vaultPath) return;
+    if (!guardDesktopAction()) return;
     setBusy("repair_templates");
     setError(null);
     try {
@@ -2535,6 +2557,7 @@ function App() {
 
   async function handleIngestLint() {
     if (!vaultPath) return;
+    if (!guardDesktopAction()) return;
     setBusy("ingest_lint");
     setError(null);
     try {
@@ -2549,6 +2572,7 @@ function App() {
 
   async function handleActionStatus(actionId: string, status: "open" | "resolved" | "ignored") {
     if (!vaultPath) return;
+    if (!guardDesktopAction()) return;
     setBusy(`action:${actionId}`);
     setError(null);
     try {
@@ -2566,6 +2590,7 @@ function App() {
     status: "queued" | "running" | "blocked" | "cancelled" | "succeeded" | "failed",
   ) {
     if (!vaultPath) return;
+    if (!guardDesktopAction()) return;
     setBusy(`job:${jobId}`);
     setError(null);
     try {
@@ -2583,6 +2608,7 @@ function App() {
     verdict: "supported" | "needs_review" | "stale" | "contradicted" | "ignored" | "unknown",
   ) {
     if (!vaultPath) return;
+    if (!guardDesktopAction()) return;
     setBusy(`claim:${claimId}`);
     setError(null);
     try {
@@ -2600,6 +2626,7 @@ function App() {
     status: "open" | "approved" | "rejected" | "resolved" | "ignored" | "needs_review",
   ) {
     if (!vaultPath) return;
+    if (!guardDesktopAction()) return;
     setBusy(`review:${itemId}`);
     setError(null);
     try {
@@ -2614,6 +2641,7 @@ function App() {
 
   async function handleFollowup(item: ReviewQueueItem) {
     if (!vaultPath) return;
+    if (!guardDesktopAction()) return;
     setBusy(`followup:${item.itemId}`);
     setError(null);
     try {
@@ -2628,6 +2656,7 @@ function App() {
 
   async function handleIngestPipeline() {
     if (!vaultPath) return;
+    if (!guardDesktopAction()) return;
     setBusy("start:ingest_pipeline");
     setError(null);
     setLiveLogLines([]);
@@ -2645,6 +2674,7 @@ function App() {
 
   async function handleCreateWriteback() {
     if (!vaultPath || !writebackTarget.trim()) return;
+    if (!guardDesktopAction()) return;
     setBusy("writeback_proposal");
     setError(null);
     try {
@@ -2730,6 +2760,7 @@ function App() {
 
   async function handleCreateAnswerWritebackFromChat(question: string, targetPath: string, content: string) {
     if (!vaultPath || !question.trim() || !content.trim()) return;
+    if (!guardDesktopAction()) return;
     const cleanTarget = targetPath.trim().replace(/\\/g, "/");
     const target = cleanTarget.startsWith("reviews/query-writeback/")
       ? cleanTarget
@@ -2815,6 +2846,7 @@ function App() {
 
   async function handleOpenObsidian() {
     if (!vaultPath) return;
+    if (!guardDesktopAction()) return;
     setBusy("obsidian_open");
     setError(null);
     try {
@@ -2830,6 +2862,7 @@ function App() {
 
   async function handleCancelRuntimeJob() {
     if (!activeJob?.jobId) return;
+    if (!guardDesktopAction()) return;
     try {
       await cancelRuntimeJob(activeJob.jobId);
       setLiveLogLines((current) => [`cancel requested | ${activeJob.jobId}`, ...current].slice(0, 160));
@@ -2851,6 +2884,7 @@ function App() {
 
   async function handleWritebackStatus(proposalId: string, status: "proposed" | "approved" | "rejected") {
     if (!vaultPath) return;
+    if (!guardDesktopAction()) return;
     setBusy(`writeback:${proposalId}`);
     setError(null);
     try {
@@ -2871,6 +2905,7 @@ function App() {
 
   async function handleApplyWriteback(proposalId: string) {
     if (!vaultPath) return;
+    if (!guardDesktopAction()) return;
     setBusy(`apply:${proposalId}`);
     setError(null);
     try {
@@ -2926,6 +2961,7 @@ function App() {
 
   async function handleDiagnostic() {
     if (!vaultPath) return;
+    if (!guardDesktopAction()) return;
     setBusy("diagnostic");
     setError(null);
     try {
