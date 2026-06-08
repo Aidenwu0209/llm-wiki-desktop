@@ -1060,23 +1060,44 @@ body[data-shell-panel-resizing="true"] * {
 }
 
 @media (max-width: 1100px) {
-  .app-shell.nashsu-aligned-shell,
-  .app-shell.nashsu-aligned-shell.inspector-open {
+  .app-shell.nashsu-aligned-shell {
     grid-template-columns: var(--nav-rail-width) var(--knowledge-sidebar-width, 264px) minmax(0, 1fr);
     grid-template-areas: "nav tree workspace";
+  }
+
+  .app-shell.nashsu-aligned-shell.inspector-open {
+    grid-template-columns: var(--nav-rail-width) var(--knowledge-sidebar-width, 264px) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(280px, 38vh);
+    grid-template-areas:
+      "nav tree workspace"
+      "nav tree preview";
   }
 
   .preview-sidebar {
     display: none;
   }
+
+  .app-shell.nashsu-aligned-shell.inspector-open .preview-sidebar {
+    display: flex;
+    min-height: 0;
+    border-top: 1px solid #d5ddd8;
+    border-left: 0;
+  }
 }
 
 @media (max-width: 900px) {
   .app-shell.nashsu-aligned-shell,
-  .app-shell.nashsu-aligned-shell:not(.inspector-open),
-  .app-shell.nashsu-aligned-shell.inspector-open {
+  .app-shell.nashsu-aligned-shell:not(.inspector-open) {
     grid-template-columns: var(--nav-rail-width) minmax(0, 1fr);
     grid-template-areas: "nav workspace";
+  }
+
+  .app-shell.nashsu-aligned-shell.inspector-open {
+    grid-template-columns: var(--nav-rail-width) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(300px, 45vh);
+    grid-template-areas:
+      "nav workspace"
+      "nav preview";
   }
 
   .knowledge-sidebar {
