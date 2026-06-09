@@ -16,6 +16,7 @@ import {
   User,
 } from "lucide-react";
 import type {
+  ArtifactContractSummary,
   ClaimLedgerItem,
   EvidencePathItem,
   LlmAnswerEvidenceRef,
@@ -53,7 +54,7 @@ const CLAIM_LEDGER_PATH = "claims/claims.jsonl";
 const REVIEW_QUEUE_PATH = "reviews/science-review-queue.md";
 const WRITEBACK_QUEUE_PATH = "reviews/query-writeback/";
 
-type SearchKind = VaultFile["kind"] | "claim" | "evidence" | "review" | "writeback" | "traceability";
+type SearchKind = VaultFile["kind"] | "claim" | "evidence" | "artifact" | "review" | "writeback" | "traceability";
 type SearchFilter = SearchKind | "all";
 
 type SearchResult = {
@@ -102,6 +103,7 @@ type ChatSearchPageProps = {
   evidencePaths: EvidencePathItem[];
   reviewItems: ReviewQueueItem[];
   writebacks: WritebackProposal[];
+  artifacts: ArtifactContractSummary[];
   traceabilityWarnings: TraceabilityWarning[];
   providerCenter?: LlmProviderCenterSettings | null;
   handoffQuestion?: string;
@@ -183,6 +185,7 @@ const chatCopy = {
       review: "审核",
       writeback: "写回提案",
       evidence: "证据路径",
+      artifact: "解析产物",
       traceability: "可追踪性",
       report: "报告",
       inbox: "收件箱",
@@ -196,6 +199,7 @@ const chatCopy = {
       review: "审核",
       writeback: "写回提案",
       evidence: "证据路径",
+      artifact: "解析产物",
       traceability: "可追踪性",
       report: "报告",
       inbox: "收件箱",
@@ -267,6 +271,7 @@ const chatCopy = {
       review: "reviews",
       writeback: "writebacks",
       evidence: "evidence paths",
+      artifact: "artifacts",
       traceability: "traceability",
       report: "reports",
       inbox: "inbox",
@@ -280,6 +285,7 @@ const chatCopy = {
       review: "review",
       writeback: "writeback",
       evidence: "evidence",
+      artifact: "artifact",
       traceability: "traceability",
       report: "report",
       inbox: "inbox",
@@ -368,6 +374,15 @@ const relationCopy = {
     target: "目标",
     applied: "已应用",
     artifact: "解析产物",
+    parser: "解析器",
+    model: "模型",
+    schema: "结构",
+    manifest: "清单",
+    chunks: "分块",
+    contract: "合约",
+    pages: "页数",
+    limitations: "限制",
+    lint: "检查",
     missingAnchor: "缺失锚点",
   },
   en: {
@@ -392,9 +407,20 @@ const relationCopy = {
     target: "target",
     applied: "applied",
     artifact: "artifact",
+    parser: "parser",
+    model: "model",
+    schema: "schema",
+    manifest: "manifest",
+    chunks: "chunks",
+    contract: "contract",
+    pages: "pages",
+    limitations: "limitations",
+    lint: "lint",
     missingAnchor: "missing anchor",
   },
 } as const;
+
+export const searchRelationCopy = relationCopy;
 
 type RelationLabels = (typeof relationCopy)[UiLanguage];
 type RelationKey = keyof RelationLabels;
@@ -587,7 +613,7 @@ function scoreResult(result: SearchResult, query: string) {
 }
 
 function diversifySearchResults(ranked: SearchResult[], limit: number) {
-  const primaryTypes: SearchKind[] = ["source", "claim", "concept", "review", "writeback", "traceability", "evidence"];
+  const primaryTypes: SearchKind[] = ["source", "claim", "concept", "artifact", "review", "writeback", "traceability", "evidence"];
   const seen = new Set<string>();
   const diversified: SearchResult[] = [];
 
@@ -609,7 +635,7 @@ function diversifySearchResults(ranked: SearchResult[], limit: number) {
   return diversified.slice(0, limit);
 }
 
-function filterSearchResults(index: SearchResult[], typeFilter: SearchFilter, searchText: string) {
+export function filterSearchResults(index: SearchResult[], typeFilter: SearchFilter, searchText: string) {
   const typed = typeFilter === "all" ? index : index.filter((item) => item.type === typeFilter);
   const ranked = typed
     .map((item) => ({ item, score: scoreResult(item, searchText) }))
@@ -711,7 +737,7 @@ function renderAnswerCitationCoverage(coverage: AnswerCitationCoverage, language
 }
 
 function pickAnswerEvidence(results: SearchResult[], selected?: SearchResult | null) {
-  const evidenceTypes: SearchKind[] = ["claim", "evidence", "source", "concept", "review", "writeback", "traceability"];
+  const evidenceTypes: SearchKind[] = ["claim", "evidence", "source", "concept", "artifact", "review", "writeback", "traceability"];
   const ordered = selected && evidenceTypes.includes(selected.type) ? [selected, ...results] : results;
   const seen = new Set<string>();
   return ordered
@@ -746,16 +772,17 @@ function buildEvidenceIndex(evidencePaths: EvidencePathItem[]) {
   return byClaim;
 }
 
-function buildSearchIndex({
+export function buildSearchIndex({
   status,
   claims,
   evidencePaths,
   reviewItems,
   writebacks,
+  artifacts,
   traceabilityWarnings,
   labels,
   language,
-}: Pick<ChatSearchPageProps, "status" | "claims" | "evidencePaths" | "reviewItems" | "writebacks" | "traceabilityWarnings"> & { labels: RelationLabels; language: UiLanguage }) {
+}: Pick<ChatSearchPageProps, "status" | "claims" | "evidencePaths" | "reviewItems" | "writebacks" | "artifacts" | "traceabilityWarnings"> & { labels: RelationLabels; language: UiLanguage }) {
   const evidenceByClaim = buildEvidenceIndex(evidencePaths);
   const results: SearchResult[] = [];
   const files = status?.files ?? [];
@@ -861,6 +888,74 @@ function buildSearchIndex({
         item.missing.join(" "),
       ].join(" "),
       priority: item.chainStatus === "ok" ? 6 : 10,
+    });
+  }
+
+  for (const artifact of artifacts) {
+    const path = artifact.manifestPath || artifact.artifactPath;
+    const contractLabel = artifact.contractValid
+      ? (language === "zh" ? "有效" : "valid")
+      : (language === "zh" ? "无效" : "invalid");
+    const staleOrInvalid = !artifact.contractValid || ["stale", "invalid", "failed", "blocked"].includes((artifact.status || "").toLowerCase());
+    const relations = unique([
+      relation(labels, "source", artifact.sourceId || artifact.sourceUuid, language),
+      relation(labels, "sourcePath", artifact.sourcePath, language),
+      relation(labels, "artifact", artifact.artifactPath, language),
+      relation(labels, "manifest", artifact.manifestPath, language),
+      relation(labels, "chunks", artifact.chunksPath || artifact.chunkCount, language),
+      relation(labels, "parser", artifact.parser, language),
+      relation(labels, "model", artifact.parserModel, language),
+      relation(labels, "schema", artifact.schemaVersion, language),
+      relation(labels, "contract", contractLabel, language),
+      relation(labels, "pages", artifact.pageCount, language),
+      relation(labels, "limitations", artifact.limitations.join(", "), language),
+      relation(labels, "lint", artifact.lintErrors.join(", "), language),
+    ]);
+    const snippet = compactText([
+      artifact.parser,
+      artifact.parserModel,
+      artifact.schemaVersion,
+      `${language === "zh" ? "合约" : "contract"} ${contractLabel}`,
+      `${language === "zh" ? "分块" : "chunks"} ${artifact.chunkCount}`,
+      artifact.status,
+      artifact.limitations[0],
+      artifact.lintErrors[0],
+    ].filter(Boolean).join(" · "));
+    results.push({
+      id: `artifact:${artifact.artifactPath}`,
+      type: "artifact",
+      title: artifact.artifactPath,
+      path,
+      snippet: snippet || artifact.artifactPath,
+      status: artifact.status,
+      severity: staleOrInvalid ? "p1" : null,
+      evidence: compactText(artifact.lintErrors.join("; ") || artifact.limitations.join("; ") || artifact.artifactSha256 || artifact.sourceSha256),
+      relations,
+      searchText: [
+        artifact.sourceId,
+        artifact.sourceUuid,
+        artifact.sourcePath,
+        artifact.artifactPath,
+        artifact.manifestPath,
+        artifact.chunksPath,
+        artifact.tablesPath,
+        artifact.figuresPath,
+        artifact.parseLogPath,
+        artifact.parser,
+        artifact.parserModel,
+        artifact.parserVersion,
+        artifact.schemaVersion,
+        artifact.sourceSha256,
+        artifact.artifactSha256,
+        artifact.status,
+        contractLabel,
+        artifact.pageCount,
+        artifact.chunkCount,
+        artifact.latencyMs,
+        artifact.limitations.join(" "),
+        artifact.lintErrors.join(" "),
+      ].join(" "),
+      priority: staleOrInvalid ? 10 : 6,
     });
   }
 
@@ -1192,6 +1287,7 @@ export function ChatSearchPage({
   evidencePaths,
   reviewItems,
   writebacks,
+  artifacts,
   traceabilityWarnings,
   providerCenter,
   handoffQuestion,
@@ -1225,8 +1321,8 @@ export function ChatSearchPage({
   const activeProvider = useMemo(() => providerSummary(providerCenter, language), [providerCenter, language]);
   const ernieProvider = useMemo(() => ernieProviderStatus(providerCenter), [providerCenter]);
   const index = useMemo(
-    () => buildSearchIndex({ status, claims, evidencePaths, reviewItems, writebacks, traceabilityWarnings, labels: relationCopy[language], language }),
-    [claims, evidencePaths, language, reviewItems, status, traceabilityWarnings, writebacks],
+    () => buildSearchIndex({ status, claims, evidencePaths, reviewItems, writebacks, artifacts, traceabilityWarnings, labels: relationCopy[language], language }),
+    [artifacts, claims, evidencePaths, language, reviewItems, status, traceabilityWarnings, writebacks],
   );
 
   useEffect(() => {
@@ -1672,6 +1768,7 @@ export function ChatSearchPage({
               <option value="review">{text.filters.review}</option>
               <option value="writeback">{text.filters.writeback}</option>
               <option value="evidence">{text.filters.evidence}</option>
+              <option value="artifact">{text.filters.artifact}</option>
               <option value="traceability">{text.filters.traceability}</option>
               <option value="report">{text.filters.report}</option>
               <option value="inbox">{text.filters.inbox}</option>

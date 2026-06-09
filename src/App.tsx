@@ -4344,6 +4344,7 @@ function App() {
           evidencePaths={evidencePaths}
           reviewItems={reviewItems}
           writebacks={writebacks}
+          artifacts={artifacts}
           traceabilityWarnings={traceabilityWarnings}
           providerCenter={desktopSettings.llmProviderCenter}
           handoffQuestion={chatHandoff?.question}
