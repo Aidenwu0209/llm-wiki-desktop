@@ -10,7 +10,7 @@
 - [ ] 确认 `docs/release-notes-v0.1.0-rc1.md` 说明 unsigned、pre-release、not production-ready、not signed、not notarized。
 - [ ] 确认 release notes 没有 API key、私有 vault、私有路径、真实用户资料或未脱敏 raw document。
 - [ ] 按 [`docs/release-screenshot-checklist.md`](release-screenshot-checklist.md) 准备公开截图，并区分 demo vault、live smoke 和用户资料截图。
-- [ ] 确认真实 OCR / ERNIE 未运行时，不写成 live pass。
+- [ ] 确认真实 OCR / ERNIE 状态按报告记录：未运行时不能写成 live pass；已运行时必须链接脱敏报告并说明 raw document 是否离开本机。
 
 ## 必跑命令
 
@@ -38,7 +38,7 @@ npm run build:app
 - [ ] 将 GitHub Release 标记为 pre-release。
 - [ ] Release 标题使用中文，且明确包含 `v0.1.0-rc1` 和 `unsigned release candidate`。
 - [ ] Release 描述链接 `docs/release-notes-v0.1.0-rc1.md`。
-- [ ] Release 描述链接真实后续 issue：[#210](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/210)、[#211](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/211)、[#213](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/213)、[#217](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/217)。
+- [ ] Release 描述链接已完成的 live/manual smoke 报告，以及仍未完成的真实后续 issue；不要把关闭的 smoke issue 继续写成待办。
 
 ## 不得标记为完成
 
@@ -47,7 +47,7 @@ npm run build:app
 - [ ] 不得标记 notarized。
 - [ ] 不得标记 Developer ID signing 已完成。
 - [ ] 不得声称已提供 production installer。
-- [ ] 不得声称真实 PaddleOCR live parse 已完成，除非 [#210](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/210) 有脱敏 live report。
+- [x] PaddleOCR live parse 已有脱敏报告：[`docs/paddleocr-vl15-real-parse-report.md`](paddleocr-vl15-real-parse-report.md)。发布文案必须保留实际模型、external upload、local-only artifact 和已知限制；不得把报告外推为 production parser SLA。
 - [ ] 不得声称真实 ERNIE live answer 已完成，除非 [#211](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/211) 有脱敏 live report。
 - [x] macOS manual vault smoke 需要真实人工复验记录；2026-05-31 release DMG run 已提交到 `docs/reports/smoke-macos-release-manual-vault-20260531-summary.md`，并记录非阻塞 standalone cache warning。
 - [ ] 不得声称 Windows packaged smoke 已完成，除非 [#217](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/217) 有记录。

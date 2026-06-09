@@ -21,7 +21,7 @@
 
 ## 使用前提
 
-- 真实 PaddleOCR-VL-1.5 parse 需要 `PADDLEOCR_API_KEY` 或用户配置的 key env var，并需要 `OPEN_LLM_WIKI_LAYOUT_ENDPOINT` 指向真实 endpoint。
+- 真实 PaddleOCR live parse 已有脱敏运行报告：[`docs/paddleocr-vl15-real-parse-report.md`](paddleocr-vl15-real-parse-report.md)。发布文案必须按报告记录实际模型、external upload、local-only artifact 和 provider 限制；新的私有文档或新 endpoint 仍需要单独授权后运行。
 - 真实 ERNIE evidence-first answer 需要 `AI_STUDIO_API_KEY` 或用户配置的 ERNIE key env var。
 - 公共 CI 和本 release candidate 文档不要求真实 OCR / ERNIE key。
 
@@ -50,7 +50,7 @@
 
 ## 已知后续 issue
 
-- [#210 [P0] 真实运行 PaddleOCR-VL-1.5 解析 smoke](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/210)
+- [#210 [P0] 真实运行 PaddleOCR-VL-1.5 解析 smoke](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/210)：已提交脱敏 live report，不能提交 local artifact 或 API key。
 - [#211 [P0] 真实运行 ERNIE evidence-first answer smoke](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/211)
 - [#212 [P0] 发布 v0.1.0-rc1 unsigned release candidate](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/212)
 - [#213 [P1] 完成 macOS clean-profile 手动 vault smoke](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/213)
