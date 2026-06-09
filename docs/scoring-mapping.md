@@ -57,6 +57,6 @@ This mapping translates LLM Wiki Desktop evidence into a reviewer-facing scoreca
 - Live PaddleOCR report 待补，除非任务 2 已完成；现有 setup / contract / fixture evidence 不等同于真实 PaddleOCR-VL-1.5 live parse 成功。
 - Live ERNIE report 待补，除非任务 3 已完成；no-key benchmark 或 local evidence draft 不等同于真实 ERNIE live answer。
 - Release 待补，除非任务 6 已完成；本地 unsigned `.app` / `.dmg` 或 CI build 不等同于签名、notarization、stapling 或正式生产发布。
-- 用户反馈待补；需要记录真实用户或 reviewer 的反馈、复现步骤、证据路径和 one-PR scope。
+- 第一轮维护者代表反馈已记录在 `docs/reports/first-round-maintainer-feedback-20260609.md`；下一轮外部用户反馈仍需单独记录来源、场景、同意边界和可复现证据。
 - Governance files 已补齐，包括 Apache-2.0 license、contributing、security policy、code of conduct、issue / PR templates；仍不能据此声称 signed、notarized 或 production-ready。
 - Query writeback new-file proposal 仍主要属于 runtime gap；桌面端不得通过自动写入 concept/source 页面来伪装完成。
