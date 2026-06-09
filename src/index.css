@@ -3632,7 +3632,7 @@ body[data-shell-panel-resizing="true"] * {
 
 .details-relation-strip {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
   gap: 6px;
   min-width: 0;
 }
@@ -3703,17 +3703,35 @@ body[data-shell-panel-resizing="true"] * {
 }
 
 .details-link-section button {
-  justify-content: start;
+  display: grid;
+  justify-content: stretch;
+  justify-items: start;
   min-height: 28px;
   padding: 0 7px;
   overflow: hidden;
   font-size: 11px;
+  text-align: left;
 }
 
-.details-link-section button span {
+.details-link-section button span,
+.details-link-section button em {
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.details-link-section button em {
+  color: #64706a;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.details-link-section button.relation-p0,
+.details-link-section button.relation-p1 {
+  border-color: #dcb7a6;
+  background: #fff6f1;
+  color: #7c3219;
 }
 
 .details-preview {

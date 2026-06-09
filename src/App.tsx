@@ -4750,6 +4750,8 @@ function App() {
               language={interfaceLanguage}
               selection={detailSelection}
               vaultPath={vaultPath}
+              allFiles={status?.files ?? []}
+              traceabilityWarnings={traceabilityWarnings}
               obsidianUri={entryNote?.obsidianUri}
               resolveVaultPath={vaultFilePath}
               onOpenPath={openWorkspacePath}

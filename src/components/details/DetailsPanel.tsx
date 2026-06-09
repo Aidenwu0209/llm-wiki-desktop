@@ -20,6 +20,7 @@ import {
 import type { UiLanguage } from "../../i18n";
 import { canPreviewVaultPath } from "../../lib/vaultPath";
 import { isTauriAvailable, readVaultImageFile, readVaultTextFile } from "../../tauri";
+import { buildBacklinksPlusRelations, type BacklinksPlusSharedSource, type BacklinksPlusWarning } from "../../lib/backlinksPlus";
 import type { ClaimLedgerItem, EvidencePathItem, TraceabilityWarning, VaultFile, VaultTextFilePreview, WritebackProposal } from "../../types";
 
 export type DetailSelection =
@@ -33,6 +34,8 @@ type DetailsPanelProps = {
   language?: UiLanguage;
   selection: DetailSelection;
   vaultPath: string;
+  allFiles?: VaultFile[];
+  traceabilityWarnings?: TraceabilityWarning[];
   obsidianUri?: string | null;
   resolveVaultPath: (path?: string | null) => string;
   onOpenPath: (path: string) => void;
@@ -70,12 +73,18 @@ const detailsCopy = {
     outboundLinks: "出站链接",
     inboundLinks: "反向链接",
     sourceRefs: "资料引用",
+    sharedSources: "共享来源",
+    warnings: "证据警告",
     noLinks: "没有页面级 wikilink。",
     noSourceRefs: "没有 frontmatter 资料引用。",
+    noSharedSources: "没有发现共享资料来源的相邻页面。",
+    noWarnings: "当前页面没有可追踪性警告。",
     moreLinks: (count: number) => `还有 ${count} 条未显示`,
     frontmatterRefs: "frontmatter",
     pageLinks: "页面链接",
     incomingLinks: "入链",
+    sharedEvidence: "共享证据",
+    traceabilityAlerts: "可追踪性",
     preview: "只读预览",
     outline: "页面大纲",
     reader: "阅读",
@@ -122,12 +131,18 @@ const detailsCopy = {
     outboundLinks: "Outbound links",
     inboundLinks: "Backlinks",
     sourceRefs: "Source refs",
+    sharedSources: "Shared sources",
+    warnings: "Evidence warnings",
     noLinks: "No page-level wikilinks.",
     noSourceRefs: "No frontmatter source references.",
+    noSharedSources: "No neighboring pages share source evidence.",
+    noWarnings: "No traceability warnings for this page.",
     moreLinks: (count: number) => `${count} more not shown`,
     frontmatterRefs: "frontmatter",
     pageLinks: "page links",
     incomingLinks: "incoming",
+    sharedEvidence: "shared evidence",
+    traceabilityAlerts: "traceability",
     preview: "Read-only preview",
     outline: "Outline",
     reader: "Reader",
@@ -810,24 +825,74 @@ function LinkList({
   );
 }
 
+type RelationListItem = {
+  key: string;
+  label: string;
+  path: string;
+  detail?: string | null;
+  tone?: string | null;
+};
+
+function RelationItemList({
+  title,
+  items,
+  empty,
+  moreLabel,
+  onOpenVaultPath,
+}: {
+  title: string;
+  items: RelationListItem[];
+  empty: string;
+  moreLabel: (count: number) => string;
+  onOpenVaultPath: (path?: string | null) => void;
+}) {
+  const visibleItems = items.slice(0, 8);
+  const hiddenCount = Math.max(items.length - visibleItems.length, 0);
+  return (
+    <div className="details-link-section">
+      <strong>{title}</strong>
+      {items.length === 0 && <p>{empty}</p>}
+      {visibleItems.map((item) => (
+        <button
+          key={item.key}
+          className={classNames(item.tone && `relation-${item.tone}`)}
+          disabled={!item.path}
+          type="button"
+          onClick={() => onOpenVaultPath(item.path)}
+        >
+          <span>{item.label}</span>
+          {item.detail && <em>{item.detail}</em>}
+        </button>
+      ))}
+      {hiddenCount > 0 && <p>{moreLabel(hiddenCount)}</p>}
+    </div>
+  );
+}
+
 function RelationSummaryStrip({
   text,
   outboundLinks,
   inboundLinks,
   sourceRefs,
+  sharedSources,
+  warnings,
 }: {
   text: DetailsText;
   outboundLinks?: string[];
   inboundLinks?: string[];
   sourceRefs?: string[];
+  sharedSources?: BacklinksPlusSharedSource[];
+  warnings?: BacklinksPlusWarning[];
 }) {
   const items = [
     { label: text.sourceRefs, detail: text.frontmatterRefs, value: sourceRefs?.length ?? 0 },
     { label: text.outboundLinks, detail: text.pageLinks, value: outboundLinks?.length ?? 0 },
     { label: text.inboundLinks, detail: text.incomingLinks, value: inboundLinks?.length ?? 0 },
+    { label: text.sharedSources, detail: text.sharedEvidence, value: sharedSources?.length ?? 0 },
+    { label: text.warnings, detail: text.traceabilityAlerts, value: warnings?.length ?? 0 },
   ];
   return (
-    <div className="details-relation-strip" aria-label={`${text.sourceRefs} / ${text.outboundLinks} / ${text.inboundLinks}`}>
+    <div className="details-relation-strip" aria-label={`${text.sourceRefs} / ${text.outboundLinks} / ${text.inboundLinks} / ${text.sharedSources} / ${text.warnings}`}>
       {items.map((item) => (
         <div key={item.label} className={classNames("details-relation-card", item.value > 0 && "active")}>
           <span>{item.label}</span>
@@ -878,6 +943,8 @@ function FocusedPreviewReader({
   outboundLinks,
   inboundLinks,
   sourceRefs,
+  sharedSources,
+  warnings,
   headings,
   onClose,
   onOpenVaultPath,
@@ -893,10 +960,25 @@ function FocusedPreviewReader({
   outboundLinks?: string[];
   inboundLinks?: string[];
   sourceRefs?: string[];
+  sharedSources: BacklinksPlusSharedSource[];
+  warnings: BacklinksPlusWarning[];
   headings: PreviewHeading[];
   onClose: () => void;
   onOpenVaultPath: (path?: string | null) => void;
 }) {
+  const sharedSourceItems = sharedSources.map((item) => ({
+    key: `shared:${item.path}`,
+    label: item.label,
+    path: item.path,
+    detail: `${item.kind} · ${item.refs.join(", ")}`,
+  }));
+  const warningItems = warnings.map((item) => ({
+    key: `warning:${item.warningId}`,
+    label: item.title,
+    path: item.path,
+    detail: `${item.severity}${item.detail ? ` · ${item.detail}` : ""}`,
+    tone: item.severity,
+  }));
   return (
     <div
       className="details-reader-backdrop"
@@ -936,6 +1018,20 @@ function FocusedPreviewReader({
                 title={text.sourceRefs}
                 links={sourceRefs}
                 empty={text.noSourceRefs}
+                moreLabel={text.moreLinks}
+                onOpenVaultPath={onOpenVaultPath}
+              />
+              <RelationItemList
+                title={text.sharedSources}
+                items={sharedSourceItems}
+                empty={text.noSharedSources}
+                moreLabel={text.moreLinks}
+                onOpenVaultPath={onOpenVaultPath}
+              />
+              <RelationItemList
+                title={text.warnings}
+                items={warningItems}
+                empty={text.noWarnings}
                 moreLabel={text.moreLinks}
                 onOpenVaultPath={onOpenVaultPath}
               />
@@ -1030,6 +1126,8 @@ export function DetailsPanel({
   language = "zh",
   selection,
   vaultPath,
+  allFiles = [],
+  traceabilityWarnings = [],
   obsidianUri,
   resolveVaultPath,
   onOpenPath,
@@ -1060,6 +1158,36 @@ export function DetailsPanel({
       ...(parsedPreview ? frontmatterValues(parsedPreview.frontmatter, "sources", "source_id", "source_path") : []),
     ]),
     [parsedPreview, selection],
+  );
+  const backlinksPlus = useMemo(
+    () => selection.kind === "source"
+      ? buildBacklinksPlusRelations({
+        file: selection.file,
+        files: allFiles,
+        sourceRefs,
+        traceabilityWarnings,
+      })
+      : { sharedSources: [], warnings: [] },
+    [allFiles, selection, sourceRefs, traceabilityWarnings],
+  );
+  const sharedSourceItems = useMemo(
+    () => backlinksPlus.sharedSources.map((item) => ({
+      key: `shared:${item.path}`,
+      label: item.label,
+      path: item.path,
+      detail: `${item.kind} · ${item.refs.join(", ")}`,
+    })),
+    [backlinksPlus.sharedSources],
+  );
+  const warningItems = useMemo(
+    () => backlinksPlus.warnings.map((item) => ({
+      key: `warning:${item.warningId}`,
+      label: item.title,
+      path: item.path,
+      detail: `${item.severity}${item.detail ? ` · ${item.detail}` : ""}`,
+      tone: item.severity,
+    })),
+    [backlinksPlus.warnings],
   );
   const sourceDisplayTitle = useMemo(() => {
     if (selection.kind !== "source") return "";
@@ -1211,6 +1339,8 @@ export function DetailsPanel({
                       outboundLinks={selection.file.outboundLinks}
                       inboundLinks={selection.file.inboundLinks}
                       sourceRefs={sourceRefs}
+                      sharedSources={backlinksPlus.sharedSources}
+                      warnings={backlinksPlus.warnings}
                     />
                     <div className="details-link-grid">
                       <LinkList
@@ -1231,6 +1361,20 @@ export function DetailsPanel({
                         title={text.sourceRefs}
                         links={sourceRefs}
                         empty={text.noSourceRefs}
+                        moreLabel={text.moreLinks}
+                        onOpenVaultPath={onOpenVaultPath}
+                      />
+                      <RelationItemList
+                        title={text.sharedSources}
+                        items={sharedSourceItems}
+                        empty={text.noSharedSources}
+                        moreLabel={text.moreLinks}
+                        onOpenVaultPath={onOpenVaultPath}
+                      />
+                      <RelationItemList
+                        title={text.warnings}
+                        items={warningItems}
+                        empty={text.noWarnings}
                         moreLabel={text.moreLinks}
                         onOpenVaultPath={onOpenVaultPath}
                       />
@@ -1268,6 +1412,8 @@ export function DetailsPanel({
               outlineTitle={text.outline}
               path={selection.file.path}
               sourceRefs={sourceRefs}
+              sharedSources={backlinksPlus.sharedSources}
+              warnings={backlinksPlus.warnings}
               text={text}
               title={sourceDisplayTitle}
               vaultPath={vaultPath}
