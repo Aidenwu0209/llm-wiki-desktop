@@ -17,6 +17,7 @@
 - macOS / Windows CI 与 smoke：CI 覆盖 npm install、测试和前端构建；macOS / Windows smoke 脚本已存在。
 - Benchmark：`benchmarks/submission-ocr-qa/` 和 benchmark scripts 支持本地 evidence / no-key 报告路径。
 - PRD、scoring mapping、governance docs：`docs/PRD.md`、`docs/scoring-mapping.md`、README、CONTRIBUTING、SECURITY、CODE_OF_CONDUCT、ROADMAP、issue templates、PR template 已准备。
+- Release 截图清单：`docs/release-screenshot-checklist.md` 覆盖 Dashboard、Raw Sources、Settings Providers、Chat / Search、Graph、Traceability 和 Reading workspace，并明确 demo、live smoke、用户资料截图的脱敏边界。
 
 ## 使用前提
 
@@ -54,7 +55,6 @@
 - [#212 [P0] 发布 v0.1.0-rc1 unsigned release candidate](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/212)
 - [#213 [P1] 完成 macOS clean-profile 手动 vault smoke](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/213)
 - [#214 [P1] 收集第一轮真实用户反馈](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/214)
-- [#215 [good first issue] 补充 release 截图清单](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/215)
 - [#216 [good first issue] 补充 ERNIE 配置 FAQ](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/216)
 - [#217 [P1] 完成 Windows packaged smoke](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/217)
 - [#218 [P2] 支持 query writeback new-file proposal](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/218)
