@@ -9,6 +9,7 @@
 - [ ] 更新 `CHANGELOG.md`，包含 `v0.1.0-rc1` 条目。
 - [ ] 确认 `docs/release-notes-v0.1.0-rc1.md` 说明 unsigned、pre-release、not production-ready、not signed、not notarized。
 - [ ] 确认 release notes 没有 API key、私有 vault、私有路径、真实用户资料或未脱敏 raw document。
+- [ ] 按 [`docs/release-screenshot-checklist.md`](release-screenshot-checklist.md) 准备公开截图，并区分 demo vault、live smoke 和用户资料截图。
 - [ ] 确认真实 OCR / ERNIE 未运行时，不写成 live pass。
 
 ## 必跑命令
@@ -55,4 +56,4 @@ npm run build:app
 
 - [ ] 在 [#212](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/212) 中记录 tag、release 链接和测试结果。
 - [ ] 若发布过程中发现未验证事项，创建中文 issue，不要在 release 文案中补成已完成。
-- [ ] 若发现截图需要补充，跟进 [#215](https://github.com/Aidenwu0209/llm-wiki-desktop/issues/215)。
+- [ ] 若发现截图需要补充，更新 [`docs/release-screenshot-checklist.md`](release-screenshot-checklist.md) 并附带脱敏说明。
