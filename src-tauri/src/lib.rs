@@ -12323,6 +12323,52 @@ fn simple_diff(old: &str, new: &str) -> String {
     out
 }
 
+fn extract_source_citation_paths(content: &str) -> Vec<String> {
+    let mut citations = Vec::new();
+    for token in content.split(|ch: char| {
+        ch.is_whitespace()
+            || matches!(
+                ch,
+                '`' | '"' | '\'' | '(' | ')' | '[' | ']' | '<' | '>' | ',' | ';'
+            )
+    }) {
+        let cleaned = token
+            .trim()
+            .trim_matches(|ch: char| matches!(ch, ':' | '.' | '!' | '?' | '#'))
+            .trim_start_matches("./")
+            .replace('\\', "/");
+        if cleaned.starts_with("sources/")
+            && matches!(
+                Path::new(&cleaned)
+                    .extension()
+                    .and_then(OsStr::to_str)
+                    .map(|extension| extension.to_ascii_lowercase())
+                    .as_deref(),
+                Some("md" | "markdown" | "txt")
+            )
+        {
+            citations.push(cleaned);
+        }
+    }
+    citations.sort();
+    citations.dedup();
+    citations
+}
+
+fn has_existing_source_citation(vault: &Path, content: &str) -> bool {
+    extract_source_citation_paths(content)
+        .into_iter()
+        .any(|path| {
+            ensure_inside(
+                &vault.join(&path),
+                vault,
+                "source citation must stay inside the vault",
+            )
+            .map(|resolved| resolved.is_file())
+            .unwrap_or(false)
+        })
+}
+
 fn writeback_proposals_dir(vault: &Path) -> PathBuf {
     vault.join("_state").join("writeback-proposals")
 }
@@ -12392,8 +12438,10 @@ fn writeback_proposal_contract_issues(vault: &Path, proposal: &WritebackProposal
             }
         }
         Ok(WritebackTargetKind::Concept) => {
-            if !target.is_file() {
-                issues.push("concept target is missing".to_string());
+            if !target.is_file() && !has_existing_source_citation(vault, &proposal.content) {
+                issues.push(
+                    "new concept proposal is missing an existing source citation".to_string(),
+                );
             }
         }
         Err(error) => issues.push(error),
@@ -13068,8 +13116,13 @@ fn create_writeback_proposal(
         return Err("writeback target must be Markdown or text".to_string());
     }
     let target_kind = writeback_target_kind(&vault, &target)?;
-    if target_kind == WritebackTargetKind::Concept && !target.is_file() {
-        return Err("concept writeback target must already exist".to_string());
+    if target_kind == WritebackTargetKind::Concept
+        && !target.is_file()
+        && !has_existing_source_citation(&vault, &content)
+    {
+        return Err(
+            "new concept writeback proposal requires an existing sources/*.md citation".to_string(),
+        );
     }
     let old = read_text(&target);
     let now = Local::now().to_rfc3339();
@@ -19315,6 +19368,107 @@ mod tests {
             .join("query-writeback")
             .join("deepseek-research-insights.md")
             .exists());
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn query_writeback_can_propose_new_concept_file_with_source_citation() {
+        let vault = test_vault("query-writeback-new-concept");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        write_text(
+            &vault.join("sources").join("LLM-0001.md"),
+            "# DeepSeek Source\n\nEfficient reasoning evidence.\n",
+        )
+        .expect("source page");
+        write_text(
+            &vault.join("_state").join("source-registry.jsonl"),
+            "{\"source_uuid\":\"sha256:fresh\",\"source_id\":\"LLM-0001\",\"source_path\":\"raw/inbox/fresh.pdf\",\"source_sha256\":\"fresh\",\"status\":\"published\",\"source_page\":\"sources/LLM-0001.md\"}\n",
+        )
+        .expect("registry");
+        write_text(
+            &vault.join("claims").join("claims.jsonl"),
+            "{\"claim_id\":\"c1\",\"claim_text\":\"DeepSeek optimizes for efficient reasoning.\",\"verdict\":\"supported\",\"status\":\"supported\",\"source_id\":\"LLM-0001\",\"source_uuid\":\"sha256:fresh\",\"source_path\":\"sources/LLM-0001.md\",\"evidence_quote\":\"efficient reasoning\",\"evidence_hash\":\"fresh-hash\"}\n",
+        )
+        .expect("write claim");
+
+        let target = vault.join("concepts").join("new-deepseek-strategy.md");
+        assert!(!target.exists());
+        let draft = create_query_writeback_proposal(
+            to_display(&vault),
+            "Create a new concept page for DeepSeek strategy".to_string(),
+            "concepts/new-deepseek-strategy.md".to_string(),
+            "New DeepSeek strategy concept".to_string(),
+        )
+        .expect("create new concept proposal");
+        assert_eq!(draft.proposal.status, "proposed");
+        assert_eq!(
+            draft.proposal.target_path,
+            "concepts/new-deepseek-strategy.md"
+        );
+        assert!(draft.diff_preview.contains("Evidence `c1`"));
+        assert!(draft.diff_preview.contains("source: `sources/LLM-0001.md`"));
+        assert!(!target.exists());
+        assert!(
+            apply_writeback_proposal(to_display(&vault), draft.proposal.proposal_id.clone())
+                .is_err()
+        );
+
+        let proposals =
+            list_writeback_proposals(to_display(&vault)).expect("list writeback proposals");
+        assert!(proposals
+            .iter()
+            .any(|proposal| proposal.target_path == "concepts/new-deepseek-strategy.md"));
+        let approved = set_writeback_status(
+            to_display(&vault),
+            draft.proposal.proposal_id.clone(),
+            "approved".to_string(),
+        )
+        .expect("approve new concept proposal");
+        assert_eq!(approved.status, "approved");
+        let applied = apply_writeback_proposal(to_display(&vault), draft.proposal.proposal_id)
+            .expect("apply new concept proposal");
+        assert_eq!(applied.proposal.status, "applied");
+        assert!(target.exists());
+        let content = read_text(&target);
+        assert!(content.contains("source: `sources/LLM-0001.md`"));
+        assert!(content.contains("human_confirmation_checklist"));
+
+        let _ = fs::remove_dir_all(vault);
+    }
+
+    #[test]
+    fn new_concept_writeback_rejects_body_without_source_citation() {
+        let vault = test_vault("writeback-new-concept-no-source");
+        create_minimal_vault(&vault).expect("create minimal vault");
+        write_text(
+            &vault.join("sources").join("LLM-0001.md"),
+            "# DeepSeek Source\n\nEfficient reasoning evidence.\n",
+        )
+        .expect("source page");
+
+        let rejected = create_writeback_proposal(
+            to_display(&vault),
+            "concepts/no-evidence.md".to_string(),
+            "No evidence concept".to_string(),
+            "# No Evidence\n\nThis body has no source citation.\n".to_string(),
+        )
+        .expect_err("missing concept target without source citation should fail");
+        assert!(rejected.contains("requires an existing sources/*.md citation"));
+        assert!(!vault.join("concepts").join("no-evidence.md").exists());
+
+        let accepted = create_writeback_proposal(
+            to_display(&vault),
+            "concepts/with-evidence.md".to_string(),
+            "Evidence concept".to_string(),
+            "# Evidence Concept\n\nSupported by source: `sources/LLM-0001.md`.\n".to_string(),
+        )
+        .expect("source-cited new concept proposal");
+        assert_eq!(accepted.status, "proposed");
+        assert!(accepted
+            .diff
+            .contains("+ Supported by source: `sources/LLM-0001.md`."));
+        assert!(!vault.join("concepts").join("with-evidence.md").exists());
 
         let _ = fs::remove_dir_all(vault);
     }
