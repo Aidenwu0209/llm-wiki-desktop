@@ -7,7 +7,7 @@ This mapping translates LLM Wiki Desktop evidence into a reviewer-facing scoreca
 | Item | Evidence To Show | Current Mapping |
 | --- | --- | --- |
 | 文件导入 | `raw/inbox/` import, SHA-256, target path, ignored reason, ZIP safety contract | README import guide, ZIP contract smoke, Raw Sources UI, `scripts/smoke/zip-import-contract.mjs` |
-| PaddleOCR-VL-1.5 | parser plan gate, endpoint/key visibility, no silent raw upload, artifact contract | `docs/paddleocr-vl15-setup.md`, parser readiness UI, contract validation; live parse report still required |
+| PaddleOCR-VL-1.5 | parser plan gate, endpoint/key visibility, no silent raw upload, artifact contract | `docs/paddleocr-vl15-setup.md`, parser readiness UI, contract validation, live parse report in `docs/paddleocr-vl15-real-parse-report.md` |
 | Artifact contract | manifest fields, source hash, artifact hash, chunks, parser metadata, limitations | benchmark metadata path, `desktop-artifacts.jsonl`, invalid artifact blocking |
 | ERNIE provider | `AI_STUDIO_API_KEY` env boundary, connection test, no raw document upload | `docs/ernie-provider-setup.md`, provider adapter contract; live ERNIE report still required |
 | Evidence answer | evidence ids, citation coverage, unsupported claim count, no-evidence refusal | benchmark metrics and Chat / Search evidence draft behavior |
@@ -54,7 +54,7 @@ This mapping translates LLM Wiki Desktop evidence into a reviewer-facing scoreca
 
 ## 5. 当前差距
 
-- Live PaddleOCR report 待补，除非任务 2 已完成；现有 setup / contract / fixture evidence 不等同于真实 PaddleOCR-VL-1.5 live parse 成功。
+- Live PaddleOCR report 已补到 `docs/paddleocr-vl15-real-parse-report.md`；对外表述必须保留报告里的实际模型、external upload、local-only artifact 和 provider limitation 边界。
 - Live ERNIE report 待补，除非任务 3 已完成；no-key benchmark 或 local evidence draft 不等同于真实 ERNIE live answer。
 - Release 待补，除非任务 6 已完成；本地 unsigned `.app` / `.dmg` 或 CI build 不等同于签名、notarization、stapling 或正式生产发布。
 - 第一轮维护者代表反馈已记录在 `docs/reports/first-round-maintainer-feedback-20260609.md`；下一轮外部用户反馈仍需单独记录来源、场景、同意边界和可复现证据。
